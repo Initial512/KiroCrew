@@ -57,7 +57,12 @@ from .shell_normalizer import (
     _substitution_bodies,
     _substitution_depth_delta,
 )
-from .vocabulary import _KILL_BY_NAME_PROGRAMS, _SELF_FILE_DELIVERY_VERBS, _SELF_NAME_RE
+from .vocabulary import (
+    _KILL_BY_NAME_PROGRAMS,
+    _SELF_FILE_DELIVERY_VERBS,
+    _SELF_NAME_RE,
+    _SELF_SSH_AGENT_VERBS,
+)
 
 # ── Self-protection floor (argv-structural, not a regex) ──
 # The two self-protection rules below are enforced by TOKENIZING the command
@@ -1057,6 +1062,11 @@ def _is_self_update(text_lower: str) -> bool:
 def _is_self_file_delivery(text_lower: str) -> bool:
     """``kirocrew file-delivery <verb>`` behind any shell dressing of interposed flags."""
     return _matches_self_subcommand(text_lower, ("file-delivery", _SELF_FILE_DELIVERY_VERBS))
+
+
+def _is_self_ssh_agent(text_lower: str) -> bool:
+    """``kirocrew ssh-agent <verb>`` behind any shell dressing of interposed flags."""
+    return _matches_self_subcommand(text_lower, ("ssh-agent", _SELF_SSH_AGENT_VERBS))
 
 
 def _is_self_gateway_restart(text_lower: str) -> bool:

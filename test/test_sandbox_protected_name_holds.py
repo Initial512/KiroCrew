@@ -393,7 +393,17 @@ class TestLeafOnlyPopulationIsRecorded:
     #:   (``notifications/push_store.py``), masked as a whole directory so the
     #:   ``atomic_write`` temps they publish through are hidden too. At the data-home
     #:   root beside writable siblings, so leaf-only is the only hold.
-    EXPECTED: dict[str, int] = {"standard": 296, "cc": 303, "strict": 304}
+    #:
+    #: One more root-level directory, three entries per tier:
+    #:
+    #: * ``ssh-auth-sock-consent-pending`` -- the single-use nonce an owner arms
+    #:   before ``kirocrew ssh-agent approve`` records the ssh-agent forward
+    #:   consent. The same shape and the same reason as
+    #:   ``file-delivery-consent-pending``: it sits at the data-home root, masked,
+    #:   rather than under the sandbox read-write ``trust/``, where a
+    #:   runtime-built path could forge a nonce and an agent-driven browser could
+    #:   then complete the owner's step-up with no human present.
+    EXPECTED: dict[str, int] = {"standard": 299, "cc": 306, "strict": 307}
 
     @pytest.mark.parametrize("tier", TIERS)
     def test_leaf_only_count_has_not_grown(self, tier: str) -> None:

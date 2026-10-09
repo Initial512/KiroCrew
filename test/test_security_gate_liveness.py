@@ -517,7 +517,14 @@ def _url_payload_command(n: int) -> str:
 #: the dispatcher that falls back to the Python gate (kept verbatim as
 #: ``_might_contain_credential_py``) on a missing, stale, disabled or failing module.
 #: Seventy-one lines. No pattern moved and no pass changed.
-_PACKAGE_LINE_BUDGET = 32_601
+#:
+#: Raised again, from 32,601, for the ``self-protection-ssh-agent`` floor: the
+#: ``kirocrew ssh-agent approve`` step-up verb joins the sibling self-protection
+#: floors (``_is_self_ssh_agent`` in ``argv_floor_self``, its verb set in
+#: ``vocabulary``, its id in the floor loop, exports and rule tables) plus the
+#: ``ssh-auth-sock-consent-pending`` keystone leaf in ``paths_lists``. One floor of
+#: an existing shape; no matcher widened, no threshold moved.
+_PACKAGE_LINE_BUDGET = 32_642
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second

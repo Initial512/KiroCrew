@@ -215,7 +215,13 @@ this document names what the default leaves open so that choice is informed.
 (`off`, `standard`, `cc`) and whose harness mask does not hide it, so the
 agent can use the operator's ssh-agent there, including a forwarded one. Under
 `strict`, or a harness mask over `~/.ssh`, it is scrubbed unless the operator
-records consent in the keystone leaf `ssh_auth_sock_consent.json`.
+records consent in the keystone leaf `ssh_auth_sock_consent.json`. The operator
+grants that consent from Settings → Security → SSH agent forwarding: the
+dashboard arms the request and `kirocrew ssh-agent approve` on the gateway host
+finishes it, as [security.md](../system-specs/modules/security.md) describes. The
+private key files stay hidden; the socket grants USE of the keys to anything a
+session runs, for the whole session, which is why it is a host-confirmed grant
+and not a config switch.
 
 ## Layer 1: Filesystem gate (`security/` package + `hooks.py`)
 

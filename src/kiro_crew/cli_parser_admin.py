@@ -2,7 +2,7 @@
 ``Develop Kiro Crew itself`` commands.
 
 One registrar per command of those ``cli_help.COMMAND_GROUPS`` sections: secrets,
-security, file-delivery, policy, telemetry, cloud, tailnet, snapshot, restore, pod and
+security, file-delivery, ssh-agent, policy, telemetry, cloud, tailnet, snapshot, restore, pod and
 eval (``bench``, ``perf`` and ``desktop`` register from their own modules).
 ``kiro_crew.cli.main`` builds the top-level parser and calls every registrar in the command
 line's registration order, so a new command of these sections gets a registrar here and a
@@ -501,6 +501,18 @@ def register_file_delivery_parser(sub: _Commands) -> None:
         choices=["approve"],
         help=(
             "approve: finish a flagged-file delivery consent armed from the "
+            "dashboard's Security panel (proves you are at the host)"
+        ),
+    )
+
+
+def register_ssh_agent_parser(sub: _Commands) -> None:
+    ssh_agent_parser = cli_help.add_command(sub, "ssh-agent")
+    ssh_agent_parser.add_argument(
+        "action",
+        choices=["approve"],
+        help=(
+            "approve: finish an SSH agent forwarding consent armed from the "
             "dashboard's Security panel (proves you are at the host)"
         ),
     )

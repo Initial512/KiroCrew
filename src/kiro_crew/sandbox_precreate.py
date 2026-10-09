@@ -420,6 +420,9 @@ _CREW_PRECREATE_HIDDEN_DIR_LEAVES: tuple[str, ...] = (
     # agent reads it and drives the loopback /approve to self-grant. Precreated
     # (empty, 0o700) before every spawn so the mask always has a name to bind over.
     "file-delivery-consent-pending",
+    # Its SSH_AUTH_SOCK sibling, created on demand by ``ssh_auth_sock_consent
+    # .arm_grant`` for the same reason and with the same fresh-install gap.
+    "ssh-auth-sock-consent-pending",
     "appearance-library",
     "quarantined-clones",
     # First created by the first member-born session's vouch, so a sandbox spawned

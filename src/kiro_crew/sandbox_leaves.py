@@ -283,6 +283,13 @@ _CREW_HIDDEN_LEAVES: tuple[str, ...] = (
     # close. Deliberately NOT under ``trust/``, which is sandbox-visible for SEL
     # appends.
     "file-delivery-consent-pending",
+    # The single-use step-up nonce that authorizes recording the SSH_AUTH_SOCK
+    # forward grant (``ssh_auth_sock_consent.arm_grant``). Same shape, same
+    # reasoning and same two readers (gateway on arm, host ``kirocrew ssh-agent
+    # approve``) as the file-delivery leaf directly above; masked for the same
+    # forge path. What the forged grant would buy here is session-long USE of the
+    # operator's ssh-agent keys, which is exactly what the sandbox exists to deny.
+    "ssh-auth-sock-consent-pending",
     # The cron in-flight markers, masked rather than sealed read-only because
     # nothing in the sandbox reads one: they are written and cleared by the run
     # task in the GATEWAY process, and the boot-time loop-stall breaker that acts

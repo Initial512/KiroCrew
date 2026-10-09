@@ -191,6 +191,7 @@ if TYPE_CHECKING:  # every owner-defined name in _EXPORTS, for type checkers and
         _is_self_module_invocation,
         _is_self_restart,
         _is_self_skills_authority_retire,
+        _is_self_ssh_agent,
         _is_self_update,
         _kill_prefix_keeps_anchor,
         _matches_self_subcommand,
@@ -316,4 +317,5 @@ if TYPE_CHECKING:  # names it serves from outside its owners, from their homes
         _KILL_BY_NAME_PROGRAMS,
         _SELF_FILE_DELIVERY_VERBS,
         _SELF_NAME_RE,
+        _SELF_SSH_AGENT_VERBS,
     )

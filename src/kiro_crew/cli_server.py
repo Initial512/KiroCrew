@@ -208,6 +208,77 @@ def _file_delivery_approve() -> None:
     print(f"\n✅ Confirmed delivery to {dest}. The dashboard now shows it as confirmed.")
 
 
+def _ssh_agent_approve() -> None:
+    """Approve an SSH agent forwarding consent armed from the dashboard.
+
+    Same step-up shape as :func:`_file_delivery_approve`: the proof of host
+    identity is READING THE NONCE FILE, which lives in a sandbox-hidden,
+    owner-only leaf, so presenting its nonce back to the gateway demonstrates
+    filesystem access as the gateway's own user -- the step an owner-authenticated
+    but agent-DRIVEN browser cannot perform. The gateway records the grant only
+    after the nonce validates; this verb never writes the store.
+    """
+    from kiro_crew.ssh_auth_sock_consent import read_pending_grant
+
+    print("👻 Approving the pending SSH agent forwarding consent…\n")
+    pending = read_pending_grant()
+    if pending is None:
+        print("❌ No armed request (it may have expired).")
+        print("   Click Allow under Settings > Security > SSH agent forwarding, then re-run this.")
+        sys.exit(1)
+    print(f"  🔑 request {pending.request_id}, expires in {pending.expires_in}s")
+
+    port = resolve_client_port(None)
+    url = f"http://127.0.0.1:{port}/api/ssh-agent/consent/approve"
+    payload = json.dumps({"nonce": pending.nonce}).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    secret = read_local_secret(port, dial_host="127.0.0.1")
+    if secret:
+        headers["X-Internal-Secret"] = secret
+    req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+    # Read from the owner at call time, so a patch through this facade reaches it.
+    from kiro_crew.cli_server_peer import (  # noqa: F811 - header import serves owners
+        _GatewayPeerRefused,
+        _owner_verified_secret_urlopen,
+    )
+
+    try:
+        # Through the connection-bound peer proof, on both transports, exactly as
+        # _file_delivery_approve: the request carries the single-use nonce AND the
+        # local secret, so neither may reach a process that is not this install's
+        # recorded gateway. An unproven peer is refused, never retried.
+        with _owner_verified_secret_urlopen(req, port, 15, operation="ssh_agent_approve") as resp:
+            body = json.loads(resp.read())
+    except _GatewayPeerRefused as e:
+        print(f"❌ Gateway ownership not verified: {e}")
+        sys.exit(1)
+    except urllib.error.HTTPError as e:
+        try:
+            detail = json.loads(e.read()).get("error", "")
+        except Exception:
+            detail = ""
+        print(
+            f"❌ Gateway refused the approval (HTTP {e.code})" + (f": {detail}" if detail else "")
+        )
+        sys.exit(1)
+    except (urllib.error.URLError, OSError) as e:
+        # Same split as _file_delivery_approve: a timeout means the gateway is up
+        # but busy and may already have consumed the single-use nonce.
+        from kiro_crew.loopback_http import deadline_expired
+
+        if deadline_expired(e):
+            print(
+                f"❌ Gateway on port {port} is up but busy (did not answer); it may "
+                "have taken the request — check the dashboard before re-running."
+            )
+        else:
+            print("❌ Gateway is not running — start it, then re-run: kirocrew ssh-agent approve")
+        sys.exit(1)
+    granted_at = body.get("granted_at") if isinstance(body, dict) else None
+    since = f" (since {granted_at})" if granted_at else ""
+    print(f"\n✅ SSH agent forwarding allowed{since}. Applies to new sessions.")
+
+
 def _status(args: argparse.Namespace) -> None:
     """Query the running gateway for stats, or print offline message."""
     port = resolve_client_port(getattr(args, "port", None))
