@@ -40,7 +40,11 @@ from kiro_crew.acp.types import (
     ACP_BACKENDS_MODEL_EFFORT_PAIR_IDS,
 )
 from kiro_crew.agent_sdk import host_auth
-from kiro_crew.credential_errors import is_credential_propagation_delay
+from kiro_crew.credential_errors import (
+    _RE_CREDENTIAL_EXPIRED,
+    _RE_INVALID_BEARER,
+    is_credential_propagation_delay,
+)
 from kiro_crew.sandbox import (
     LAUNCHER_EXIT_PREFIXES,
     SANDBOX_LAYER_CREW,
@@ -158,6 +162,14 @@ class AcpError(Exception):
         # ``llm_helpers.acp_error_is_session_not_found`` routes it down the
         # reset-and-reload-once path a dropped session takes.
         self.credential_reload: bool = False
+        # Set by :func:`_raise_acp_error` when the raw frame matches
+        # ``_RE_CREDENTIAL_EXPIRED`` (Bedrock/AWS token expiry:
+        # ``ExpiredToken(Exception)?``, "security token ... is expired"). Narrower
+        # than ``_RE_AUTH`` (which also covers permanent ``AccessDeniedException``,
+        # ``UnauthorizedException``, etc. that do not self-heal). Callers that need
+        # to distinguish self-healing credential expiry from a permanent denial read
+        # this flag rather than the formatted prose, which rewrites the raw names.
+        self.credential_expired: bool = False
 
 
 class AcpTimeoutError(AcpError):
@@ -618,12 +630,9 @@ _RE_SESSION_EXPIRED = re.compile(
 # _RE_SESSION_EXPIRED matches it and the failure reaches the user as the raw
 # upstream string with no sign-in affordance. Grouped with session expiry
 # because the remedy is identical — sign in again; no retry can make a rejected
-# credential valid. The gap between the two words is fenced to one sentence and
-# one line so the pattern cannot span unrelated errors in a combined haystack.
-_RE_INVALID_BEARER = re.compile(
-    r"\b(?:bearer\s+token\b[^.\n]{0,80}?\binvalid|invalid\s+bearer\s+token)\b",
-    re.IGNORECASE,
-)
+# credential valid.
+# Defined in ``credential_errors`` (imported above) so the cron auto-pause
+# carve-out and this module share one spelling rather than two that can drift.
 
 
 def _is_session_expired(haystack: str) -> bool:
@@ -637,6 +646,24 @@ def _is_session_expired(haystack: str) -> bool:
         _RE_AUTH_STATUS.search(haystack)
         or _RE_SESSION_EXPIRED.search(haystack)
         or _RE_INVALID_BEARER.search(haystack)
+    )
+
+
+def is_sign_out_wording(haystack: str) -> bool:
+    """True when *haystack* contains self-healing sign-out or expiry wording.
+
+    Narrower than :func:`_is_session_expired`: uses only prose patterns
+    (``_RE_SESSION_EXPIRED``, ``_RE_INVALID_BEARER``, ``_RE_CREDENTIAL_EXPIRED``)
+    and deliberately excludes the HTTP-status match (``_RE_AUTH_STATUS``) that
+    ``_is_session_expired`` includes.  An HTTP 403 can accompany a permanent
+    ``AccessDeniedException`` that re-auth cannot fix; the prose patterns here
+    specifically describe self-healing failures (credential expiry, sign-out,
+    bearer rejection).
+    """
+    return (
+        bool(_RE_SESSION_EXPIRED.search(haystack))
+        or bool(_RE_INVALID_BEARER.search(haystack))
+        or bool(_RE_CREDENTIAL_EXPIRED.search(haystack))
     )
 
 
@@ -1952,4 +1979,13 @@ def _raise_acp_error(
     if _error_kind_from_frame(error) == "cloud_credential_error":
         err.credential_reload = True
         err.transient = False
+    # Tag a credential expiry so cron's auth-expiry exemption can detect it
+    # without relying on the formatted prose, which rewrites the raw exception
+    # names. Uses prose-only sign-out patterns (``is_sign_out_wording``) so a
+    # bare HTTP 403 permanent denial is NOT tagged — that match requires the raw
+    # frame to carry session-expiry or sign-out wording, not just a 403 status.
+    # Covers Bedrock token expiry (``ExpiredToken``), bearer rejection, and any
+    # JSON-RPC session-expiry description ("session expired", "not logged in").
+    if is_sign_out_wording(raw_data) and not is_credential_propagation_delay(raw_data):
+        err.credential_expired = True
     raise err
