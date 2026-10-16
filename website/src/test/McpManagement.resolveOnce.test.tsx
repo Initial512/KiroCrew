@@ -85,7 +85,7 @@ describe('McpManagement pre-resolve', () => {
     await pressUpdate()
 
     await waitFor(() => {
-      expect(screen.getByRole('status').textContent).toMatch(/nothing needed/i)
+      expect(screen.getByRole('status').textContent).toMatch(/already up to date/i)
     })
   })
 
@@ -104,7 +104,7 @@ describe('McpManagement pre-resolve', () => {
     await pressUpdate()
 
     await waitFor(() => {
-      expect(screen.getByRole('status').textContent).toMatch(/no servers are routed/i)
+      expect(screen.getByRole('status').textContent).toMatch(/nothing to pre-install/i)
     })
     expect(screen.queryByRole('alert')).toBeNull()
   })
@@ -129,7 +129,7 @@ describe('McpManagement pre-resolve', () => {
       // through ErrorNotice, so the role is `alert`.
       const text = screen.getByRole('alert').textContent ?? ''
       expect(text).toMatch(/2/)
-      expect(text).not.toMatch(/nothing needed/i)
+      expect(text).not.toMatch(/already up to date/i)
     })
     expect(screen.queryByRole('status')).toBeNull()
   })
@@ -171,7 +171,7 @@ describe('McpManagement pre-resolve', () => {
     await pressUpdate()
 
     await waitFor(() => {
-      expect(screen.getByRole('status').textContent).toMatch(/already running/i)
+      expect(screen.getByRole('status').textContent).toMatch(/already updating/i)
     })
     expect(screen.queryByRole('alert')).toBeNull()
   })

@@ -13,16 +13,16 @@ import {
   type McpShareRecommendation,
   type McpShareReason,
 } from '../../api/client'
-import ErrorNotice from '../../components/ErrorNotice'
 import { splitOnPlaceholder } from '../../lib/splitOnPlaceholder'
 import { MCP_SERVERS_HREF } from '../connections/useConnectionsSubTab'
 import { i18nT } from '../../i18n/t'
+import ErrorNotice from '../../components/ErrorNotice'
 import {
   type LaunchRefusal,
-  stateLabelKey,
   STRENGTH_LABEL_KEY,
   REASON_LABEL_KEY,
   rowState,
+  stateLabelKey,
   sharedWithoutSupport,
 } from './mcpManagementModel'
 
@@ -380,13 +380,6 @@ export function AssessmentView({
             rows reads as a broken feature rather than a conservative one. */}
         <div className="border-t border-[var(--border)] px-4 py-3 text-[12.5px] leading-relaxed text-[var(--muted)]">
           {i18nT('pages.mcpManagement.assessment.legend')}
-        </div>
-        {/* This view renders the same state chips through the same derivation, so a
-            term defined only under the OTHER tab is undecodable to the operator
-            auditing sharing here -- which is this fix's whole audience. ONE key,
-            rendered wherever the chip can appear, in its own block on both tabs. */}
-        <div className="border-t border-[var(--border)] px-4 py-3 text-[12.5px] leading-relaxed text-[var(--muted)]">
-          {i18nT('pages.mcpManagement.state_direct_env_legend')}
         </div>
       </section>
     </div>
