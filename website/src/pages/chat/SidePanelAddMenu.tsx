@@ -158,7 +158,8 @@ const DEV_ONLY_VIEWS = new Set<ViewKind | 'terminal'>(['logs', 'context', 'crewl
 /** Which `+`-menu entries are offered, given the gates that hide entries:
  *  Terminal is hidden when the feature is disabled server-side, the
  *  diagnostics views (Logs, Context breakdown) are hidden unless Developer
- *  Mode is on, and **Summary is hidden while session summaries are disabled**.
+ *  Mode is on, **Summary is hidden while session summaries are disabled**, and
+ *  **Workflows is hidden while this chat has no workflow runs**.
  *  The permanently pinned views (Changes / Files / Artifacts) are never listed;
  *  they are always present in the strip.
  *
@@ -167,7 +168,9 @@ const DEV_ONLY_VIEWS = new Set<ViewKind | 'terminal'>(['logs', 'context', 'crewl
  *  sends every reader to a panel that explains it is off and offers no way to
  *  change that. Hiding the row is the only option that removes the dead end
  *  rather than wording around it, and it reverses itself the moment the flag
- *  flips.
+ *  flips. Workflows follows the same rule: with no run launched from this chat
+ *  the panel can only say "no workflow runs", so the row waits for the first
+ *  run (see `useSlotHasWorkflowRuns`).
  *
  *  Grouped, and **emptied groups are dropped**: with Developer Mode off the
  *  whole diagnostics group disappears, and Terminal disabled shrinks Workspaces
@@ -181,7 +184,7 @@ const DEV_ONLY_VIEWS = new Set<ViewKind | 'terminal'>(['logs', 'context', 'crewl
  *  bucket would be orphaned by the re-key). Withheld here and from the pinned
  *  block alike — an empty view is worse than no view. */
 export function newMenuSections(
-  opts: { devMode: boolean; terminalEnabled: boolean; summaryEnabled: boolean; hiddenViews?: ReadonlySet<SidePanelWithholdable> },
+  opts: { devMode: boolean; terminalEnabled: boolean; summaryEnabled: boolean; hasWorkflowRuns: boolean; hiddenViews?: ReadonlySet<SidePanelWithholdable> },
 ): { id: string; items: { kind: ViewKind | 'terminal'; icon: ReactNode }[] }[] {
   return NEW_MENU_GROUPS
     .map(group => ({
@@ -190,6 +193,7 @@ export function newMenuSections(
         (opts.terminalEnabled || item.kind !== 'terminal')
         && (opts.devMode || !DEV_ONLY_VIEWS.has(item.kind))
         && (opts.summaryEnabled || item.kind !== 'summary')
+        && (opts.hasWorkflowRuns || item.kind !== 'workflows')
         && !opts.hiddenViews?.has(item.kind)
         && !(PINNED_VIEWS as string[]).includes(item.kind),
       ),

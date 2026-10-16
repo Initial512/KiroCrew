@@ -32,6 +32,7 @@ import ErrorBoundary from '../../components/ErrorBoundary'
 import { fetchFileRead } from '../../utils/fileReadQuery'
 import { useAppSelector } from '../../store'
 import { selectSlotSubagents, selectSlotToolLog } from '../../store/chatSlice'
+import { useSlotHasWorkflowRuns } from '../../hooks/useSlotHasWorkflowRuns'
 import type { ExtractedLink } from '../../utils/extractChatLinks'
 import type { PullRequestLink } from '../../utils/pullRequestLinks'
 import type { ChatPin } from '../../api/pins'
@@ -291,11 +292,12 @@ export default function SidePanel({
     tabsCtl, slot, panelHidden: !!panelHidden, pinSummary,
     summaryOn: summaryMeta ? summaryMeta.enabled === true : undefined, summaryWithheld: !!hiddenViews?.has('summary'),
   })
+  const hasWorkflowRuns = useSlotHasWorkflowRuns(slot)
   // The + menu / empty-state launcher hide Terminal when the feature is
   // disabled server-side and Context breakdown unless Developer Mode is on, and
   // never list the pinned views (Changes / Files / Artifacts, and Summary while
   // Pin Summary holds it) — those are always present in the strip.
-  const menuSections = newMenuSections({ devMode, terminalEnabled, summaryEnabled: summaryEnabled && !summaryPinned, hiddenViews })
+  const menuSections = newMenuSections({ devMode, terminalEnabled, summaryEnabled: summaryEnabled && !summaryPinned, hasWorkflowRuns, hiddenViews })
   // The empty-state launcher shows the same entries flat: its two-column grid
   // has nowhere to put a separator, but it must not disagree with the menu
   // about ORDER, so it reads the groups rather than its own list.
