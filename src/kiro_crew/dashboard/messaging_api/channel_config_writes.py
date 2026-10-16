@@ -96,10 +96,12 @@ class _LockedSectionWrite:
         blank_keys: tuple[str, ...] = (),
         seed_from: str | None = None,
         finalize: Callable[[dict], None] | None = None,
+        merge_nested: tuple[str, ...] = (),
     ) -> None:
         self._path = path
         self._section = section
         self._changes = dict(changes)
+        self._merge_nested = merge_nested
         self._drop_keys = drop_keys
         self._blank_keys = blank_keys
         self._seed_from = seed_from
@@ -117,6 +119,23 @@ class _LockedSectionWrite:
         # ``restore`` uses it to recognise a section that exists only because this
         # write created it, seeded contents included.
         self._created_from: dict | None = None
+
+    def _merged_changes(self, section: dict) -> dict[str, object]:
+        """``changes`` with each ``merge_nested`` object merged into the stored one.
+
+        A nested object the caller changed only part of (Slack's
+        ``code_channel_defaults``) is merged key by key into the object as
+        re-read inside the lock, so a concurrent edit to a sibling key -- a
+        ``kirocrew config set slack.code_channel_defaults.agent`` that landed
+        while the save verified a token -- is kept rather than replaced by the
+        caller's older snapshot of the whole object.
+        """
+        changes = dict(self._changes)
+        for key in self._merge_nested:
+            stored, new = section.get(key), changes.get(key)
+            if isinstance(stored, dict) and isinstance(new, dict):
+                changes[key] = {**stored, **new}
+        return changes
 
     def apply(self, fresh: dict) -> dict | None:
         """Merge into *fresh*; ``None`` when the section would be unchanged.
@@ -141,7 +160,7 @@ class _LockedSectionWrite:
         for key in self._blank_keys:
             if key in section:
                 section[key] = ""
-        section.update(self._changes)
+        section.update(self._merged_changes(section))
         touched = set(self._changes)
         if self._finalize is not None:
             pre = dict(section)

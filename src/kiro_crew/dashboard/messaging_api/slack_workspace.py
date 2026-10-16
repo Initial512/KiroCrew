@@ -358,15 +358,23 @@ async def api_slack_manifest(request: web.Request) -> web.Response:
     public template — no secrets.
     """
     from kiro_crew import slack_manifest
+    from kiro_crew.config.loader import KiroCrewConfig
+    from kiro_crew.slack.features import manifest_features
 
     # Default to a non-identifying alias: $USER is a host account name and
     # should not be volunteered to every authenticated client.
     alias = request.query.get("alias", "").strip() or slack_manifest.DEFAULT_ALIAS
     if not slack_manifest.valid_alias(alias):
         return web.json_response({"error": "invalid alias"}, status=400)
+    # The SAME switches `kirocrew manifest` renders for: the manifest a user
+    # copies here must ask Slack for what the gateway will use.
     try:
-        rendered = slack_manifest.render(alias)
-        create_url = slack_manifest.deep_link(alias)
+        features = manifest_features(KiroCrewConfig.load())
+    except Exception:
+        features = frozenset()
+    try:
+        rendered = slack_manifest.render(alias, features=features)
+        create_url = slack_manifest.deep_link(alias, features)
     except FileNotFoundError:
         return web.json_response({"error": "manifest template missing"}, status=500)
     return web.json_response(
@@ -375,5 +383,6 @@ async def api_slack_manifest(request: web.Request) -> web.Response:
             "manifest": rendered,
             "create_url": create_url,
             "command": slack_manifest.slash_command(alias),
+            "features": [f for f in slack_manifest.FEATURES if f in features],
         }
     )
