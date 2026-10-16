@@ -50,20 +50,6 @@ export const SETTINGS_REGISTRY: SettingEntry[] =
     "configKey": "dashboard.use_builtin_browser"
   },
   {
-    "id": "channels.agent-sessions-slack",
-    "label": "Agent sessions (Slack)",
-    "labelKey": "pages.settings.slackPanel.slackCode.agent_sessions",
-    "labelSuffix": "Slack",
-    "description": "Declare the app a Slack agent: threads show a live status and title, and Slack's own Stop button cancels a running turn.",
-    "tab": "channels",
-    "type": "toggle",
-    "occurrence": 1,
-    "params": {
-      "channel": "slack"
-    },
-    "configKey": "slack.agent_sessions"
-  },
-  {
     "id": "channels.allowed-emails-webex",
     "label": "Allowed emails (Webex)",
     "labelKey": "pages.settings.webexPanel.allowed_emails",
@@ -234,7 +220,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] =
     "label": "Code channels (Slack)",
     "labelKey": "pages.settings.slackPanel.slackCode.code_channels",
     "labelSuffix": "Slack",
-    "description": "Let the agent open a Slack code channel for coding work: one channel per task, with a context bar, a diff tab and channel commands. Your workspace must have Slack code channels enabled.",
+    "description": "Let the agent open a Slack code channel for coding work: one channel per task, with a context bar, a diff tab and channel commands. Slack is rolling code channels out gradually, so your workspace may not have them yet.",
     "tab": "channels",
     "type": "toggle",
     "occurrence": 1,
@@ -602,7 +588,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] =
     "label": "Owner Slack member ID (Slack)",
     "labelKey": "pages.settings.slackPanel.owner_slack_member_id",
     "labelSuffix": "Slack",
-    "description": "The one member who can always interact with the bot (KIROCREW_OWNER_ID). Starts with U or W.",
+    "description": "Your Slack member ID (KIROCREW_OWNER_ID): in Slack, open your profile, select ⋮, then Copy member ID. Starts with U or W.",
     "tab": "channels",
     "type": "input",
     "occurrence": 1,

@@ -14,6 +14,7 @@ import { ChannelFolderBackfill } from './ChannelFolderBackfill'
 import ErrorNotice from '../../components/ErrorNotice'
 import { SchemaRestartBadge } from '../../components/settingRef/RestartRequiredBadge'
 import { SlackCodeSection, slackCodeDraftFrom, slackCodePayload, type SlackCodeDraft } from './SlackCodePanel'
+import { SLACK_CODE_SWITCHES } from './slackCodeSwitches'
 /** Brand name — do-not-translate, so it lives here rather than in the catalog. */
 const CHANNEL_NAME = "Slack"
 const SETUP_GUIDE = 'https://github.com/kirodotdev/KiroCrew/blob/main/src/kiro_crew/docs/slack-integration.md'
@@ -30,7 +31,7 @@ type Draft = {
   session_folder: string
   /** Open a Slack thread in the owner's bot DM for every new dashboard session on its first message. */
   auto_link_sessions: boolean
-  /** Slack Code: agent sessions, code channels and the code-channel defaults. */
+  /** Slack Code: the registered switches and the code-channel defaults. */
   code: SlackCodeDraft
 }
 
@@ -185,9 +186,19 @@ export function SlackPanel() {
     staleTime: Infinity,
     retry: false,
   })
+  // The update panel copies this YAML to reinstall the app, so it gets it only
+  // while it is the one for the SAVED switches: not during the refetch a save
+  // starts, not after that refetch failed (React Query keeps the old data),
+  // and not when the switches it was rendered for differ from the saved ones.
+  const savedSwitches = SLACK_CODE_SWITCHES.filter(k => !!data?.[k]).sort().join(',')
+  const manifestFeatures = manifestQ.data?.features
+  const manifestMatchesSaved = manifestQ.isSuccess && !manifestQ.isFetching && !manifestQ.isError
+    && (manifestFeatures === undefined || [...manifestFeatures].sort().join(',') === savedSwitches)
+  // Every way out of this page (Copy, Create, the update panel) exports only this.
+  const currentManifest = manifestMatchesSaved ? manifestQ.data : undefined
 
   const copyManifest = useCallback(async () => {
-    if (!manifestQ.data) return
+    if (!currentManifest) return
     setManifestCopyFailed(false)
     // The shared helper, not `navigator.clipboard.writeText` directly: on a
     // plain-HTTP remote dashboard `navigator.clipboard` is undefined, and a
@@ -196,7 +207,7 @@ export function SlackPanel() {
     // back to `execCommand`, and resolves `false` (or rejects) when both fail.
     let ok = false
     try {
-      ok = await copyToClipboard(manifestQ.data.manifest)
+      ok = await copyToClipboard(currentManifest.manifest)
     } catch {
       ok = false
     }
@@ -206,17 +217,24 @@ export function SlackPanel() {
     }
     setManifestCopied(true)
     setTimeout(() => setManifestCopied(false), 1500)
-  }, [manifestQ.data])
+  }, [currentManifest])
   const [error, setError] = useState('')
 
   // Sync the local draft when server config arrives. Guarded so only the
   // initial load and post-save invalidation reseed it — a background refetch
   // must not discard in-progress edits (including a just-pasted token).
   const syncArmed = useRef(true)
+  // What the Slack Code draft was seeded from. The save sends only the fields
+  // that differ from THIS snapshot, not from the latest refetch: a background
+  // refetch that picks up a CLI edit leaves the draft as it was, so comparing
+  // against the refreshed data would send the stale draft value and undo it.
+  const codeBaseline = useRef<SlackCodeDraft | null>(null)
   useEffect(() => {
     if (data && syncArmed.current) {
       syncArmed.current = false
-      setDraft(draftFrom(data))
+      const seeded = draftFrom(data)
+      codeBaseline.current = seeded.code
+      setDraft(seeded)
       setBotToken(''); setAppToken(''); setBotClear(false); setAppClear(false)
     }
   }, [data])
@@ -252,7 +270,10 @@ export function SlackPanel() {
       // The manifest renders for the saved Slack Code switches, so a save can
       // change it and what the installed app is compared against.
       qc.invalidateQueries({ queryKey: ['slack-manifest'] })
-      qc.invalidateQueries({ queryKey: ['slack-manifest-status'] })
+      // The status read records the install's scopes; the capability lines come
+      // from the config query, so read it once more after the status settles.
+      void qc.invalidateQueries({ queryKey: ['slack-manifest-status'] })
+        .then(() => qc.invalidateQueries({ queryKey: ['slack-config'] }))
     },
   })
 
@@ -269,14 +290,14 @@ export function SlackPanel() {
       // to "Slack", which is what the toggle's description promises.
       session_folder: draft.session_folder_on ? (draft.session_folder.trim() || CHANNEL_NAME) : '',
       auto_link_sessions: draft.auto_link_sessions,
-      ...(data ? slackCodePayload(draft.code, slackCodeDraftFrom(data)) : {}),
+      ...(codeBaseline.current ? slackCodePayload(draft.code, codeBaseline.current) : {}),
     }
     if (botClear) payload.bot_token_clear = true
     else if (botToken.trim()) payload.bot_token = botToken.trim()
     if (appClear) payload.app_token_clear = true
     else if (appToken.trim()) payload.app_token = appToken.trim()
     saveMut.mutate(payload)
-  }, [draft, data, botToken, appToken, botClear, appClear, saveMut])
+  }, [draft, botToken, appToken, botClear, appClear, saveMut])
 
   if (isLoading) return <p className="text-[13px] text-muted p-4">{i18nT('pages.settings.slackPanel.loading_slack_config')}</p>
   // Nothing to lose here: the form is not mounted in this branch.
@@ -334,14 +355,15 @@ export function SlackPanel() {
           </p>
           <div className="flex items-center gap-2 mt-2 flex-wrap">
             <a
-              href={manifestQ.data?.create_url ?? '#'}
+              href={currentManifest?.create_url ?? '#'}
+              tabIndex={currentManifest ? undefined : -1}
               target="_blank" rel="noopener noreferrer"
-              aria-disabled={!manifestQ.data}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[13px] font-medium border transition-all ${manifestQ.data ? 'bg-accent text-accent-fg border-accent hover:bg-accent-hover' : 'border-border text-muted pointer-events-none'}`}
+              aria-disabled={!currentManifest}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[13px] font-medium border transition-all ${currentManifest ? 'bg-accent text-accent-fg border-accent hover:bg-accent-hover' : 'border-border text-muted pointer-events-none'}`}
             >
               {i18nT('pages.settings.slackPanel.create_slack_app')} <ExternalLink size={13} />
             </a>
-            <Btn onClick={() => { void copyManifest() }} disabled={!manifestQ.data}>
+            <Btn onClick={() => { void copyManifest() }} disabled={!currentManifest}>
               {manifestCopied ? <><Check size={13} /> {i18nT('pages.settings.slackPanel.copied')}</> : i18nT('pages.settings.slackPanel.copy_manifest_yaml')}
             </Btn>
             <a href={SETUP_GUIDE} target="_blank" rel="noopener noreferrer"
@@ -395,9 +417,23 @@ export function SlackPanel() {
         </SettingsCard>
       </SettingsSection>
 
+      {/* ── Slack Code: switches, code-channel defaults, manifest update ──
+          Right below the tokens, above the rest of the configuration: turning
+          a switch on is followed by updating the Slack app, and both happen
+          in this one card, with the page's own save inside it. */}
+      <SlackCodeSection
+        data={data}
+        draft={draft.code}
+        onChange={patch => setDraft(d => (d ? { ...d, code: { ...d.code, ...patch } } : d))}
+        readOnly={ro}
+        manifestText={currentManifest?.manifest}
+        onSave={handleSave}
+        saving={saveMut.isPending}
+      />
+
       {/* ── Identity & access ── */}
       <SettingsSection title={i18nT('pages.settings.slackPanel.identity_access')}>
-        <SettingsCard index={2}>
+        <SettingsCard index={3}>
           <SettingsInput
             label={i18nT('pages.settings.slackPanel.owner_slack_member_id')}
             description={i18nT('pages.settings.slackPanel.the_one_member_who_can_always_interact_with_the')}
@@ -420,7 +456,7 @@ export function SlackPanel() {
 
       {/* ── Behavior ── */}
       <SettingsSection title={i18nT('pages.settings.slackPanel.behavior')}>
-        <SettingsCard index={3}>
+        <SettingsCard index={4}>
           <SettingsInput
             label={i18nT('pages.settings.slackPanel.slash_command')}
             description={i18nT('pages.settings.slackPanel.trigger_word_for_the_slack_slash_command_without')}
@@ -493,15 +529,6 @@ export function SlackPanel() {
           </div>
         </SettingsCard>
       </SettingsSection>
-
-      {/* ── Slack Code: agent sessions, code channels, manifest update ── */}
-      <SlackCodeSection
-        data={data}
-        draft={draft.code}
-        onChange={patch => setDraft(d => (d ? { ...d, code: { ...d.code, ...patch } } : d))}
-        readOnly={ro}
-        manifestText={manifestQ.data?.manifest}
-      />
 
       {/* ── Save (hidden on read-only remote sessions) ── */}
       {!ro && <div className="flex items-center gap-3 mt-1 mb-4">

@@ -133,8 +133,10 @@ class _LockedSectionWrite:
         changes = dict(self._changes)
         for key in self._merge_nested:
             stored, new = section.get(key), changes.get(key)
-            if isinstance(stored, dict) and isinstance(new, dict):
-                changes[key] = {**stored, **new}
+            if isinstance(new, dict):
+                # Always a fresh object: the section must never share a dict
+                # with the caller's request or with ``_written``.
+                changes[key] = {**stored, **new} if isinstance(stored, dict) else dict(new)
         return changes
 
     def apply(self, fresh: dict) -> dict | None:
@@ -171,10 +173,39 @@ class _LockedSectionWrite:
             touched |= {
                 k for k in set(pre) | set(section) if pre.get(k, _ABSENT) != section.get(k, _ABSENT)
             }
-        self._written = {k: section[k] for k in touched if k in section}
+        # Copies of the nested objects: ``restore`` compares against what was
+        # WRITTEN, which a later in-place edit of the section must not move.
+        self._written = {
+            k: dict(section[k]) if isinstance(section[k], dict) else section[k]
+            for k in touched
+            if k in section
+        }
         if isinstance(self._prior, dict) and section == self._prior:
             return None
         return fresh
+
+    def _restore_nested(self, section: dict, key: str, written: dict, prior: Any) -> None:
+        """Undo this save's part of a ``merge_nested`` object, field by field.
+
+        Only the sub-keys this save asked for are undone, and only where the
+        stored value is still the one it wrote; a sibling a concurrent writer
+        changed in between stays, so their edit neither blocks this rollback
+        nor is lost to it.
+        """
+        stored = section.get(key)
+        if not isinstance(stored, dict):
+            return  # replaced wholesale by another writer since; theirs
+        requested = self._changes.get(key)
+        before = prior if isinstance(prior, dict) else {}
+        for sub in requested if isinstance(requested, dict) else ():
+            if sub not in written or stored.get(sub, _ABSENT) != written[sub]:
+                continue  # not ours any more
+            if sub in before:
+                stored[sub] = before[sub]
+            else:
+                stored.pop(sub, None)
+        if prior is _ABSENT and not stored:
+            section.pop(key, None)
 
     def restore(self, fresh: dict) -> dict:
         section = fresh.get(self._section)
@@ -190,6 +221,9 @@ class _LockedSectionWrite:
         else:
             before = self._created_from if self._created_from is not None else {}
         for key, written in self._written.items():
+            if key in self._merge_nested and isinstance(written, dict):
+                self._restore_nested(section, key, written, before.get(key, _ABSENT))
+                continue
             if section.get(key) != written:
                 continue  # not ours any more
             if key in before:

@@ -1,4 +1,4 @@
-"""Slack Code settings: the agent-session / code-channel switches and defaults.
+"""Slack Code settings: the registered switches and the code-channel defaults.
 
 The read model, the validation and the manifest-drift report behind Settings →
 Slack's "Slack Code" cards. Kept out of :mod:`slack_settings` (whose functions
@@ -23,13 +23,16 @@ from typing import Any, Mapping
 from aiohttp import web
 
 from kiro_crew import slack_manifest
+from kiro_crew.agent_files import HEARTBEAT_AGENT_FILENAME
 from kiro_crew.config.sections_slack import CODE_CHANNEL_DEFAULT_MAX
 from kiro_crew.effort import is_valid_effort
 from kiro_crew.slack import features as slack_features
 from kiro_crew.slack import scope_probe
 
-#: The switches the PUT accepts, in display order.
-SWITCH_KEYS: tuple[str, ...] = ("agent_sessions", "code_channels")
+# The switches the PUT accepts and the GET reports are every switch registered
+# in ``slack_manifest.FEATURE_SCOPES`` (read at call time, as
+# ``slack_manifest.FEATURES``), each under its own ``slack.<name>`` key, so
+# registering one there needs nothing here.
 #: The ``code_channel_defaults`` keys the PUT accepts.
 DEFAULT_KEYS: tuple[str, ...] = ("folder", "agent", "model", "reasoning_effort")
 #: The model picker's "pin nothing, inherit" spelling; stored as unset.
@@ -63,16 +66,67 @@ def _folder_view(folders: list[dict[str, Any]], folder: Mapping[str, Any] | None
     }
 
 
-async def _agent_names(project_dir: str | None) -> set[str]:
-    """Every agent a session in *project_dir* could run (user + project scope)."""
-    from kiro_crew.agent_discovery import list_agents
+#: Templates the code-channel agent picker leaves out beyond what the chat
+#: picker's catalog already withholds (``kirocrew-lite``, the title/compaction
+#: and routing-classifier agent with no tools; ``kirocrew-guest``, a trust
+#: boundary; the dashboard manager; crewmates' private copies). The heartbeat
+#: agent runs unattended polling, never a conversation.
+_BACKGROUND_AGENT_FILES = frozenset({HEARTBEAT_AGENT_FILENAME})
+
+
+def _choosable_agent_names(project_dir: str | None) -> list[str]:
+    """The agents a code channel may run, in the chat picker's order.
+
+    The chat picker's own template choices (so ``kirocrew-conductor``,
+    ``kirocrew-team-lead`` and every other shipped agent a person can run are
+    offered), minus Kiro Crew's generated specs (the side-turn read-only spec,
+    skill-view aliases) and the background-only agents above.
+    """
+    from kiro_crew.agent_discovery import is_internal_agent_spec, list_agents
+    from kiro_crew.dashboard.handlers.agent_catalog import _choosable_templates
+
+    return [
+        a.name
+        for a in _choosable_templates(list_agents(project_dir=project_dir or None))
+        if not is_internal_agent_spec(a)
+        and not (a.kirocrew_owned and a.filename in _BACKGROUND_AGENT_FILES)
+    ]
+
+
+async def _agent_names(project_dir: str | None) -> list[str]:
+    """:func:`_choosable_agent_names`, off the event loop."""
     from kiro_crew.executors import discovery_executor
 
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(
-        discovery_executor(),
-        lambda: {a.name for a in list_agents(project_dir=project_dir or None)},
+        discovery_executor(), lambda: _choosable_agent_names(project_dir)
     )
+
+
+def _defaults_project_dir(folders: list[dict[str, Any]], folder_ref: str | None) -> str | None:
+    """The project a default agent is looked up in, for default folder *folder_ref*.
+
+    The folder it names (by id, or by path from a hand edit), else the auto
+    folder for an unset one; ``None`` when neither resolves. The save's agent
+    check and the picker's list both use this, so they cannot disagree.
+    """
+    folder = (
+        slack_features.find_folder(folders, folder_ref)
+        if folder_ref
+        else slack_features.find_auto_folder(folders)
+    )
+    if folder is None:
+        return None
+    return slack_features.folder_project_dir(folders, str(folder.get("id")))
+
+
+async def code_channel_agents(state: Any, folder_ref: str | None) -> list[str] | None:
+    """The agents a save accepts with default folder *folder_ref*; ``None`` when
+    they cannot be listed. Lets the picker follow an unsaved folder pick."""
+    try:
+        return await _agent_names(_defaults_project_dir(_folders(state), folder_ref or None))
+    except Exception:
+        return None
 
 
 def _slack_agent(cfg: Any) -> str:
@@ -87,17 +141,20 @@ async def code_settings_view(cfg: Any, state: Any) -> dict[str, Any]:
     resolved = slack_features.resolve_code_channel_session(
         defaults, folders, slack_agent=_slack_agent(cfg) or None
     )
-    folder = slack_features.find_folder(folders, defaults.folder)
+    folder = (
+        slack_features.find_folder(folders, defaults.folder)
+        if defaults.folder
+        else slack_features.find_auto_folder(folders)
+    )
     warnings: list[str] = []
     if resolved.folder_missing:
         warnings.append("folder_missing")
-    if defaults.agent:
-        try:
-            known = await _agent_names(resolved.project_dir)
-        except Exception:
-            known = None
-        if known is not None and defaults.agent not in known:
-            warnings.append("agent_missing")
+    try:
+        choices: list[str] | None = await _agent_names(resolved.project_dir)
+    except Exception:
+        choices = None
+    if defaults.agent and choices is not None and defaults.agent not in choices:
+        warnings.append("agent_missing")
 
     def _capability(feature: str) -> dict[str, object]:
         ok, reason = slack_features.availability(feature)
@@ -107,13 +164,15 @@ async def code_settings_view(cfg: Any, state: Any) -> dict[str, Any]:
             "scope": slack_features.REQUIRED_SCOPE[feature],
         }
 
+    # Per registered switch: the toggle as saved (``<name>``) and whether the
+    # install can run it (``<name>_capability``); toggle AND available is what
+    # the runtime checks.
+    switches: dict[str, Any] = {}
+    for feature in slack_manifest.FEATURES:
+        switches[feature] = slack_features.toggle(cfg, feature)
+        switches[f"{feature}_capability"] = _capability(feature)
     return {
-        # The toggles as saved; whether each one actually runs also needs the
-        # capability below (toggle AND available is what the runtime checks).
-        "agent_sessions": slack_features.agent_sessions_toggle(cfg),
-        "code_channels": slack_features.code_channels_toggle(cfg),
-        "agent_sessions_capability": _capability(slack_features.AGENT_SESSIONS),
-        "code_channels_capability": _capability(slack_features.CODE_CHANNELS),
+        **switches,
         "code_channel_defaults": {
             "folder": defaults.folder,
             "agent": defaults.agent,
@@ -129,7 +188,26 @@ async def code_settings_view(cfg: Any, state: Any) -> dict[str, Any]:
             "project_dir": resolved.project_dir,
             "project_source": resolved.project_source,
             "slack_agent": _slack_agent(cfg),
+            "folder_path": resolved.folder_path,
+            "folder_auto_create": resolved.folder_auto_create,
         },
+        # What an unset default folder means, so the picker's default row and the
+        # preview say it without a second copy of the rule: the folder's name,
+        # the agent it is created with, the id when it already exists, and
+        # whether two top-level folders share the name (then neither is used).
+        "code_channel_auto_folder": {
+            "name": slack_features.AUTO_FOLDER_NAME,
+            "agent": slack_features.AUTO_FOLDER_AGENT,
+            "id": (
+                str(auto["id"])
+                if (auto := slack_features.find_auto_folder(folders)) is not None
+                else None
+            ),
+            "ambiguous": len(slack_features.auto_folder_matches(folders)) > 1,
+        },
+        # The agents the default-agent picker offers; ``None`` when they could
+        # not be listed (the picker then says so rather than showing none).
+        "code_channel_agents": choices,
         "code_channel_warnings": warnings,
     }
 
@@ -148,11 +226,19 @@ def _opt_text(key: str, raw: object) -> str | None:
 
 
 def _stored_default(prior: Mapping[str, Any], key: str) -> str | None:
-    """A stored default as the builder reads it: trimmed text, else unset."""
+    """A stored default as the builder reads it: trimmed text, else unset.
+
+    An effort off the ladder (``"High"`` from a hand edit) is unset too, as the
+    builder reads it: kept, it would be merged into every later save and refuse
+    it over a value the page shows as empty.
+    """
     value = prior.get(key)
     if not isinstance(value, str) or len(value.strip()) > CODE_CHANNEL_DEFAULT_MAX:
         return None
-    return value.strip() or None
+    text = value.strip() or None
+    if key == "reasoning_effort" and text is not None and not is_valid_effort(text):
+        return None
+    return text
 
 
 async def validate_code_settings(
@@ -170,7 +256,7 @@ async def validate_code_settings(
     """
     staged: dict[str, object] = {}
     applied: list[str] = []
-    for key in SWITCH_KEYS:
+    for key in slack_manifest.FEATURES:
         if key not in body:
             continue
         val = body.get(key)
@@ -197,7 +283,6 @@ async def validate_code_settings(
     }
 
     folders = _folders(state)
-    project_dir: str | None = None
     if merged["folder"] is not None and "folder" in raw:
         folder = slack_features.find_folder(folders, merged["folder"])
         if folder is None:
@@ -206,8 +291,7 @@ async def validate_code_settings(
             )
         # Stored by id: a rename or a move in the sidebar keeps the default.
         merged["folder"] = str(folder.get("id"))
-    if merged["folder"] is not None:
-        project_dir = slack_features.folder_project_dir(folders, merged["folder"])
+    project_dir = _defaults_project_dir(folders, merged["folder"])
 
     if merged["agent"] is not None and ("agent" in raw or "folder" in raw):
         try:
@@ -221,9 +305,20 @@ async def validate_code_settings(
         if merged["model"] == _INHERIT_MODEL:
             merged["model"] = None
         else:
-            from kiro_crew.dashboard.handlers.core import _validate_role_model
+            from kiro_crew.dashboard.handlers import core as core_handlers
 
-            reason = _validate_role_model(merged["model"], request)
+            # A code channel's session runs on the default harness, so only that
+            # harness's live catalog may judge the pin (as the role pins in
+            # ``api_kirocrew_config_patch``): a newer member session on another
+            # harness must not reject a model the default-harness picker offers.
+            provider, pin_backend = await asyncio.to_thread(
+                core_handlers._active_provider_and_pin_backend
+            )
+            reason = await core_handlers._revalidate_role_pin_evidence(
+                merged["model"], request, backend=pin_backend
+            ) or core_handlers._validate_role_model(
+                merged["model"], request, provider, backend=pin_backend
+            )
             if reason:
                 raise CodeSettingsError(f"code_channel_defaults.model: {reason}")
 

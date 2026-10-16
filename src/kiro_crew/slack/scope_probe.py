@@ -111,7 +111,7 @@ STATUS_UP_TO_DATE = "up_to_date"
 #: At least one required bot scope is missing: update the app and reinstall.
 STATUS_NEEDS_UPDATE = "needs_update"
 #: Scopes are granted, but Slack answered ``feature_disabled``: the workspace
-#: does not have Slack code channels / agent sessions turned on.
+#: does not have the Slack Code feature (code channels) turned on.
 STATUS_FEATURE_DISABLED = "feature_disabled"
 #: Slack did not say which scopes the install holds (no ``x-oauth-scopes``
 #: header, a network failure, or an error other than a rejected token).
@@ -126,35 +126,26 @@ _TOKEN_ERRORS = frozenset(
     {"invalid_auth", "not_authed", "account_inactive", "token_revoked", "token_expired"}
 )
 
+#: Slack errors that answer nothing about the feature: try again later, or a
+#: token, method or scope refusal that stops the call before the feature gate.
+_INCONCLUSIVE_ERRORS = _TOKEN_ERRORS | frozenset(
+    {
+        "ratelimited",
+        "rate_limited",
+        "internal_error",
+        "fatal_error",
+        "service_unavailable",
+        "request_timeout",
+        "unknown_method",
+        "not_allowed_token_type",
+        "missing_scope",
+    }
+)
+
 #: A channel id no workspace issues (``C`` + zeros). Asking
 #: ``agents.conversations.listViews`` about it tells whether the feature exists at
 #: all without touching any real conversation. A read; it can only fail.
 _NO_SUCH_CHANNEL = "C00000000000"
-
-
-def note_feature_disabled(feature: str) -> None:
-    """Record that Slack refused *feature* with ``feature_disabled`` at runtime.
-
-    Kept for callers that only know the one code; it is the capability latch in
-    :mod:`kiro_crew.slack.features`.
-    """
-    from kiro_crew.slack import features
-
-    features.latch_unavailable(feature, "feature_disabled")
-
-
-def clear_feature_disabled(feature: str | None = None) -> None:
-    """Lift a recorded refusal (all of them when *feature* is None)."""
-    from kiro_crew.slack import features
-
-    features.clear_latch(feature)
-
-
-def feature_disabled_seen() -> frozenset[str]:
-    """Features latched off because Slack answered ``feature_disabled``."""
-    from kiro_crew.slack import features
-
-    return frozenset(f for f, e in features.latched().items() if e == "feature_disabled")
 
 
 def _slack_error(exc: BaseException) -> str:
@@ -265,15 +256,19 @@ async def probe_manifest_status(
     features.record_granted_scopes(granted)
     missing = tuple(sorted(required - granted))
     extra = tuple(sorted((granted & frozenset(known_scopes)) - required))
-    disabled = set(feature_disabled_seen())
+    disabled = {f for f, e in features.latched().items() if e == "feature_disabled"}
     if probe_code_channels and "code_channels:manage" in granted:
-        if await _code_channels_refused(client):
+        answer = await _code_channels_answer(client)
+        if answer is True:
+            # Reported on the page only: the runtime latch is the connect probe's
+            # and the runtime's to set, so a settings-page read never raises a
+            # notification or switches a feature off by itself.
             disabled.add("code_channels")
-            features.latch_unavailable("code_channels", "feature_disabled")
-        else:
+        elif answer is False:
             # A probe that now gets past the gate retires a stale runtime record.
             disabled.discard("code_channels")
-            clear_feature_disabled("code_channels")
+            features.clear_latch("code_channels")
+        # No answer (a timeout, a rate limit): what is already known stands.
     if missing:
         status = STATUS_NEEDS_UPDATE
     elif disabled:
@@ -302,15 +297,27 @@ async def _app_id(client: Any, bot_id: str) -> str:
         return ""
 
 
-async def _code_channels_refused(client: Any) -> bool:
-    """True only when Slack answers the code-channel read with ``feature_disabled``."""
+async def _code_channels_answer(client: Any) -> bool | None:
+    """Slack's answer to the code-channel read: True = ``feature_disabled``,
+    False = past the gate (success or any other definitive refusal), None = no
+    answer (a transport failure, a rate limit or a Slack-side error)."""
     try:
         await client.api_call(
             "agents.conversations.listViews", params={"channel_id": _NO_SUCH_CHANNEL}
         )
     except Exception as exc:
-        return _slack_error(exc) == "feature_disabled"
+        err = _slack_error(exc)
+        if err == "feature_disabled":
+            return True
+        if not err or err in _INCONCLUSIVE_ERRORS:
+            return None
+        return False
     return False
+
+
+async def _code_channels_refused(client: Any) -> bool:
+    """True only when Slack answers the code-channel read with ``feature_disabled``."""
+    return await _code_channels_answer(client) is True
 
 
 async def refresh_capabilities(client: Any, *, probe_code_channels: bool = False) -> None:
@@ -359,7 +366,7 @@ def capability_notifier(notify: Callable[..., None] | None) -> Callable[[str, st
     """A ``features.set_capability_notifier`` callback posting one dashboard note."""
     if notify is None:
         return None
-    labels = {"agent_sessions": "Agent sessions", "code_channels": "Code channels"}
+    labels = {"code_channels": "Code channels"}
     reasons = {
         "feature_disabled": "Slack has not enabled this feature for your workspace",
         "missing_scope": "your Slack app is missing a permission it needs; update the "

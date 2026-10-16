@@ -310,9 +310,7 @@ async def _slack_config_save_locked(request: web.Request) -> web.Response:
     # file may have gone corrupt between the snapshot and the locked reread),
     # and a refusal must not leave a credential already committed to .env
     # beside config the caller was told did not save. ──
-    _cfg_write = _LockedSectionWrite(
-        path, "slack", staged, merge_nested=("code_channel_defaults",)
-    )
+    _cfg_write = _LockedSectionWrite(path, "slack", staged, merge_nested=("code_channel_defaults",))
     # Hold the live-config watcher for the whole config+credential transaction:
     # the two files commit separately and a failed .env write rolls the config
     # back, so nothing between here and the end of the block may be applied to
@@ -402,3 +400,19 @@ async def api_slack_manifest_status(request: web.Request) -> web.Response:
     refresh = request.query.get("refresh", "") in ("1", "true")
     body = await manifest_status(cfg, creds.get(CRED_SLACK_BOT_TOKEN, ""), refresh=refresh)
     return web.json_response(body)
+
+
+async def api_slack_code_channel_agents(request: web.Request) -> web.Response:
+    """GET /api/slack/code-channel-agents?folder=<id or path> — the agents a
+    defaults save accepts with that default folder (empty = the auto folder).
+
+    Lets the Slack Code picker follow a folder picked but not saved yet, whose
+    project can offer other agents. ``{"agents": null}`` when they cannot be
+    listed. Reads only.
+    """
+    from kiro_crew.config.sections_slack import CODE_CHANNEL_DEFAULT_MAX
+    from kiro_crew.dashboard.slack_code_settings import code_channel_agents
+
+    folder = request.query.get("folder", "")[:CODE_CHANNEL_DEFAULT_MAX]
+    agents = await code_channel_agents(request.app["state"], folder)
+    return web.json_response({"agents": agents})
