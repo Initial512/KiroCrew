@@ -45,7 +45,7 @@
  * adds: every grant check still applies to what stays.
  */
 import { useRef, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient, focusManager } from '@tanstack/react-query'
 import { Loader2, Paperclip } from 'lucide-react'
 import ChatMessageList, { type VirtualTranscriptHandle } from './ChatMessageList'
 import ErrorNotice from '../components/ErrorNotice'
@@ -390,7 +390,10 @@ function ChatEmbed({
   const hidden = (key: ChatEmbedHideKey) => hide?.includes(key) === true
   // The parking scope for receipts that outlive this instance: this app's
   // embeds for this slot (see embedSendRecovery).
-  const appName = useAppInfo().name
+  const appInfo = useAppInfo()
+  const appName = appInfo.name
+  // A host that predates the flag leaves it unset: visible.
+  const hostActive = appInfo.active !== false
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const lastHashRef = useRef('')
   // The transcript is ChatMessageList's virtualized mount: it owns the scroller
@@ -433,9 +436,12 @@ function ChatEmbed({
   // stall notice so both measure the same outage.
   const failureRunsRef = useRef<FailureRuns>(new Map())
   const queryClient = useQueryClient()
-  // The host's push channel (slotPush.ts), and whether it is up now.
+  // The host's push channel (slotPush.ts). The poll cadence asks it at each
+  // tick whether it signals THIS slot now, so a slot that changes hands, or is
+  // listed only after mount, is judged by its owner at that moment. The state
+  // only re-renders on a connection change, so the cadence moves at once then.
   const slotPush = useSlotPush()
-  const [pushLive, setPushLive] = useState(() => slotPush?.connected() ?? false)
+  const [, setPushLive] = useState(() => slotPush?.connected(slotKey) ?? false)
   const { data: slotData, refetch, isPlaceholderData, isError, isFetching, status, dataUpdatedAt, errorUpdatedAt } = useQuery({
     queryKey: ['app-sdk-embed', slotKey, limit],
     // Incremental: the held page's cursor is echoed, and only the rows after
@@ -457,7 +463,7 @@ function ChatEmbed({
     refetchInterval: (query) => embedPollInterval(
       query.state,
       embedOutageMs(failureRunsRef.current, `${String(query.queryKey[1])}:${String(query.queryKey[2])}`, query.state),
-      pushLive,
+      slotPush?.connected(slotKey) ?? false,
     ),
   })
 
@@ -466,20 +472,37 @@ function ChatEmbed({
   // EMBED_PUSH_MIN_GAP_MS after the last. `cancelRefetch: false` joins a read
   // already in flight instead of aborting it, so a fast stream cannot starve
   // every read. Each connect (reconnects included) re-reads once: a change made
-  // while the channel was down was never signalled.
+  // while the channel was down was never signalled. Attaching to a channel
+  // that is already up re-reads a cached page too, because frames that came
+  // while this embed was unmounted refreshed nothing. While the page or the
+  // host tab is hidden no push read is sent: signals only mark one read
+  // pending, and it is sent once both are visible. The poll pauses only for a
+  // hidden page; an inactive host tab keeps its cadence.
   const refetchRef = useRef(refetch)
   refetchRef.current = refetch
+  const limitRef = useRef(limit)
+  limitRef.current = limit
+  const hostActiveRef = useRef(hostActive)
+  hostActiveRef.current = hostActive
+  const flushHiddenRef = useRef<() => void>(() => {})
   useEffect(() => {
     if (!slotPush) { setPushLive(false); return }
-    setPushLive(slotPush.connected())
+    setPushLive(slotPush.connected(slotKey))
     let disposed = false
     let inFlight = false
     let dirty = false
+    let pending = false
     let lastAt = 0
     let timer: ReturnType<typeof setTimeout> | undefined
+    const queryState = () => queryClient.getQueryState(['app-sdk-embed', slotKey, limitRef.current])
+    const visible = () => hostActiveRef.current && focusManager.isFocused()
     const run = () => {
       timer = undefined
       if (disposed) return
+      if (!visible()) { pending = true; return }
+      // A read this loop did not start (a poll) may be in flight. Joining it
+      // reuses a request sent before the change, so one more read follows.
+      if (queryState()?.fetchStatus === 'fetching') dirty = true
       inFlight = true
       lastAt = Date.now()
       void refetchRef.current({ cancelRefetch: false }).finally(() => {
@@ -488,10 +511,18 @@ function ChatEmbed({
       })
     }
     const schedule = () => {
+      if (!visible()) { pending = true; return }
       if (inFlight) { dirty = true; return }
       if (timer !== undefined) return
       timer = setTimeout(run, Math.max(0, lastAt + EMBED_PUSH_MIN_GAP_MS - Date.now()))
     }
+    const flushHidden = () => {
+      if (disposed || !pending || !visible()) return
+      pending = false
+      schedule()
+    }
+    flushHiddenRef.current = flushHidden
+    const unfocus = focusManager.subscribe(flushHidden)
     const unwatch = slotPush.watch(slotKey, {
       onChange: schedule,
       onConnection: (up) => {
@@ -499,12 +530,20 @@ function ChatEmbed({
         if (up) schedule()
       },
     })
+    // A cached page with no read under way: re-read it. A first read in
+    // flight was sent at mount, after anything this embed missed.
+    const held = queryState()
+    if (slotPush.connected(slotKey) && held?.dataUpdatedAt && held.fetchStatus !== 'fetching') schedule()
     return () => {
       disposed = true
       if (timer !== undefined) clearTimeout(timer)
       unwatch()
+      unfocus()
+      if (flushHiddenRef.current === flushHidden) flushHiddenRef.current = () => {}
     }
-  }, [slotPush, slotKey])
+  }, [slotPush, slotKey, queryClient])
+  // The host tab coming back sends the read held while it was hidden.
+  useEffect(() => { if (hostActive) flushHiddenRef.current() }, [hostActive])
 
   // The last SETTLED page for this slot. A placeholder covers the in-flight
   // window of a widen, but a REJECTED widen leaves the wider key with no data

@@ -277,6 +277,10 @@ read, at most one every 250 ms. While the channel is up and reads succeed, the
 poll is only a backstop: every 5 seconds while the agent works and every 15
 seconds otherwise. Each time the channel comes up, reconnects included, the
 embed reads once, since a change made while it was down was never signalled.
+While the page is hidden or the host tab is inactive (`active` is `false`), the
+embed holds these push reads and sends one when both are visible again. The
+poll is separate: it pauses while the page is hidden, but keeps its cadence in
+an inactive host tab.
 When the channel is down, or the host passes no `slotPush`, the embed polls as
 described below.
 
@@ -286,19 +290,19 @@ slot checks still apply. The dashboard's hosts (`AppHost` and the builtin
 pages) pass one that signals only for slots the app owns -- the slots an app
 token receives slot events for with no `slots:*` declaration. A slot the app
 does not own, such as one the generic `POST /api/chat` created, is not signalled
-and the embed keeps polling it. An app needs no new permission for this.
+and the embed keeps polling it at the full pace: `connected(slotKey)` is
+`false` for such a slot even while the socket is up. An app needs no new
+permission for this.
 
 ```ts
 interface SlotPush {
-  connected(): boolean
+  connected(slotKey: string): boolean
   watch(slotKey: string, watcher: {
     onChange(): void
     onConnection(connected: boolean): void
   }): () => void
 }
 ```
-
-`useSlotPush()` returns the provider's `SlotPush`, or `null`.
 
 #### Polling and outages
 
