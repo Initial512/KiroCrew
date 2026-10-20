@@ -636,11 +636,13 @@ def _run_session_broadcast(args: dict[str, Any], ctx: ToolContext) -> str:
     payload = {"message": args["message"], "mode": args["mode"]}
     # The VALUE decides, not the key: the validator keeps an explicit JSON
     # `null` as the field's `None` default, so a presence test would send
-    # `None` into `list()`. `None` and omission both select the default
-    # audience, while an explicitly empty list is still forwarded for the
-    # backend to refuse rather than widened to that audience here.
-    if args.get("targets") is not None:
+    # `None` into `list()`. `None`, an empty list and omission all select nobody
+    # (the backend refuses a call that also lacks `all: true`), so only a
+    # non-empty list is forwarded.
+    if args.get("targets"):
         payload["targets"] = list(args["targets"])
+    if args.get("all") is True:
+        payload["all"] = True
     try:
         resp = ctx.client.post(
             "/api/session-control/broadcast",
