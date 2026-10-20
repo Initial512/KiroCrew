@@ -875,6 +875,13 @@ def _managed_browser_cli_dirs() -> list[str]:
     return [value for entry in entries if (value := _validated_bin_dir(str(entry)))]
 
 
+# Where a POSIX PATH's system section starts. An inherited well-known dir only
+# anchors :func:`augmented_path`'s prepend when it sits ahead of these.
+_SYSTEM_BIN_DIRS = frozenset(
+    os.path.normcase(os.path.normpath(d)) for d in ("/usr/bin", "/bin", "/usr/sbin", "/sbin")
+)
+
+
 def augmented_path(base_path: str = "", *, home: str | None = None) -> str:
     """Return *base_path* prepended with well-known MCP binary directories.
 
@@ -906,6 +913,27 @@ def augmented_path(base_path: str = "", *, home: str | None = None) -> str:
     ``acp.client``'s claude-backend resolvers), which must not consume a
     contributed directory. That contribution lives on :func:`mcp_search_path` —
     see the section comment near ``_registered_path_dirs``.
+
+    A well-known directory the inherited ``base_path`` ALREADY lists ahead of
+    its system dirs (``/usr/bin``, ``/bin``, ``/usr/sbin``, ``/sbin``) is an
+    ANCHOR: it is not prepended again, so it keeps the position the user gave
+    it. The prepend exists for a gateway whose inherited ``PATH`` lacks these
+    dirs (systemd / launchd / another non-login shell); re-prepending a dir the
+    user already placed behind their own (a Nix devshell's tool dirs) would
+    shadow the user's choice instead. Matching uses ``normcase(normpath(...))``
+    exactly as :func:`_dedup_dirs` does.
+
+    Every other extra keeps its rank relative to the anchors: extras ranked
+    before the first anchor are prepended as before, and each later extra is
+    inserted right after the right-most of the higher-ranked anchors. So un-inherited
+    per-version node bins still follow inherited mise shims or an inherited
+    ``/opt/homebrew/bin``, and still precede ``/usr/bin``. An inherited dir
+    that sits behind a system dir is not an anchor and is prepended as on
+    main, so a :func:`~kiro_crew.service.common.service_path` ``PATH``
+    (``~/.local/bin:/usr/local/bin:/usr/bin:/bin:<installer PATH>``) resolves
+    in the same order as before. With no anchor at all the output equals main.
+    The ``sys.executable`` fallback is still appended last regardless, since its
+    whole purpose is to resolve names found nowhere else.
     """
     resolved_home = home or os.path.expanduser("~")
     mise_data = mise_data_dir(resolved_home)
@@ -921,7 +949,36 @@ def augmented_path(base_path: str = "", *, home: str | None = None) -> str:
         if (e := _validated_bin_dir(d.format(home=resolved_home, mise_data=mise_data)))
     ]
     extra += _node_all_bin_dirs(resolved_home, mise_data, _xdg_config_dir(resolved_home))
-    parts = extra + ([base_path] if base_path else [])
+    # Anchor each well-known dir the inherited PATH already lists ahead of its
+    # system dirs, so a prepend never moves it in front of the user's own dirs.
+    # Un-anchored extras keep their rank: before the first anchor they are
+    # prepended; after it they go right behind the right-most higher-ranked anchor.
+    entries = base_path.split(os.pathsep) if base_path else []
+    anchors: dict[str, int] = {}
+    for i, p in enumerate(entries):
+        n = os.path.normcase(os.path.normpath(p)) if p else ""
+        if n in _SYSTEM_BIN_DIRS:
+            break
+        if n:
+            anchors.setdefault(n, i)
+    before: list[str] = []
+    after: dict[int, list[str]] = {}
+    anchor: int | None = None
+    for e in extra:
+        n = os.path.normcase(os.path.normpath(e))
+        if n in anchors:
+            # Never move back left: a lower-ranked extra must stay behind every
+            # higher-ranked anchor, even when the user listed those anchors in
+            # the opposite order (e.g. /usr/local/bin before the mise shims).
+            anchor = anchors[n] if anchor is None else max(anchor, anchors[n])
+        elif anchor is None:
+            before.append(e)
+        else:
+            after.setdefault(anchor, []).append(e)
+    parts = list(before)
+    for i, p in enumerate(entries):
+        parts.append(p)
+        parts.extend(after.get(i, ()))
     parts.append(str(Path(sys.executable).parent))
     return os.pathsep.join(parts)
 
