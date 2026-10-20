@@ -219,6 +219,19 @@ Fold-backed fields update by themselves. Choose evidence that explains this
 project, including relevant goals and milestones when they reveal progress;
 repeating the Profile form is different from drawing a useful project view.
 
+**Reply buttons.** A button you draw can offer the reader a reply. Post
+`parent.postMessage({type: 'kirocrew-dashboard:act', text}, '*')` to put `text`
+in the reader's chat box; they press send. Post `type: 'kirocrew-dashboard:send'`
+to send it into this crewmate's own chat in one click. `send` is only a request:
+the host sends it only after a recent real interaction with the window while your page
+holds focus, never to a target you name, at most once every few seconds, and it falls back to `act` when the reader
+switched one-click sends off on the Profile tab or when the chat is busy or
+waiting on an approval or a question. The text is trimmed, at most 600 characters,
+with no control characters but a newline. When a reply arrives it begins
+`[Dashboard card]`: the reader clicked one of the replies you offered. It is not
+an approval of a tool call or permission and does not answer an open question.
+Keep `act` for replies that need the reader's edit before they go.
+
 | Evidence | Fold and shape |
 |---|---|
 | worker sessions and current states | `workers.items`, `counts`, `total`, `omitted` |

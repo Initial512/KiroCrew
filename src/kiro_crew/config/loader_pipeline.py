@@ -910,6 +910,9 @@ def build_config(
                     starred=crew.read("starred", _safe_bool),
                     # Strictly a bool, like ``starred``: a stray string reads as off.
                     dynamic_capabilities=crew.read("dynamic_capabilities", _safe_bool),
+                    # Hand-editable, and a safety switch: only a real bool is
+                    # honoured; anything else reads as the default (on).
+                    dashboard_card_send=crew.read("dashboard_card_send", _safe_bool),
                     # Same guard family as model/triggers: config.json is
                     # hand-editable, so a junk value must collapse to 0
                     # (inherit the global window), never crash the load.
