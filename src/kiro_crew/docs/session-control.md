@@ -179,6 +179,14 @@ every worker rather than of one: the base moved, the approach changed, stop.
 | `targets` | one of `targets` / `all` | Session keys or titles. Name at least one, or pass `all: true` instead. An empty list counts as no list |
 | `all` | one of `targets` / `all` | `true` reaches every session you created. Not together with `targets` |
 
+A call that selects no audience is refused and delivers nothing. The tool
+refuses it before sending a request, and the gateway refuses it too. A session
+that started before `all` existed still holds the old tool text ("omit the target
+list to reach everything"); its first fleet-wide call is refused once with a reply
+that names `all: true`. While a tool and a gateway of different versions meet,
+the tool never sends a body without a target list unless `all: true` is set, so an
+older gateway cannot read an empty audience as every session you created.
+
 `mode` is required because the two are different instructions, not two settings
 of one. `queue` lets every target finish what it is doing; `steer` cuts into
 every running turn. "The base moved, rebase before you push" is the first. "Stop,

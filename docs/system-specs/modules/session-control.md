@@ -126,7 +126,12 @@ chose. Reaching the whole set always takes an explicit `all: true`: a `targets`
 that is absent, `null` or empty selects nobody, because Kiro CLI drops an empty
 list from a tool call and the server cannot tell it from an omission. A call with
 neither `targets` nor `all: true` is refused `target_required`, and one with both is
-refused `audience_conflict`, each before anything is sent. An explicit list is
+refused `audience_conflict`, each before anything is sent. The tool runner
+refuses a call that names neither before it sends a request, because a gateway
+older than the tool reads a body without `targets` as every created session; an
+explicit `targets: []` is forwarded as given, since that older gateway refuses it.
+A session that still holds the old tool text is refused once and told to pass
+`all: true`. An explicit list is
 bounded at the ROUTE — both its length and each element's — before any name is
 resolved, because resolution is per-name work and
 the MCP schema's `maxItems` does not bind a caller that reaches the route itself.

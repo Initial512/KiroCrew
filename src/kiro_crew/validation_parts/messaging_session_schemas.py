@@ -504,26 +504,6 @@ SESSION_SEND_SCHEMA = ToolSchema(
 )
 
 
-def _validate_broadcast_audience(args: dict[str, Any]) -> None:
-    """A broadcast names its audience; omitting it never means everyone.
-
-    Some clients drop an empty list from a tool call, so ``targets: []`` reaches
-    the server as no ``targets`` at all. Refusing the bare call here, with the
-    backend's own wording, gives the model its answer without a round trip. The
-    backend enforces the same rule for callers that do not pass through this schema.
-    """
-    named = bool(args.get("targets"))
-    everyone = args.get("all") is True
-    if named and everyone:
-        raise ValidationError("all", "pass targets or all: true, not both")
-    if not named and not everyone:
-        raise ValidationError(
-            "targets",
-            "no audience selected: name the sessions in targets, or pass all: true "
-            "to reach every session you created",
-        )
-
-
 SESSION_BROADCAST_SCHEMA = ToolSchema(
     tool_name="session_broadcast",
     fields=[
@@ -540,10 +520,11 @@ SESSION_BROADCAST_SCHEMA = ToolSchema(
             allowed=frozenset({"queue", "steer"}),
             max_len=MAX_SHORT_STRING,
         ),
-        # Names the audience. An absent, null or empty list selects nobody (see
-        # ``_validate_broadcast_audience``). Bounded to the same number the API
-        # enforces, so an oversized list is refused at the schema with the field
-        # named rather than after a round trip.
+        # Names the audience. An absent, null or empty list selects nobody: the
+        # backend (``broadcast_to_targets``) is the one place that refuses a call
+        # with no audience, so the rule cannot drift between two copies. Bounded to
+        # the same number the API enforces, so an oversized list is refused at the
+        # schema with the field named rather than after a round trip.
         FieldSpec(
             "targets",
             list,
@@ -556,7 +537,6 @@ SESSION_BROADCAST_SCHEMA = ToolSchema(
         # scalar, so it survives clients that drop empty containers.
         FieldSpec("all", bool),
     ],
-    custom_validator=_validate_broadcast_audience,
 )
 
 SESSION_STATUS_SCHEMA = ToolSchema(

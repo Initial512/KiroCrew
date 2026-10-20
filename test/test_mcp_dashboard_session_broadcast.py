@@ -103,39 +103,57 @@ class TestBroadcastForwarding:
         )
         assert sent.body == {"message": "rebase", "mode": "queue", "all": True}
 
-    @pytest.mark.parametrize("empty", [[], None])
-    def test_an_empty_or_null_targets_beside_all_acts_as_all_alone(self, empty) -> None:
-        """Kiro CLI drops `targets: []` before the call arrives, so the server sees
-        the same bytes either way. The tool treats an empty list and `null` as
-        absent, so the body is identical to the one without the key."""
+    def test_an_explicit_empty_targets_list_is_forwarded_as_given(self) -> None:
+        """A gateway older than this tool refuses an explicit empty list but reads a
+        bare body as "every session you created". Dropping `[]` here would turn an
+        empty audience into a fleet-wide send when the two versions meet."""
         resp = {"ok": True, "mode": "queue", "requested": 0, "delivered": 0, "results": []}
-        _, with_empty = _bc({"message": "go", "mode": "queue", "all": True, "targets": empty}, resp)
-        _, without = _bc({"message": "go", "mode": "queue", "all": True}, resp)
-        assert with_empty.body == without.body == {"message": "go", "mode": "queue", "all": True}
+        _, sent = _bc({"message": "go", "mode": "queue", "targets": []}, resp)
+        assert sent.body == {"message": "go", "mode": "queue", "targets": []}
 
-    @pytest.mark.parametrize("args", [{}, {"targets": []}, {"targets": None}, {"all": False}])
-    def test_a_call_with_no_audience_sends_nothing(self, args) -> None:
-        """The defect: a model that computed an empty audience and passed it on
-        reached every session it created. The refusal happens before any request,
-        so nothing is delivered and the model is told which argument to add."""
+    def test_an_empty_targets_list_beside_all_is_forwarded_with_it(self) -> None:
+        resp = {"ok": True, "mode": "queue", "requested": 0, "delivered": 0, "results": []}
+        _, sent = _bc({"message": "go", "mode": "queue", "all": True, "targets": []}, resp)
+        assert sent.body == {"message": "go", "mode": "queue", "all": True, "targets": []}
+
+    def test_a_null_targets_is_not_forwarded(self) -> None:
+        """`null` is the validator's default for an absent field, not a list."""
+        resp = {"ok": True, "mode": "queue", "requested": 0, "delivered": 0, "results": []}
+        out, sent = _bc({"message": "go", "mode": "queue", "all": True, "targets": None}, resp)
+        assert "NoneType" not in out
+        assert sent.body == {"message": "go", "mode": "queue", "all": True}
+
+    @pytest.mark.parametrize("args", [{}, {"targets": None}, {"all": False}, {"all": None}])
+    def test_a_call_that_names_no_audience_sends_no_request(self, args) -> None:
+        """Kiro CLI drops `targets: []`, so "no audience" arrives as a missing key.
+        A body without `targets` is read by a gateway older than this tool as every
+        session the caller created, so the tool refuses locally and sends nothing."""
         dash = InMemoryDashboardClient({"POST /api/session-control/broadcast": {"ok": True}})
         ctx = ToolContext(dash, Caller.strict("dashboard:chat-1-100"))
         out = TABLE.call("session_broadcast", {"message": "stop", "mode": "steer", **args}, ctx)
-        assert out.startswith("Error:")
-        assert "targets" in out and "all: true" in out
         assert dash.requests == []
+        assert out.startswith("Error:")
+        assert "all: true" in out and "target_required" in out
+        assert "Nothing was sent" in out
 
-    def test_targets_beside_all_is_refused_without_a_request(self) -> None:
-        dash = InMemoryDashboardClient({"POST /api/session-control/broadcast": {"ok": True}})
-        ctx = ToolContext(dash, Caller.strict("dashboard:chat-1-100"))
-        out = TABLE.call(
-            "session_broadcast",
-            {"message": "stop", "mode": "queue", "all": True, "targets": ["chat-2"]},
-            ctx,
+    def test_an_explicit_empty_targets_list_alone_reaches_the_backend_to_be_refused(self) -> None:
+        """An explicit `[]` is forwarded: a gateway older than this tool refuses it
+        and the new backend refuses it as `target_required`."""
+        refusal = {
+            "error": "no audience selected: name the sessions in targets, or pass all: true",
+            "code": "target_required",
+        }
+        out, sent = _bc({"message": "stop", "mode": "steer", "targets": []}, refusal)
+        assert sent.body == {"message": "stop", "mode": "steer", "targets": []}
+        assert out.startswith("Error:") and "all: true" in out
+
+    def test_targets_beside_all_are_both_forwarded_for_the_backend_to_refuse(self) -> None:
+        refusal = {"error": "pass targets or all: true, not both", "code": "audience_conflict"}
+        out, sent = _bc(
+            {"message": "stop", "mode": "queue", "all": True, "targets": ["chat-2"]}, refusal
         )
-        assert out.startswith("Error:")
-        assert "not both" in out
-        assert dash.requests == []
+        assert sent.body["all"] is True and sent.body["targets"] == ["chat-2"]
+        assert out.startswith("Error:") and "not both" in out
 
     def test_a_non_boolean_all_is_refused_without_a_request(self) -> None:
         """A string such as "false" is truthy in Python; it must never select the fleet."""
