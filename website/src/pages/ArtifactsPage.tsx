@@ -321,9 +321,7 @@ export default function ArtifactsPage() {  const navigate = useNavigate()
       setRenamingFolderId(null)
       if (name && name !== f.name) {
         setFolderRenameAnnouncement('')
-        updateFolderMut.mutate({ id: f.id, body: { name } }, {
-          onSuccess: () => setFolderRenameAnnouncement(i18nT('pages.artifactsPage.folder_renamed_to', { name })),
-        })
+        updateFolderMut.mutate({ id: f.id, body: { name }, onCommitted: () => setFolderRenameAnnouncement(i18nT('pages.artifactsPage.folder_renamed_to', { name })) })
         scheduleIconRefetch()
       }
     },

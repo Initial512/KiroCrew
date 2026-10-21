@@ -470,7 +470,7 @@ export function createFolderBlocks(shell: SidebarScope & LaneRows) {
         // (`.folder-row-sticky`); `sticky` also serves as the containing block
         // the old `relative` provided for the absolutely-positioned children.
         style={{ top: `calc(var(--folder-row-sticky-h) * ${depth} - var(--folder-row-sticky-inset))`, zIndex: FOLDER_ROW_STICKY_Z - depth }}
-        className={`folder-row folder-row-sticky group sticky flex items-center gap-2 px-3.5 py-1.5 rounded-md text-sm text-muted transition-all${emptyRow ? '' : ' hover:text-text hover:bg-bg-hover'} ${draggable ? 'cursor-grab active:cursor-grabbing' : ''}${folderFlash ? ` session-reveal-flash${folderFlash === 'fade' ? ' session-reveal-flash-fade' : ''}` : ''}`}>
+        className={`folder-row folder-row-sticky focus-ring-accent-inset group sticky flex items-center gap-2 px-3.5 py-1.5 rounded-md text-sm text-muted transition-all${emptyRow ? '' : ' hover:text-text hover:bg-bg-hover'} ${draggable ? 'cursor-grab active:cursor-grabbing' : ''}${folderFlash ? ` session-reveal-flash${folderFlash === 'fade' ? ' session-reveal-flash-fade' : ''}` : ''}`}>
         {editingId === folder.id && editScope === 'list' ? (
           <>
             <FolderGlyph color={folder.color} icon={folder.icon} size={14} open={!collapsed} />

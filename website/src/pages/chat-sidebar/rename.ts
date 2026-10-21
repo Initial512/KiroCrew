@@ -54,14 +54,6 @@ export function useSessionRename({ dispatch, store, queryClient }: {
     new Map<string, { baseline: string; inflight: Set<string>; gen: number }>()
   )
   const renameInputRef = useRef<HTMLTextAreaElement | null>(null)
-  // Mirror of renamingSlot for use in stable useCallback closures that
-  // cannot list it as a dependency without remounting on every keystroke.
-  const renamingSlotRef = useRef<string | null>(null)
-  useEffect(() => { renamingSlotRef.current = renamingSlot }, [renamingSlot])
-  // Mirror of renameScope for stable rAF closures — the scope must outlive the
-  // setRenamingSlot(null) call so the focus query targets the right lane instance.
-  const renameScopeRef = useRef<string | null>(null)
-  useEffect(() => { renameScopeRef.current = renameScope }, [renameScope])
   // The rename field is a wrapping, auto-growing <textarea> (not a single-line
   // <input>) so a long session title is fully visible while editing instead of
   // being clipped at the right edge — you can see and edit words that a
@@ -92,24 +84,15 @@ export function useSessionRename({ dispatch, store, queryClient }: {
   }, [])
   const onRenameCancel = useCallback(() => {
     cancelRenameRef.current = true
-    const key = renamingSlotRef.current
     // Capture the row while the textarea is still mounted. For sessions inside
     // a board folder, renameScope is `${folderLaneScope}:${folder.id}` but the
     // row carries only folderLaneScope in data-session-scope, so a scope-keyed
     // DOM query finds nothing. closest('[data-session-row]') resolves correctly
     // across all views without relying on scope equality.
     const targetRow = renameInputRef.current?.closest('[data-session-row]') as HTMLElement | null
-    const scope = renameScopeRef.current
     setRenamingSlot(null)
     requestAnimationFrame(() => {
-      if (!key) return
-      // targetRow is the preferred path; fall back to the scope query for the
-      // case where renameInputRef was null at cancel time (e.g. animated mocks).
-      ;(targetRow ?? document.querySelector(
-        scope
-          ? `[data-session-row="${CSS.escape(key)}"][data-session-scope="${CSS.escape(scope)}"]`
-          : `[data-session-row="${CSS.escape(key)}"]`,
-      ) as HTMLElement | null)?.focus({ preventScroll: true })
+      targetRow?.focus({ preventScroll: true })
     })
   }, [])
   const onRenameCommit = useCallback((key: string, value: string) => {
@@ -186,15 +169,8 @@ export function useSessionRename({ dispatch, store, queryClient }: {
     // Restore focus via the captured row (set above, before the unmount).
     // Pointer blur does NOT restore focus (WCAG 3.2.2).
     if (viaEnter) {
-      const scope = renameScopeRef.current
       requestAnimationFrame(() => {
-        // targetRow is the preferred path (already resolved); fall back to the
-        // scope query when renameInputRef was null at commit time.
-        ;(targetRow ?? document.querySelector(
-          scope
-            ? `[data-session-row="${CSS.escape(key)}"][data-session-scope="${CSS.escape(scope)}"]`
-            : `[data-session-row="${CSS.escape(key)}"]`,
-        ) as HTMLElement | null)?.focus({ preventScroll: true })
+        targetRow?.focus({ preventScroll: true })
       })
     }
   }, [dispatch, queryClient, store])

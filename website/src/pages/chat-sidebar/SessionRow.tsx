@@ -1126,7 +1126,7 @@ export const SessionRow = memo(function SessionRow({ view, actions }: SessionRow
           <ContextMenuTrigger asChild>
         <div ref={dndRow ? setNodeRef : undefined} {...(dndRow ? listeners : {})}
           data-draggable={(!isRenaming && !foreignRow).toString()}
-          className={`session-row group relative flex items-start ${ROW_BOX_CLS} text-sm transition-all select-none ${isActive ? !connected ? `session-active ${ROW_ACTIVE_CLS} cursor-not-allowed` : `session-active ${ROW_ACTIVE_CLS} cursor-pointer` : !connected ? 'text-muted opacity-50 cursor-not-allowed' : `${ROW_IDLE_CLS} cursor-pointer`} ${goalLoopStalled ? 'session-loop-stalled' : ''} ${rowColor ? 'session-colored' : ''} ${rowColor && colorMode === 'gradient' ? 'session-gradient' : ''} ${isDragging ? 'opacity-40' : ''} ${revealFlash ? `session-reveal-flash${revealFlash === 'fade' ? ' session-reveal-flash-fade' : ''}` : ''}`}
+          className={`session-row focus-ring-accent-inset group relative flex items-start ${ROW_BOX_CLS} text-sm transition-all select-none ${isActive ? !connected ? `session-active ${ROW_ACTIVE_CLS} cursor-not-allowed` : `session-active ${ROW_ACTIVE_CLS} cursor-pointer` : !connected ? 'text-muted opacity-50 cursor-not-allowed' : `${ROW_IDLE_CLS} cursor-pointer`} ${goalLoopStalled ? 'session-loop-stalled' : ''} ${rowColor ? 'session-colored' : ''} ${rowColor && colorMode === 'gradient' ? 'session-gradient' : ''} ${isDragging ? 'opacity-40' : ''} ${revealFlash ? `session-reveal-flash${revealFlash === 'fade' ? ' session-reveal-flash-fade' : ''}` : ''}`}
           style={boostStyle as React.CSSProperties}
           draggable={
             // Both drag paths are off for a peer-owned row and for a row that

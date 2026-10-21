@@ -656,9 +656,7 @@ function ChatSidebar({
     const trimmed = name.trim()
     if (trimmed) {
       setFolderRenameAnnouncement('')
-      updateFolderMutation.mutate({ id, body: { name: trimmed } }, {
-        onSuccess: () => setFolderRenameAnnouncement(i18nT('pages.chatSidebar.folder_renamed_to', { name: trimmed })),
-      })
+      updateFolderMutation.mutate({ id, body: { name: trimmed }, onCommitted: () => setFolderRenameAnnouncement(i18nT('pages.chatSidebar.folder_renamed_to', { name: trimmed })) })
     }
     setEditingId(null)
     return true

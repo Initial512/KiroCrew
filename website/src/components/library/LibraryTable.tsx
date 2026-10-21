@@ -776,7 +776,7 @@ export function FolderRow({ folder, folders, depth, expanded, onToggle, actions,
               {...(renaming ? {} : listeners)}
               onClick={() => { if (!renaming) onToggle(folder.id) }}
               style={{ opacity: isDragging ? 0.4 : 1 }}
-              className={`group cursor-pointer transition-colors focus-visible:outline-offset-[-2px] ${isOver || dropHighlight ? 'bg-accent/15' : 'hover:bg-bg-hover'}`}
+              className={`group cursor-pointer transition-colors focus-ring-accent-inset ${isOver || dropHighlight ? 'bg-accent/15' : 'hover:bg-bg-hover'}`}
               aria-expanded={expanded}
             >
               <td colSpan={9} className="px-2.5 py-1.5 border-b border-border" style={depth > 0 ? { paddingLeft: `${10 + depth * 20}px` } : undefined}>
