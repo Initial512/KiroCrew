@@ -348,6 +348,12 @@ def _mirrorless_member_mounts(self: AcpClient, stubbed: Collection[str]) -> list
     (``registry.PROJECTIONS``), the record that states it per backend, rather
     than of a membership set: the caller has already resolved that record
     through ``mirror_for``, so an undeclared backend raised before this point.
+
+    The same host records the parsed spec too, as ``_session_agent_spec``: the spec
+    this session CONSUMED, which ``confirm_member_projection`` digests against the
+    saved intent. From this parse and no other, so the mounts, the ban and the
+    confirmed spec are one generation. An unreadable spec records ``None``, which
+    the confirmation refuses.
     """
     records_zero_tools = projection_for(self.backend).kind is ProjectionKind.BROKER_ONLY
     if (
@@ -356,6 +362,9 @@ def _mirrorless_member_mounts(self: AcpClient, stubbed: Collection[str]) -> list
         and self.backend not in ACP_BACKENDS_MEMBER_PANEL
     ):
         return []
+    if records_zero_tools:
+        # Cleared before the read, so a re-resolve that fails keeps no older parse.
+        self._session_agent_spec = None
     try:
         from kiro_crew.acp.session_mcp import session_mcp_projection
 
@@ -378,6 +387,7 @@ def _mirrorless_member_mounts(self: AcpClient, stubbed: Collection[str]) -> list
         return []
     if records_zero_tools:
         self._spec_zero_tools = projection.zero_tools
+        self._session_agent_spec = projection.agent_spec
     if (
         self.backend not in ACP_BACKENDS_MEMBER_DISPATCH
         and self.backend not in ACP_BACKENDS_MEMBER_PANEL
