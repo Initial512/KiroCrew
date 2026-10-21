@@ -439,6 +439,11 @@ def _scrub_dict_key(keys: tuple[str, ...], key: str, home: str) -> str:
                 break
             return "[REDACTED: credential]"
     for ancestor in keys:
+        if _is_credential_key(ancestor):
+            # Judged above: under a credential key a field-name-shaped key is a
+            # field name. Joined to that key it reads as the field's literal
+            # (``apiSecret: v``), which is what the test above already ruled on.
+            continue
         joined = f"{ancestor}: {key}"
         if redact_text(joined) != joined:
             return "[REDACTED: credential]"

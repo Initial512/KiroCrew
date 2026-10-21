@@ -176,19 +176,19 @@ class TestFlushFileChanges:
     def test_credentials_are_scrubbed_from_before_and_after(self, tmp_path):
         """A secret in a non-sensitive config must not reach message meta."""
         target = tmp_path / "config.ini"
-        target.write_text("key=AKIAIOSFODNN7EXAMPLE\nafter\n", newline="\n")
+        target.write_text("key=glpat-IOSFODNN7EXAMPLE\nafter\n", newline="\n")
         slot = _slot()
         slot.append("assistant", "done", "msg msg-a", broadcast=False)
         slot._file_changes = [
-            {"path": str(target), "content": "key=AKIAIOSFODNN7EXAMPLE\nbefore\n"}
+            {"path": str(target), "content": "key=glpat-IOSFODNN7EXAMPLE\nbefore\n"}
         ]
 
         chat_runner._flush_file_changes(slot)
 
         changes = slot.messages[-1]["meta"]["file_changes"]
         assert len(changes) == 1
-        assert "AKIAIOSFODNN7EXAMPLE" not in changes[0]["before"]
-        assert "AKIAIOSFODNN7EXAMPLE" not in changes[0]["after"]
+        assert "glpat-IOSFODNN7EXAMPLE" not in changes[0]["before"]
+        assert "glpat-IOSFODNN7EXAMPLE" not in changes[0]["after"]
         assert slot._dirty is True
         assert slot._file_changes == []
 
@@ -250,9 +250,9 @@ class TestAcpRedaction:
         assert chat_runner._redact_acp_string("") == ""
 
     def test_credential_is_scrubbed(self):
-        out = chat_runner._redact_acp_string("token AKIAIOSFODNN7EXAMPLE")
+        out = chat_runner._redact_acp_string("token glpat-IOSFODNN7EXAMPLE")
 
-        assert "AKIAIOSFODNN7EXAMPLE" not in out
+        assert "glpat-IOSFODNN7EXAMPLE" not in out
 
 
 class TestOauthUrlCredentialGate:
@@ -269,7 +269,7 @@ class TestOauthUrlCredentialGate:
             # shared security gate, which fails closed.
             pytest.param("https://[bad-ipv6/x", True, id="test_unparseable_url_is_refused"),
             pytest.param(
-                "https://example.test/authorize?state=AKIAIOSFODNN7EXAMPLE1",
+                "https://example.test/authorize?state=glpat-IOSFODNN7EXAMPLE1",
                 True,
                 id="test_credential_signature_inside_an_oauth_param_is_refused",
             ),
@@ -299,7 +299,7 @@ class TestEmitMcpOauthRequest:
         state, slot = _state(tmp_path), _slot()
 
         chat_runner._emit_mcp_oauth_request(
-            state, slot, "svc", "https://example.test/a?state=AKIAIOSFODNN7EXAMPLE1"
+            state, slot, "svc", "https://example.test/a?state=glpat-IOSFODNN7EXAMPLE1"
         )
 
         assert slot.messages[-1]["meta"]["rejected_url"] is True
@@ -414,12 +414,12 @@ class TestMarkMcpOauthCompleted:
         self._open_banner(state, slot)
 
         chat_runner._mark_mcp_oauth_completed(
-            state, slot, "github", False, "denied for AKIAIOSFODNN7EXAMPLE"
+            state, slot, "github", False, "denied for glpat-IOSFODNN7EXAMPLE"
         )
 
         meta = slot.messages[-1]["meta"]
         assert meta["failed"] is True
-        assert "AKIAIOSFODNN7EXAMPLE" not in meta["error"]
+        assert "glpat-IOSFODNN7EXAMPLE" not in meta["error"]
         assert "authentication failed" in slot.messages[-1]["content"]
 
     def test_untimestamped_banner_cannot_be_updated(self, tmp_path):
@@ -642,7 +642,7 @@ class TestFlushSegment:
     def test_credentials_in_the_segment_are_redacted(self, tmp_path):
         state, slot = _state(tmp_path), _slot()
 
-        chat_runner._flush_segment(state, slot, "secret AKIAIOSFODNN7EXAMPLE here")
+        chat_runner._flush_segment(state, slot, "secret glpat-IOSFODNN7EXAMPLE here")
 
         # Target the assistant row by role, not `messages[-1]`: a redacted
         # segment now also appends a notice row after it, and asserting on the
@@ -652,7 +652,7 @@ class TestFlushSegment:
         # that cannot distinguish "no assistant row" from "the flush threw".
         assistants = [m for m in slot.messages if m.get("role") == "assistant"]
         assert len(assistants) == 1, f"expected one assistant row, got {slot.messages}"
-        assert "AKIAIOSFODNN7EXAMPLE" not in assistants[0]["content"]
+        assert "glpat-IOSFODNN7EXAMPLE" not in assistants[0]["content"]
 
     def test_a_redacted_credential_is_described_not_noticed(self, tmp_path):
         """The lock tag replaces the grey notice: the row carries one record per
@@ -763,7 +763,7 @@ class TestFlushSegment:
 
         state, slot = _state(tmp_path), _slot()
         url = "https://collector.example-sink.net/v1/ingest?d=" + "eyJhIjoiYiJ9" * 30
-        key = "AKIA" + "5Q7XTR2M9LBC4WZN"
+        key = "glpat-" + "5Q7XTR2M9LBC4WZN"
         raw = f"key {key} then [see]({url}) done."
         text = ""
         for delta in (raw[:6], raw[6:60], raw[60:]):
@@ -778,9 +778,9 @@ class TestFlushSegment:
         chat_runner._flush_segment(state, slot, text)
 
         content, meta = slot.messages[0]["content"], slot.messages[0]["meta"]
-        assert key[4:] not in content and "eyJ" not in content
+        assert key[6:] not in content and "eyJ" not in content
         assert [r["domain"] for r in meta["blocked_links"]] == ["collector.example-sink.net"]
-        assert [r["rule"] for r in meta["redactions"]] == ["aws_access_key_id"]
+        assert [r["rule"] for r in meta["redactions"]] == ["gitlab_token"]
 
     def test_trailing_stop_event_is_replaced_below_the_segment(self, tmp_path):
         state, slot = _state(tmp_path), _slot()
@@ -901,11 +901,11 @@ class TestNativeSubagentCards:
         entry = {"sessionId": "s2", "role": "worker", "initialQuery": "do it"}
 
         chat_runner._native_subagent_sync(state, slot, [entry], tracker)
-        entry["status"] = {"type": "failed", "message": "boom AKIAIOSFODNN7EXAMPLE"}
+        entry["status"] = {"type": "failed", "message": "boom glpat-IOSFODNN7EXAMPLE"}
         chat_runner._native_subagent_sync(state, slot, [entry], tracker)
 
         assert tracker["s2"]["done"] is True
-        assert "AKIAIOSFODNN7EXAMPLE" not in tracker["s2"]["error"]
+        assert "glpat-IOSFODNN7EXAMPLE" not in tracker["s2"]["error"]
 
     def test_status_message_surfaces_as_the_current_tool(self, tmp_path):
         state, slot = _state(tmp_path), _slot()
@@ -993,9 +993,9 @@ class TestNativeSubagentCards:
         assert out.startswith(chat_runner.NATIVE_SUBAGENT_DONE_TRUNC_MARKER)
 
     def test_card_feed_redacts_before_the_broadcast(self):
-        feed = chat_runner._native_card_feed({"native:x": ["AKIAIOSFODNN7EXAMPLE"]}, "native:x")
+        feed = chat_runner._native_card_feed({"native:x": ["glpat-IOSFODNN7EXAMPLE"]}, "native:x")
 
-        assert "AKIAIOSFODNN7EXAMPLE" not in feed
+        assert "glpat-IOSFODNN7EXAMPLE" not in feed
 
     def test_empty_card_feed_is_empty(self):
         assert chat_runner._native_card_feed(None, "native:x") == ""

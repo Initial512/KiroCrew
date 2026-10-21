@@ -49,6 +49,10 @@ if TYPE_CHECKING:
     from kiro_crew.dashboard.chat_turn.turn_spec_hooks import _fire
 
 
+#: Above this many characters a tool output is redacted off the event loop.
+_OFF_LOOP_REDACT_MIN = 64 * 1024
+
+
 async def _on_tool_result(turn: _ChatTurn, event) -> None:
     """A tool's result: its row, file changes, session directive, MCP-app render and what it arms."""
     _compact_after_turn_noticed = turn._compact_after_turn_noticed
@@ -729,7 +733,13 @@ async def _on_tool_result(turn: _ChatTurn, event) -> None:
     # fragments no redaction regex matches, and sharing the pass
     # keeps the full-text cost single.
     _redacted_out, _ = redact_exfiltration_urls(_out)
-    _redacted_out, _ = redact_credentials(_redacted_out)
+    if len(_redacted_out) > _OFF_LOOP_REDACT_MIN:
+        # A large output (up to the 1 MB cap) takes the redactor long enough
+        # to stall every other turn and the heartbeat: it runs on a worker
+        # thread, and this turn waits for it.
+        _redacted_out, _ = await asyncio.to_thread(redact_credentials, _redacted_out)
+    else:
+        _redacted_out, _ = redact_credentials(_redacted_out)
     if _nat_card_r and event.tool_output and event.tool_call_id not in _native_result_seen:
         _native_result_seen.add(event.tool_call_id)
         _native_card_output_len[_nat_card_r] = _append_native_output(

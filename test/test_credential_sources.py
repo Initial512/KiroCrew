@@ -43,7 +43,7 @@ def test_a_file_read_names_path_section_and_the_aws_template() -> None:
     }
     assert rec["view_command"] == "aws configure get aws_secret_access_key --profile default"
     assert rec["profile_command"] is None
-    assert rec["label"] == "aws_secret_access_key = "
+    assert rec["label"] == ""
 
 
 def test_a_session_token_recommends_the_profile() -> None:
@@ -81,8 +81,12 @@ def test_the_record_never_carries_the_value() -> None:
 
 
 def test_a_command_carrying_a_secret_is_not_a_source() -> None:
-    ev = _evidence({"command": f"echo {_SECRET}"}, _SECRET, is_shell=True)
-    [rec] = _records(_SECRET, ev)
+    ev = _evidence(
+        {"command": f"echo secret_access_key={_SECRET}"},
+        f"secret_access_key={_SECRET}",
+        is_shell=True,
+    )
+    [rec] = _records(f"secret_access_key={_SECRET}", ev)
     assert rec["source"] is None
 
 
@@ -250,3 +254,12 @@ def test_a_command_or_path_with_an_invisible_character_is_not_a_source() -> None
     }
     rec = revalidate_credential_record(planted)
     assert rec is None or (rec["source"] is None and rec["view_command"] is None)
+
+
+def test_a_value_repeated_in_an_earlier_section_takes_its_own_section() -> None:
+    # The value also appears earlier, unlabelled, under another section: the
+    # record is placed where the redactor found it, not at the first match.
+    value = "Zq9vT2m" + "Xw8KpL4"
+    text = f"[reference]\n# old note: {value}\n\n[active]\npassword={value}\n"
+    [(_, section)] = tool_output_fingerprints(text)
+    assert section == "active"

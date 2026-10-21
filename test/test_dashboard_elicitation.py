@@ -436,7 +436,8 @@ def test_display_redaction_touches_labels_and_taints_values() -> None:
     """Titles, descriptions and option labels are redacted for display; a
     credential in an option value or a default cannot be rewritten (the answer
     would then fail the schema), so the request is reported tainted."""
-    secret = "AKIAIOSFODNN7EXAMPLE1234"
+    # A Secret-tier token: an AWS key ID alone is an Identifier and stays visible.
+    secret = "glpat-IOSFODNN7EXAMPLE1234"
     fields = [
         {
             "name": "a",

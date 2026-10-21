@@ -64,6 +64,8 @@ SESSION_TOKEN_RULES = frozenset({"aws_session_token"})
 #: Rules the AWS credentials-file templates cover, with the key each reads.
 _AWS_TEMPLATE_KEYS = {
     "aws_secret_access_key": "aws_secret_access_key",
+    "aws_key_pair": "aws_secret_access_key",
+    # Records written before the entropy pass was removed still name it.
     "bare_aws_secret": "aws_secret_access_key",
     "aws_session_token": "aws_session_token",
     "aws_access_key_id": "aws_access_key_id",
@@ -103,7 +105,9 @@ def tool_output_fingerprints(text: str) -> tuple[tuple[str, str | None], ...]:
     for m in matches[:MAX_FINGERPRINTS_PER_RESULT]:
         if not m.value:
             continue
-        at = urls_done.find(m.value)
+        # The recorded offset places the value; a search finds its FIRST
+        # occurrence, which can sit under another section.
+        at = m.start if m.start >= 0 else urls_done.find(m.value)
         out.append((fingerprint(m.value), _section_before(urls_done, at) if at >= 0 else None))
     return tuple(out)
 

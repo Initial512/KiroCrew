@@ -260,7 +260,9 @@ async def test_resolved_removals_respect_ambient_mcp(
         (["--", "-e", "DB_PASSWORD=p7!=tail=", "--user", "demo:ordinary"], [2]),
         (["--", "--api-key", "ordinary", "--user", "demo:ordinary", "MODE=dev"], []),
         (["DB_PASSWORD=", "MODE=dev", "PASSWORD", "ordinary"], []),
-        (["9DB_PASSWORD=ordinary", "DB.PASSWORD=ordinary"], []),
+        # Not env assignments, but a plain word behind a strong label is a
+        # literal at any length (the fail-closed label rule).
+        (["9DB_PASSWORD=ordinary", "DB.PASSWORD=ordinary"], [0, 1]),
     ],
 )
 async def test_argument_only_credentials_http_roundtrip(editor, capability_app, args, masked):
@@ -269,7 +271,7 @@ async def test_argument_only_credentials_http_roundtrip(editor, capability_app, 
     service, home, specs, parent = editor
     app, _ = capability_app
     original = {"command": "search", "args": args}
-    secret = "~" if "~" in args else "p7!" if masked else ""
+    secret = "~" if "~" in args else "p7!" if any("p7!" in arg for arg in args) else ""
     if any("p7!=tail=" in arg for arg in args):
         secret = "p7!=tail="
 

@@ -507,13 +507,13 @@ def test_redact_projection_value_scrubs_short_url_secret_param():
 
     leaf = "https://h.example/v1?api_key=abc123"
     out = _redact_projection_value({"roster": {"model": leaf}})
-    assert out["roster"]["model"] == "https://h.example/v1?api_key=[REDACTED]"
+    assert out["roster"]["model"] == "https://h.example/v1?api_key=[REDACTED: credential]"
     assert "abc123" not in json.dumps(out)
 
     # Nested-list leaf: the str branch runs under list recursion too, so a secret
     # carried inside a list value is masked just as a nested dict value is.
     nested = _redact_projection_value({"roster": {"models": [leaf]}})
-    assert nested["roster"]["models"] == ["https://h.example/v1?api_key=[REDACTED]"]
+    assert nested["roster"]["models"] == ["https://h.example/v1?api_key=[REDACTED: credential]"]
     assert "abc123" not in json.dumps(nested)
 
 

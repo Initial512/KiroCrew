@@ -450,7 +450,7 @@ class TestApiChatAgentPassing:
 
         assert response.status == 400
         event = audit.log.call_args.args[0]
-        assert event.agent == "crew password=[REDACTED]"
+        assert event.agent == "crew password=[REDACTED: credential]"
         assert unsafe not in event.agent
 
     @pytest.mark.asyncio

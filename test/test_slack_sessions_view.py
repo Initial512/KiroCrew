@@ -723,10 +723,10 @@ class TestBuildSessionsBlocks:
         [
             # ASK-style credential pattern is redacted by redact_credentials
             pytest.param(
-                "AKIAIOSFODNN7EXAMPLE secret", "kirocrew", id="test_redacts_credentials_in_title"
+                "glpat-IOSFODNN7EXAMPLE secret", "kirocrew", id="test_redacts_credentials_in_title"
             ),
             # Parity with title: agent strings are redacted before reaching session_task_card.
-            pytest.param("ok", "AKIAIOSFODNN7EXAMPLE", id="test_redacts_credentials_in_agent"),
+            pytest.param("ok", "glpat-IOSFODNN7EXAMPLE", id="test_redacts_credentials_in_agent"),
         ],
     )
     def test_redacts_credentials(self, title, agent):
@@ -742,7 +742,7 @@ class TestBuildSessionsBlocks:
             }
         ]
         card = _build_sessions_blocks(rows)[0]
-        assert "AKIAIOSFODNN7EXAMPLE" not in card["title"]
+        assert "glpat-IOSFODNN7EXAMPLE" not in card["title"]
 
     def test_redacts_credentials_in_message_content(self):
         """Content for each preview message is redacted via session_task_card → _msg_elements."""
@@ -755,15 +755,15 @@ class TestBuildSessionsBlocks:
                 "active": False,
                 "kind": _SESSION_KIND_DASHBOARD,
                 "msgs": [
-                    {"role": "user", "content": "leak AKIAIOSFODNN7EXAMPLE"},
-                    {"role": "assistant", "content": "another AKIAIOSFODNN7EXAMPLE"},
+                    {"role": "user", "content": "leak glpat-IOSFODNN7EXAMPLE"},
+                    {"role": "assistant", "content": "another glpat-IOSFODNN7EXAMPLE"},
                 ],
             }
         ]
         # task_card details payload contains the rich_text_list; serialize for substring search
         card = _build_sessions_blocks(rows)[0]
         rendered = json.dumps(card)
-        assert "AKIAIOSFODNN7EXAMPLE" not in rendered
+        assert "glpat-IOSFODNN7EXAMPLE" not in rendered
 
     def test_redacts_exfiltration_urls_in_message_content(self):
         """Message content is redacted before it is posted to Slack.
@@ -812,7 +812,7 @@ class TestBuildSessionsBlocks:
         rows = [
             {
                 "key": "dashboard:k",
-                "title": f"AKIAIOSFODNN7EXAMPLE {url}",
+                "title": f"glpat-IOSFODNN7EXAMPLE {url}",
                 "agent": "kirocrew",
                 "mtime": 0.0,
                 "active": False,
@@ -822,7 +822,7 @@ class TestBuildSessionsBlocks:
         ]
         blocks = _build_sessions_blocks(rows, for_home_tab=True)
         rendered = json.dumps(blocks)
-        assert "AKIAIOSFODNN7EXAMPLE" not in rendered
+        assert "glpat-IOSFODNN7EXAMPLE" not in rendered
         assert url not in rendered
 
 
@@ -988,7 +988,7 @@ class TestHandleSessionsCommandDelegation:
         in exception messages MUST be redacted before being written to SEL.
         """
         slack = MockSlackClient()
-        leaked_key = "AKIAIOSFODNN7EXAMPLE"
+        leaked_key = "glpat-IOSFODNN7EXAMPLE"
         with (
             patch(
                 "kiro_crew.slack.sessions_view._collect_recent_sessions",
@@ -1260,7 +1260,7 @@ class TestSlashSessionsAudit:
         async def _arespond(*a, **kw):
             respond(*a, **kw)
 
-        leaked_key = "AKIAIOSFODNN7EXAMPLE"
+        leaked_key = "glpat-IOSFODNN7EXAMPLE"
         with (
             patch("kiro_crew.slack.events.sel") as mock_sel,
             patch("kiro_crew.slack.events.is_owner", return_value=True),
