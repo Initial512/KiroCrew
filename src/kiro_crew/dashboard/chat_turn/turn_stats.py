@@ -19,6 +19,7 @@ from kiro_crew.llm_helpers import (
     usage_has_billing,
 )
 from kiro_crew.metrics.events import TURN_TIMEOUT_CAUSE, emit_counter
+from kiro_crew.metrics.harness import harness_of
 from kiro_crew.metrics.turns import emit_turn_duration, emit_turn_usage, turn_outcome
 from kiro_crew.monitoring.completion import (
     disposition_for_stop_reason,
@@ -263,8 +264,13 @@ def _emit_turn_metric(
     usage: object = None,
     model: str = "",
     provider: str = "",
+    harness: str = "",
 ) -> None:
     """Emit this turn's OTEL samples (best-effort).
+
+    ``harness`` labels the duration sample only (see
+    :func:`kiro_crew.metrics.turns.emit_turn_duration`); the caller resolves it
+    from the turn's live client.
 
     Thin delegate to :func:`kiro_crew.metrics.turns.emit_turn_duration` and
     :func:`~kiro_crew.metrics.turns.emit_turn_usage`. The family is emitted for
@@ -296,6 +302,7 @@ def _emit_turn_metric(
         elapsed_ms=elapsed_ms,
         model=model,
         provider=provider,
+        harness=harness,
     )
     emit_turn_usage(
         input_tokens=getattr(usage, "input_tokens", 0),
@@ -715,6 +722,9 @@ async def _on_complete(turn: _ChatTurn, event) -> Literal[_Flow.BREAK] | None:
         usage=event.usage,
         model=_turn_model or _record_model,
         provider=_provider_name,
+        # The EFFECTIVE harness, read off the client that ran the
+        # turn (a per-session acp_backend override included).
+        harness=harness_of(client),
     )
     if usage_has_billing(_u):
         # Claim the turn's single usage row BEFORE the persist await
