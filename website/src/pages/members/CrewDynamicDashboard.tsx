@@ -249,10 +249,11 @@ export default function CrewDynamicDashboard({ target, displayName, avatar, onAc
   /** Put a reply the page offered into the chat box. Absent: the page's options do nothing. */
   onAct?: (text: string) => void
   /** Send a reply the page offered into this crewmate's own thread. Resolves `'sent'`
-   *  when it went (or may have), `'refused'` for the gateway's routine "not now" and
-   *  `'failed'` for any other error; both fill the composer instead, and `'failed'` is
-   *  also shown as an error. Absent: a page's `send` behaves as `act`. */
-  onSend?: (text: string) => Promise<'sent' | 'refused' | 'failed'>
+   *  when it went (or may have), `'off'` when the person turned one-click sends off,
+   *  `'refused'` for the gateway's other "not now" and `'failed'` for any other error.
+   *  All three fill the composer instead; the last two are also shown as an error.
+   *  Absent: a page's `send` behaves as `act`. */
+  onSend?: (text: string) => Promise<'sent' | 'off' | 'refused' | 'failed'>
   /** Render the STAGED page instead of the adopted one. Its own cache entry, so the
    *  live tab never shows a page nobody applied; still under the `member-dashboard`
    *  prefix, so the frame that says the page changed refetches it too. */
@@ -447,7 +448,7 @@ export default function CrewDynamicDashboard({ target, displayName, avatar, onAc
         const refused = (failed: boolean) => { lastSendRef.current = 0; setSendFailed(failed); fill() }
         setSendFailed(false)
         send(reply)
-          .then((outcome) => { if (outcome !== 'sent') refused(outcome === 'failed') })
+          .then((outcome) => { if (outcome !== 'sent') refused(outcome !== 'off') })
           .catch(() => refused(true))
           .finally(() => { sendingRef.current = false })
         return
@@ -1251,7 +1252,8 @@ export default function CrewDynamicDashboard({ target, displayName, avatar, onAc
       {lockBadge}
       {sendFailed && (
         // The reply is already in the chat box (the fallback ran), so this only says
-        // why the click did not send it; a routine refusal (busy, switch off) shows nothing.
+        // why the click did not send it, for a refusal (busy) as for a failure. Not when the
+        // person switched one-click sends off: nothing went wrong, so nothing is flagged.
         // No hand-off: the hand-off navigates to /chat, which would unmount the Members
         // page and discard the unsent draft this fallback just placed in the composer.
         <ErrorNotice

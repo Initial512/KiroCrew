@@ -86,6 +86,57 @@ async def test_a_card_send_runs_one_tagged_turn_without_a_persons_directive_auth
     ((text, kwargs),) = turns
     assert text == expected
     assert kwargs["_directive_user_origin"] is False
+    # It also never inherits an auto-approval: the runner is told this is a card's turn.
+    assert kwargs["_card_origin"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_card_turn_is_marked_untrusted_even_in_a_thread_that_trusts(env):
+    """Crewmate threads default to trust; the mark must not depend on the thread's mode."""
+    state, slot, _, turns, app = env
+    slot._trust = True
+    async with TestClient(TestServer(app)) as client:
+        resp = await client.post("/api/chat?ws=1", json=_card(slot))
+        assert resp.status == 200
+        await asyncio.sleep(0)
+    ((_, kwargs),) = turns
+    assert kwargs["_card_origin"] is True
+
+
+@pytest.mark.parametrize(("card_origin", "human"), [(False, True), (True, False)])
+def test_a_card_send_does_not_count_as_the_person_being_back_for_autonudge(
+    monkeypatch, card_origin, human
+):
+    """A person's typed send releases an approval-timeout hold on a paused nudge loop
+    (``human=True``). A card's words are a page's, so they defer the timer and nothing else."""
+    from unittest.mock import MagicMock
+
+    from kiro_crew import autonudge
+    from kiro_crew.dashboard import responsive_chat
+
+    nudge = MagicMock()
+    monkeypatch.setattr(autonudge, "get_instance", lambda: nudge)
+    request = {"is_dashboard_user": True, "internal_auth": False}
+    slot = type("S", (), {"key": "member-ada"})()
+
+    responsive_chat.notify_user_input(request, slot, card_origin=card_origin)  # type: ignore[arg-type]
+
+    nudge.notify_user_input.assert_called_once_with("member-ada", human=human)
+
+
+@pytest.mark.asyncio
+async def test_the_route_tells_autonudge_a_card_send_is_not_the_person(env, monkeypatch):
+    from unittest.mock import MagicMock
+
+    from kiro_crew import autonudge
+
+    state, slot, _, turns, app = env
+    nudge = MagicMock()
+    monkeypatch.setattr(autonudge, "get_instance", lambda: nudge)
+    async with TestClient(TestServer(app)) as client:
+        assert (await client.post("/api/chat?ws=1", json=_card(slot))).status == 200
+        await asyncio.sleep(0)
+    assert nudge.notify_user_input.call_args.kwargs["human"] is False
 
 
 @pytest.mark.asyncio
@@ -104,6 +155,7 @@ async def test_a_typed_send_is_unchanged(env):
     ((text, kwargs),) = turns
     assert text == "hello"
     assert kwargs["_directive_user_origin"] is True
+    assert "_card_origin" not in kwargs
 
 
 @pytest.mark.asyncio
@@ -265,6 +317,33 @@ async def test_a_newline_and_the_longest_text_pass(env):
 async def test_a_card_never_answers_an_open_approval(env):
     """The approval stays open, and the refusal says why; a typed send is untouched."""
     state, slot, _, turns, app = env
+    future = asyncio.get_running_loop().create_future()
+    slot._approval_futures["req-1"] = future
+    before = set(state._slots)
+    async with TestClient(TestServer(app)) as client:
+        resp = await client.post("/api/chat?ws=1", json=_card(slot, "Approve"))
+        assert resp.status == 409
+        assert (await resp.json())["code"] == "card_send_pending_decision"
+    assert not future.done()
+    await _untouched(slot, turns, state, before)
+    future.cancel()
+
+
+@pytest.mark.asyncio
+async def test_a_decision_that_opens_after_the_gate_admitted_the_send_still_refuses(
+    env, monkeypatch
+):
+    """The gate looks once, then the handler awaits; a question can open in between.
+
+    The gate is stubbed to admit, so the only thing standing between the card and the
+    open decision is the recheck after the awaits.
+    """
+    state, slot, _, turns, app = env
+
+    async def _admit(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(card_send, "card_send_refusal", _admit)
     future = asyncio.get_running_loop().create_future()
     slot._approval_futures["req-1"] = future
     before = set(state._slots)

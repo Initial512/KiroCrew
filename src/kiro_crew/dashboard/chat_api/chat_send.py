@@ -748,6 +748,12 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
         # Idle when the gate looked; a turn started since. A card never queues or
         # steers, so it is refused rather than parked behind the new turn.
         return card_send.busy_refusal(request, slot)
+    if card_origin:
+        # The awaits since the gate can span a typed turn that ended in a question.
+        # The row appended below would retire it as if the card answered it.
+        _late_refusal = card_send.pending_decision_refusal(request, state, slot)
+        if _late_refusal is not None:
+            return _late_refusal
     if slot.turn_running or slot._turn_admission_reserved:
         # Mid-turn steer: inject into the RUNNING turn instead of queueing for
         # the next turn. Gated on an explicit `steer` flag + a live, steer-capable
@@ -1103,7 +1109,7 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
     # LLM titling is kicked off below, before _run_chat.
 
     # ── AutoNudge: user input cancels any pending nudge timer (user wins). ──
-    responsive_chat.notify_user_input(request, slot)
+    responsive_chat.notify_user_input(request, slot, card_origin=card_origin)
 
     # Drain stale pending messages from previous turns that completed
     # after their SSE reader disconnected. Must happen BEFORE _run_chat
@@ -1196,6 +1202,9 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
             # A card's words come from a page, not from the person's keyboard, so they
             # do not carry the authority a typed turn has over session directives.
             _turn_kwargs["_directive_user_origin"] = False
+            # Nor do they inherit an auto-approval: the turn's tool calls prompt
+            # as untrusted even in a thread that trusts (RFC section 3.6).
+            _turn_kwargs["_card_origin"] = True
         if request_app:
             _turn_kwargs["_turn_actor"] = "app"
         if _accepted_attachments:

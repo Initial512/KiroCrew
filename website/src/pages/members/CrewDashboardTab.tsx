@@ -27,7 +27,7 @@ export default function CrewDashboardTab({ slug, member, displayName, avatar, on
   /** Put a reply the page offered into this crewmate's chat box. */
   onAct?: (text: string) => void
   /** Send a reply the page offered into this crewmate's own thread (see `CrewDynamicDashboard`). */
-  onSend?: (text: string) => Promise<'sent' | 'refused' | 'failed'>
+  onSend?: (text: string) => Promise<'sent' | 'off' | 'refused' | 'failed'>
   /** Called when the person clicks the "Layout locked · Profile" badge to go
    *  straight to the Profile tab where the lock switch lives. */
   onOpenProfileTab?: () => void

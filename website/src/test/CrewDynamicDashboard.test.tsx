@@ -175,7 +175,7 @@ describe('CrewDynamicDashboard', () => {
       vi.spyOn(document, 'activeElement', 'get').mockReturnValue(frame)
     afterEach(() => { Reflect.deleteProperty(navigator, 'userActivation'); vi.restoreAllMocks() })
 
-    async function mountSend(onSend?: (t: string) => Promise<'sent' | 'refused' | 'failed'>) {
+    async function mountSend(onSend?: (t: string) => Promise<'sent' | 'off' | 'refused' | 'failed'>) {
       vi.spyOn(api, 'sessionDashboard').mockResolvedValue(page())
       const onAct = vi.fn()
       renderWithProviders(
@@ -248,14 +248,24 @@ describe('CrewDynamicDashboard', () => {
       expect(onAct).toHaveBeenCalledTimes(2)
     })
 
-    it('shows an error only for a failure, not for the gateway\'s routine refusal, and still fills the composer', async () => {
+    it('fills the composer without an error when the person turned one-click sends off', async () => {
+      activation(true)
+      const onSend = vi.fn().mockResolvedValue('off')
+      const { frame, onAct } = await mountSend(onSend)
+      focusIn(frame)
+      post(frame, 'One')
+      await waitFor(() => expect(onAct).toHaveBeenCalledWith('One'))
+      expect(screen.queryByTestId('crew-dashboard-send-error')).toBeNull()
+    })
+
+    it('shows the same error for the gateway\'s refusal as for a failure, and still fills the composer', async () => {
       activation(true)
       const onSend = vi.fn().mockResolvedValueOnce('refused').mockResolvedValueOnce('failed').mockResolvedValueOnce('sent')
       const { frame, onAct } = await mountSend(onSend)
       focusIn(frame)
       post(frame, 'One')
       await waitFor(() => expect(onAct).toHaveBeenCalledWith('One'))
-      expect(screen.queryByTestId('crew-dashboard-send-error')).toBeNull()
+      expect(await screen.findByTestId('crew-dashboard-send-error')).toHaveTextContent("Couldn't send the reply. It's in the chat box instead.")
       post(frame, 'Two')
       await waitFor(() => expect(onAct).toHaveBeenCalledWith('Two'))
       expect(await screen.findByTestId('crew-dashboard-send-error')).toHaveTextContent("Couldn't send the reply. It's in the chat box instead.")
@@ -265,8 +275,8 @@ describe('CrewDynamicDashboard', () => {
 
     it('drops a second send inside the interval of an accepted one and a send while one is in flight', async () => {
       activation(true)
-      let release: (v: 'sent' | 'refused' | 'failed') => void = () => {}
-      const onSend = vi.fn(() => new Promise<'sent' | 'refused' | 'failed'>((r) => { release = r }))
+      let release: (v: 'sent' | 'off' | 'refused' | 'failed') => void = () => {}
+      const onSend = vi.fn(() => new Promise<'sent' | 'off' | 'refused' | 'failed'>((r) => { release = r }))
       const { frame, onAct } = await mountSend(onSend)
       focusIn(frame)
       post(frame, 'One')

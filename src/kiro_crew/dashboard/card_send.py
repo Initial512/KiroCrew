@@ -71,6 +71,112 @@ _MAX_TRACKED_SLOTS = 256
 _lock = threading.Lock()
 _last_send: dict[str, float] = {}
 
+#: Session key -> how many card turns are running on it right now. In-process and
+#: written only by :func:`card_turn` (the exit guard of ``_run_chat``), so nothing
+#: that rewrites a session's approval policy can clear it. The spawn gate reads it.
+_running_card_turns: dict[str, int] = {}
+
+
+class card_turn:
+    """Marks *session_key* as running a card's turn for the length of a ``with`` block.
+
+    Counted, because the ``/prompts get`` branch runs a nested turn on the same
+    session inside the outer one.
+    """
+
+    def __init__(self, session_key: str) -> None:
+        self._key = session_key
+
+    def __enter__(self) -> None:
+        with _lock:
+            _running_card_turns[self._key] = _running_card_turns.get(self._key, 0) + 1
+
+    def __exit__(self, *_exc: object) -> None:
+        with _lock:
+            left = _running_card_turns.get(self._key, 0) - 1
+            if left > 0:
+                _running_card_turns[self._key] = left
+            else:
+                _running_card_turns.pop(self._key, None)
+
+
+#: The routes through which a running turn hands work to something that is NOT that turn:
+#: another session (create, fork, send, broadcast, continue, retry, revive), a workflow
+#: run, a task run, a cron job, a nudge loop or a monitor. Each starts a turn or an agent
+#: that reads the thread's trust, or one that nobody marked as a card's. Sub-agents are
+#: refused by the spawn gate itself (``subagent_manager/admission/gate.py``).
+_DELEGATION_ROUTES = re.compile(
+    r"^/api/("
+    r"session-control/(create|fork|send|broadcast|continue|retry|revive)"
+    r"|workflows/(run|run_intent)"
+    r"|workflows/definitions/[^/]+/run"
+    r"|workflows/runs/[^/]+/(promote|rerun)"
+    r"|crons|crons/[^/]+|crons/[^/]+/(run|enable|secrets)"
+    r"|spawn/[^/]+/(steer|retry|continue)"
+    r"|autonudge|autonudge/[^/]+|autonudge/[^/]+/fire"
+    r"|monitors|monitors/[^/]+|monitors/[^/]+/restart"
+    r")/?$"
+)
+_DELEGATION_METHODS = frozenset({"POST", "PUT", "PATCH"})
+#: The task runner is refused as a whole prefix (plan, from-chat, execute, retry, task
+#: edits and start are all ways to start or steer a run), except the routes that only
+#: stop one.
+_TASKRUNNER_PREFIX = "/api/taskrunner"
+_TASKRUNNER_STOPS = re.compile(r"^/api/taskrunner/(cancel|plan/cancel|[^/]+/pause)/?$")
+
+
+def is_delegation_route(method: str, path: str) -> bool:
+    """Whether *method* *path* is one of the routes a card turn may not delegate through."""
+    if method not in _DELEGATION_METHODS:
+        return False
+    if path == _TASKRUNNER_PREFIX or path.startswith(_TASKRUNNER_PREFIX + "/"):
+        return _TASKRUNNER_STOPS.match(path) is None
+    return _DELEGATION_ROUTES.match(path) is not None
+
+
+@web.middleware
+async def card_turn_delegation_middleware(request: web.Request, handler: Any) -> web.StreamResponse:
+    """Refuse a delegation route called from inside a Dashboard card's turn.
+
+    A tool call a card turn makes reaches the gateway as an internal request that names
+    its session in ``X-Session-Key``. While that session runs a card turn
+    (:class:`card_turn`), the routes in :data:`_DELEGATION_ROUTES` answer 403: what they
+    start would read the thread's trust or run as a turn nobody marked as a card's.
+    Every other request, and every request from a session that runs no card turn,
+    passes untouched. Written to the SEL like every other card decision.
+    """
+    if (
+        request.get("internal_auth") is True
+        and is_delegation_route(request.method, request.path)
+        and card_turn_running(request.headers.get("X-Session-Key", "").strip())
+    ):
+        refusal = _refuse(
+            403,
+            "card_turn_delegation_refused",
+            "a turn started by a Dashboard card cannot hand work to another session or job",
+        )
+        _audit(request, None, refusal)
+        return refusal
+    return await handler(request)
+
+
+def latest_user_row_is_card(messages: list[dict]) -> bool:
+    """Whether the newest user row in *messages* is a Dashboard card's.
+
+    Continue and retry re-run "the user's most recent request"; when that request is a
+    card's, the re-run is a card turn too.
+    """
+    for row in reversed(messages):
+        if row.get("role") == "user":
+            return (row.get("meta") or {}).get(CARD_ORIGIN_META_KEY) is True
+    return False
+
+
+def card_turn_running(session_key: str) -> bool:
+    """Whether a Dashboard card's turn is running on *session_key* right now."""
+    with _lock:
+        return _running_card_turns.get(session_key, 0) > 0
+
 
 def claims_card_origin(body: dict) -> bool:
     """Whether a ``POST /api/chat`` body claims card origin."""
@@ -100,6 +206,35 @@ def _refuse(
 ) -> web.Response:
     headers = {"Retry-After": str(max(1, int(retry_after + 0.999)))} if retry_after else None
     return web.json_response({"error": error, "code": code}, status=status, headers=headers)
+
+
+def has_open_decision(state: Any, slot: "_ChatSlot") -> bool:
+    """A tool approval, permission prompt, question card or parked question is open on *slot*."""
+    from kiro_crew.dashboard.responsive_chat import pending_interaction
+
+    return bool(
+        pending_interaction(slot)
+        or any(p.get("slot") == slot.key for p in state._pending_questions.values())
+    )
+
+
+def pending_decision_refusal(
+    request: web.Request, state: Any, slot: "_ChatSlot"
+) -> web.Response | None:
+    """The refusal for a card send that finds a decision open AFTER the gate admitted it.
+
+    ``card_send_refusal`` looked once; the handler then awaits (the member config, the
+    binding), and a typed turn can start and end in a question in between. Appending the
+    card's row would retire that question as if the card answered it. Written to the SEL
+    like every other decision; does not claim the rate limit again.
+    """
+    if not has_open_decision(state, slot):
+        return None
+    refusal = _refuse(
+        409, "card_send_pending_decision", "this thread is waiting on an approval or a question"
+    )
+    _audit(request, slot, refusal)
+    return refusal
 
 
 def busy_refusal(request: web.Request, slot: "_ChatSlot | None") -> web.Response:
@@ -184,7 +319,6 @@ async def _decide(
 ) -> web.Response | None:
     from kiro_crew.config import KiroCrewConfig
     from kiro_crew.dashboard.handlers.source_providers import is_owner_dashboard_request
-    from kiro_crew.dashboard.responsive_chat import pending_interaction
     from kiro_crew.members import DM_SLOT_KEY_PREFIX, DM_SLOT_MODE, read_dm_binding_for_slot
 
     if request.get("app", "") or not is_owner_dashboard_request(request):
@@ -208,9 +342,7 @@ async def _decide(
         return _refuse(
             400, "card_text_invalid", "the card text is empty, too long or has control characters"
         )
-    if pending_interaction(slot) or any(
-        p.get("slot") == slot.key for p in state._pending_questions.values()
-    ):
+    if has_open_decision(state, slot):
         return _refuse(
             409, "card_send_pending_decision", "this thread is waiting on an approval or a question"
         )

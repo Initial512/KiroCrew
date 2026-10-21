@@ -229,7 +229,12 @@ switched one-click sends off on the Profile tab or when the chat is busy or
 waiting on an approval or a question. The text is trimmed, at most 600 characters,
 with no control characters but a newline. When a reply arrives it begins
 `[Dashboard card]`: the reader clicked one of the replies you offered. It is not
-an approval of a tool call or permission and does not answer an open question.
+an approval of a tool call or permission and does not answer an open question,
+and the tools Kiro Crew gates ask the reader first while you answer it, even in a chat
+that otherwise trusts your tools (a tool your own agent file pre-allows is not gated
+here and runs as usual). You cannot hand work on from that turn (no
+sub-agent, other session, workflow, task, cron job or loop); ask the reader to request it
+in the chat.
 Keep `act` for replies that need the reader's edit before they go.
 
 | Evidence | Fold and shape |
