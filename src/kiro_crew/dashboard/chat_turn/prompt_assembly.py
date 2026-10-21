@@ -1013,7 +1013,7 @@ async def _turn_settle_debts(turn: _ChatTurn) -> None:
     # re-queue. Put the flag back here rather than at the success check in
     # _turn_context_usage, because most of those paths never reach it;
     # without this the index is lost for the remaining life of the session.
-    # Wrapped for the same reason as the flush in _turn_release_handles (chat_turn/turn_entry.py).
+    # Wrapped for the same reason as the flush in _turn_flush_file_changes (chat_turn/turn_entry.py).
     #
     # The member condition rides the same re-arm for the same reason: a
     # member DM's FIRST turn that dies before landing (MemberRulesUnreadable

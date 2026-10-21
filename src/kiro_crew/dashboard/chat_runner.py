@@ -240,6 +240,7 @@ from kiro_crew.dashboard.chat_turn.turn_dispatch_gates import (
 from kiro_crew.dashboard.chat_turn.turn_ending import _turn_ending_chain
 from kiro_crew.dashboard.chat_turn.turn_entry import (
     _stop_pressed,
+    _turn_flush_file_changes,
     _turn_open,
     _turn_release_handles,
 )
@@ -1155,6 +1156,7 @@ async def _run_chat(
         await _turn_record_outcome(turn)
         await _turn_close_crew_log(turn)
         await _turn_release_handles(turn)
+        _held_flush_cancel = await _turn_flush_file_changes(turn)
         await _turn_settle_debts(turn)
         await _turn_release_session(turn)
         # Retire the in-flight marker once every transcript mutation is complete
@@ -1174,8 +1176,12 @@ async def _run_chat(
         # The per-exit duties and the queue hand-off, in their one order. Run to
         # completion: a cancel landing inside the tail (a turn deadline during
         # the deferred-reset consume) is deferred until the hand-off ran, then
-        # re-raised, so the queue is never left behind a finished task.
+        # re-raised, so the queue is never left behind a finished task. A cancel
+        # the file-change flush in _turn_flush_file_changes held resurfaces here,
+        # once the hand-off has run, for the same reason.
         await run_to_completion(_end_turn_tail(state, slot, turn_exit))
+        if _held_flush_cancel is not None:
+            raise _held_flush_cancel
 
 
 # Every function the owners define runs on this module's globals, so a patch of

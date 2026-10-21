@@ -2,8 +2,8 @@
 provenance, consume veto, allowances and clocks), the Stop signal it reads live, the session's
 Stop count, the directive provenance a channel steer can narrow and the start priority of its
 cold start (``_turn_start_priority``); and the hand-back of what the turn held on its slot
-when it ends (``_turn_release_handles``: the live handles, the batch latch and the file
-changes)."""
+when it ends (``_turn_release_handles``: the live handles and the batch latch;
+``_turn_flush_file_changes``: the file changes)."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ if TYPE_CHECKING:
         logger,
     )
     from kiro_crew.dashboard.chat_turn.decisions_hooks import _discard_stale_decision
-    from kiro_crew.dashboard.chat_turn.file_changes import _flush_file_changes
+    from kiro_crew.dashboard.chat_turn.file_changes import _flush_file_changes_off_loop
     from kiro_crew.dashboard.chat_turn.native_cards import (
         _native_subagent_close_all,
         _retain_terminal_native,
@@ -932,10 +932,9 @@ async def _turn_open(turn: _ChatTurn) -> _Flow | None:
 
 
 async def _turn_release_handles(turn: _ChatTurn) -> None:
-    """Hand back the turn's hold on its slot: the live handles, the batch latch, file changes."""
+    """Hand back the turn's hold on its slot: the live handles and the batch latch."""
     _native_card_output = turn._native_card_output
     _native_tracker = turn._native_tracker
-    _shell_tool_calls = turn._shell_tool_calls
     slot = turn.slot
     state = turn.state
     # Completion can be bypassed by cancellation, provider errors, or timeouts.
@@ -986,18 +985,36 @@ async def _turn_release_handles(turn: _ChatTurn) -> None:
         setattr(turn.client, "accepts_elicitation", False)
     except Exception:
         pass
-    # Ensure file changes always surface, even on cancel/error. Wrapped so
-    # a raise here cannot skip the re-arm in _turn_settle_debts
-    # (chat_turn/prompt_assembly.py) and re-introduce the orphan bug this fix prevents.
+
+
+async def _turn_flush_file_changes(turn: _ChatTurn) -> asyncio.CancelledError | None:
+    """Surface the turn's file changes on every exit, cancel and error included.
+
+    The one phase of the ``finally`` before ``_turn_release_session`` that
+    suspends: the after-content reads run off the loop. A cancellation landing
+    on this await comes back up only after the attach, and is HELD and
+    returned rather than let through -- raised here it would pass every
+    ``except Exception`` in the turn's finally, skip the session permit release
+    and the queue hand-off, and leave the session busy until a restart. The
+    caller re-raises it after ``_end_turn_tail`` (which holds its own the same
+    way). Any other failure is logged so it cannot skip the re-arm in
+    ``_turn_settle_debts`` (chat_turn/prompt_assembly.py) and re-introduce the
+    orphan bug this flush prevents.
+    """
+    slot = turn.slot
+    _held_flush_cancel: asyncio.CancelledError | None = None
     try:
-        _flush_file_changes(
+        await _flush_file_changes_off_loop(
             slot,
             turn_boundary=turn._turn_msg_boundary,
             turn_start_mid=turn._turn_start_mid,
-            turn_had_shell=bool(_shell_tool_calls),
+            turn_had_shell=bool(turn._shell_tool_calls),
         )
+    except asyncio.CancelledError as exc:
+        _held_flush_cancel = exc
     except Exception:
         logger.debug("_flush_file_changes failed", exc_info=True)
+    return _held_flush_cancel
 
 
 def _turn_start_priority(
