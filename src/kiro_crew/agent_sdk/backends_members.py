@@ -57,8 +57,11 @@ from kiro_crew.agent_sdk.backends import (
 #     from. ``confirm_member_projection`` digests that parse against the saved intent,
 #     so a spec edited after its save is refused with ``capability_runtime_unverified``;
 #   * the projection is ``BROKER_ONLY``: of the servers a saved spec declares, only the
-#     ones the shared gateway pools reach pi (all of them are absent with pooling off).
-#     The confirmation does not claim them. ``session_capabilities.runtime_view`` shows
+#     ones the shared gateway pools reach pi (all of them are absent with pooling off),
+#     and on a member session those stubs pass the spec's ``tools`` allowlist from the
+#     same parse (``_pooled_mcp_servers``), as a mirror's do, so a pooled server the
+#     spec never references is not mounted beside it. The confirmation does not claim
+#     the declared servers run. ``session_capabilities.runtime_view`` shows
 #     the template applied only when every declared server is in the session's ready
 #     report, so a declared server that did not reach pi leaves the pane unverified
 #     (``capability_mcp_unreported``) instead of overstating what runs;

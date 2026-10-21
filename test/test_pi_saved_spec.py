@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -19,7 +20,7 @@ import test_member_mount_deepseek as deepseek_mount
 
 import kiro_crew.validation  # noqa: F401 - break the legacy import cycle first
 from kiro_crew import agent_state
-from kiro_crew.acp import session_mcp
+from kiro_crew.acp import client_mcp_array, client_start, session_mcp
 from kiro_crew.acp.client import AcpClient
 from kiro_crew.acp.mcp_session_report import McpSessionReport
 from kiro_crew.acp.transport_errors import AcpError
@@ -140,6 +141,132 @@ def test_kiro_records_no_consumed_spec(agents_dir, tmp_path) -> None:
     client._session_agent_spec = marker
     assert client._mirrorless_member_mounts(()) == []
     assert client._session_agent_spec is marker
+
+
+# --- The pooled stubs a member session on pi receives pass the spec's ``tools``.
+
+
+def _stub(name: str) -> dict:
+    return {"name": name, "command": "/opt/stub", "args": [name]}
+
+
+def _stub_names(client: AcpClient, *, member: bool) -> list[str]:
+    client.member_context = member
+    client._pooled_broker_stubs = lambda: [_stub("docs"), _stub("search")]
+    client._session_mcp_cache = client._resolve_session_mcp_servers()
+    return [s["name"] for s in client._pooled_mcp_servers()]
+
+
+@pytest.mark.parametrize(
+    ("tools", "expected"),
+    [(["@docs"], ["docs"]), (["*"], ["docs", "search"]), ([], [])],
+)
+def test_a_member_on_pi_mounts_only_the_stubs_its_spec_references(
+    agents_dir, tmp_path, tools, expected
+) -> None:
+    _write(agents_dir, dict(SAVED, tools=tools))
+    client = _pi_member(tmp_path)
+    assert _stub_names(client, member=True) == expected
+
+
+def test_a_switched_off_server_is_not_mounted_as_a_stub_on_a_member(agents_dir, tmp_path) -> None:
+    _write(agents_dir, dict(SAVED, mcpServers={"docs": {"command": "x", "disabled": True}}))
+    client = _pi_member(tmp_path)
+    assert _stub_names(client, member=True) == ["search"]
+
+
+def test_a_member_spec_with_no_tools_key_mounts_no_stub(agents_dir, tmp_path) -> None:
+    """A missing ``tools`` is an empty allowlist, as on a mirror: nothing referenced."""
+    _write(agents_dir, {"name": "kirocrew", "description": "no tools key"})
+    assert _stub_names(_pi_member(tmp_path), member=True) == []
+
+
+def test_an_unreadable_member_spec_mounts_no_stub(agents_dir, tmp_path, monkeypatch) -> None:
+    """Fail closed: no spec read means no reference, so no pooled stub reaches pi."""
+
+    def unreadable(*_a, **_k):
+        raise OSError("spec unreadable")
+
+    monkeypatch.setattr(session_mcp, "session_mcp_projection", unreadable)
+    assert _stub_names(_pi_member(tmp_path), member=True) == []
+
+
+def test_a_missing_member_spec_mounts_no_stub(agents_dir, tmp_path) -> None:
+    """No spec file: nothing referenced, so no stub (its confirmation refuses too)."""
+    (agents_dir / "kirocrew.json").unlink()
+    assert _stub_names(_pi_member(tmp_path), member=True) == []
+
+
+def test_every_session_composition_reads_pi_s_array_before_its_pooled_stubs() -> None:
+    """The allowlist the stubs read is recorded by the pi array's resolve.
+
+    ``_pooled_mcp_servers`` reads only that field (H13), so each ``session/new`` /
+    ``session/load`` splice must evaluate the pi array -- which warms the cache
+    through ``_mirrorless_member_mounts`` -- before the pooled stubs.
+    """
+    source = (Path(client_start.__file__)).read_text(encoding="utf-8")
+    pooled = [m.start() for m in re.finditer(r"self\._pooled_mcp_servers\b", source)]
+    assert len(pooled) == 3
+    for at in pooled:
+        assert "self._pi_session_mcp_servers()" in source[max(0, at - 400) : at], at
+
+
+def test_kiro_stub_composition_makes_no_projection_lookup(tmp_path, monkeypatch) -> None:
+    """kiro-cli's pooled stubs gain no branch and no registry lookup (H13)."""
+    client = deepseek_mount._client(tmp_path, MEMBER_KEY, backend=ACP_BACKEND_KIRO)
+    client.member_context = True
+    client._pooled_broker_stubs = lambda: [_stub("docs")]
+    client._session_mcp_cache = None
+
+    def no_lookup(*_a, **_k):
+        raise AssertionError("projection_for reached from kiro's stub composition")
+
+    monkeypatch.setattr(client_mcp_array, "projection_for", no_lookup)
+    assert [s["name"] for s in client._pooled_mcp_servers()] == ["docs"]
+
+
+def test_a_re_resolve_takes_the_edited_tools_list(agents_dir, tmp_path) -> None:
+    _write(agents_dir, dict(SAVED, tools=["@docs"]))
+    client = _pi_member(tmp_path)
+    assert _stub_names(client, member=True) == ["docs"]
+    _write(agents_dir, dict(SAVED, tools=["@search"]))
+    assert _stub_names(client, member=True) == ["search"]
+
+
+def test_a_member_stub_with_a_globally_switched_off_tool_is_withheld_whole(
+    agents_dir, tmp_path
+) -> None:
+    """pi has no per-tool deny, so a narrowed pooled server is not mounted at all."""
+    _write(agents_dir, dict(SAVED, tools=["*"]))
+    (tmp_path / "settings-mcp.json").write_text(
+        json.dumps({"mcpServers": {"docs": {"disabledTools": ["delete_page"]}}}),
+        encoding="utf-8",
+    )
+    assert _stub_names(_pi_member(tmp_path), member=True) == ["search"]
+
+
+def test_a_non_member_pi_session_keeps_every_stub(agents_dir, tmp_path) -> None:
+    _write(agents_dir, dict(SAVED, tools=["@docs"]))
+    client = deepseek_mount._client(tmp_path, "dashboard:plain", backend=ACP_BACKEND_PI)
+    assert _stub_names(client, member=False) == ["docs", "search"]
+
+
+def test_kiro_stubs_are_never_filtered(agents_dir, tmp_path) -> None:
+    """kiro-cli applies ``tools`` itself; its stub append gains no filter (H13)."""
+    _write(agents_dir, dict(SAVED, tools=["@docs"]))
+    client = deepseek_mount._client(tmp_path, MEMBER_KEY, backend=ACP_BACKEND_KIRO)
+    client.member_context = True
+    client._pooled_broker_stubs = lambda: [_stub("docs"), _stub("search")]
+    client._session_mcp_cache = None
+    assert [s["name"] for s in client._pooled_mcp_servers()] == ["docs", "search"]
+    assert getattr(client, "_member_stub_allowlist", None) is None
+
+
+def test_the_allowlist_is_dropped_with_the_session(tmp_path) -> None:
+    client = AcpClient(work_dir=tmp_path, agent="kirocrew", acp_backend=ACP_BACKEND_PI)
+    client._member_stub_allowlist = session_mcp._tools_allowlist({"tools": ["@docs"]})
+    client._reset_state()
+    assert client._member_stub_allowlist is None
 
 
 def _view(provider, mcp_servers: tuple[str, ...]) -> dict:

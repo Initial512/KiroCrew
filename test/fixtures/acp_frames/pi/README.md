@@ -119,7 +119,11 @@ pi the way a pooled server does, as a same-named element of the per-session hand
 a server the gateway does not pool never reaches pi, and the Capabilities pane then
 reads unverified rather than applied. The same drive with the spec edited after its
 save was refused before its first prompt with `capability_runtime_unverified`, and the
-server was never called.
+server was never called. A third drive, whose saved `tools` list did not reference
+the server, was confirmed with the `native_tools` gap (so the pane reads unverified),
+and the pooled stub never reached pi: on a member session the stubs pass the spec's
+`tools` allowlist, as a mirror's do, so the server was not spawned. The fixture holds
+the first drive's frames; the other two are recorded in its header note.
 
 The recording host refuses user namespaces, so as for the zero-tool capture the
 routing's sandbox preflight was replaced with "no mask"; the gatewayd pooling was

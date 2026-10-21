@@ -116,7 +116,8 @@ exact spec consumed by their MCP projection after session creation or load
 mirror: the consumed spec is the parse its member mounts and zero-tool answer
 come from (`AcpClient._mirrorless_member_mounts`), and since its projection is
 `BROKER_ONLY` a declared server that is not pooled never reaches pi and leaves
-the session unverified rather than applied. `ACP_BACKENDS_MEMBER_TOOL_LIMITS`
+the session unverified rather than applied. On a member session pi's pooled stubs
+pass the spec's `tools` allowlist, as a mirror's do. `ACP_BACKENDS_MEMBER_TOOL_LIMITS`
 (Kiro only) says which honour a saved spec's per-tool `disabledTools`; on any
 other backend such a spec is refused before spawn with
 `capability_tool_limits_unsupported`. A member DM whose
