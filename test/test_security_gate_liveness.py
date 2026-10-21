@@ -517,7 +517,12 @@ def _url_payload_command(n: int) -> str:
 #: the dispatcher that falls back to the Python gate (kept verbatim as
 #: ``_might_contain_credential_py``) on a missing, stale, disabled or failing module.
 #: Seventy-one lines. No pattern moved and no pass changed.
-_PACKAGE_LINE_BUDGET = 32_601
+#:
+#: Raised again, from 32,601, for the ``-c`` operand that skips a redirect word, and the
+#: rm floor reading each nested-shell payload through the shared extractor and the
+#: shared data-consumer exemption, with a heredoc body left as data, and the exemption
+#: voided when the raw text holds a splice marker. No pattern moved.
+_PACKAGE_LINE_BUDGET = 32_774
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second
