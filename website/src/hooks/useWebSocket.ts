@@ -6,10 +6,14 @@ import { sseTodoUpdate, sseMcpReportUpdate, sseSlotTitle, triggerRefresh, fetchS
 import { addNotification, ackNotificationByTs, unackNotificationByTs, clearAllNotifications } from '../store/notificationsSlice'
 import { dispatchMcNotification, dispatchLiveNotification } from './notificationEvent'
 import {
-  fetchHistory, sseChatMessage, sseChatMessageUpdate, sseChatMessagePatchByTs, refreshSlot, sseContextUsage, clearMessages, clearSlotCache, resolveByApprovalId, sseSubagentPending, sseSubagentSpawn, sseSubagentQueued, sseSubagentTool, sseSubagentStalled, sseSubagentRetrying, sseSubagentDone, sseSubagentSnapshot, sseSubagentBatchUpdate, sseSubagentBatchChunks, sseToolResult, sseActivityEvent, sseSideResult, sseWorkflowEvent, removeQueuedMessage, appendQueuedMessage, cancelQueuedMessage, editQueuedMessage, reorderQueuedMessages, sseMcpAppRender, sseSideQueue, queueEntryAttachments, isTerminalWorkflowStatus,
+  fetchHistory, sseChatMessage, sseChatMessageUpdate, sseChatMessagePatchByTs, refreshSlot, sseContextUsage, clearMessages, clearSlotCache, resolveByApprovalId, sseSubagentPending, sseSubagentSpawn, sseSubagentQueued, sseSubagentTool, sseSubagentStalled, sseSubagentRetrying, sseSubagentDone, sseSubagentSnapshot, sseSubagentBatchUpdate, sseSubagentBatchChunks, sseToolResult, sseActivityEvent, sseSideResult, sseWorkflowEvent, removeQueuedMessage, appendQueuedMessage, cancelQueuedMessage, editQueuedMessage, reorderQueuedMessages, sseMcpAppRender, sseSideQueue, sideClose, queueEntryAttachments, isTerminalWorkflowStatus,
+  forgetSideSteerSubmittedText, noteSideQueueDroppedByClose, readSideSteerSubmittedText,
+  takeSideQueueEditForClose,
 } from '../store/chatSlice'
 import { store } from '../store'
 import { TAB_ID } from '../api/tabId'
+import { readSideChatDraft, writeSideChatDraft } from '../chat-core/composer/sideChatDrafts'
+import { mergeIntoDraft } from '../utils/chatDrafts'
 import { applyGuideUpdate } from '../api/guide'
 import { handleGuideObserveFrame } from '../guide/liveObservation'
 import { applyCardUpdate } from '../api/cards'
@@ -758,6 +762,99 @@ export function useWebSocket() {
           case 'chat.side_result':
             dispatch(sseSideResult(data as { slot: string; run_id: string; role: 'user' | 'assistant'; content: string; ts?: number; final?: boolean; is_error?: boolean; steer?: boolean; message_id?: string }))
             break
+          case 'chat.side_closed': {
+            // The slot's side conversation was closed (Refresh context in another
+            // tab, or an app), so this tab clears it too: its next question would
+            // otherwise open a fresh conversation under rows the model has
+            // dropped. The tab that closed it cleared its panel when it sent the close.
+            const closed = data as { slot?: unknown; origin_client?: unknown; dropped?: unknown }
+            if (typeof closed.slot !== 'string') break
+            const slot = closed.slot
+            const dropped: { queueId: string; steerId?: string }[] = Array.isArray(closed.dropped)
+              ? closed.dropped
+                .flatMap(entry => {
+                  if (typeof entry !== 'object' || entry === null) return []
+                  const queueId = (entry as Record<string, unknown>).queue_id
+                  const steerId = (entry as Record<string, unknown>).steer_id
+                  if (typeof queueId !== 'string' || queueId.length === 0) return []
+                  return [{
+                    queueId,
+                    ...(typeof steerId === 'string' && steerId.length > 0 ? { steerId } : {}),
+                  }]
+                })
+                .slice(0, 50)
+              : []
+            const handBackOrNoteDropped = (
+              handedBackQueueIds: ReadonlySet<string> = new Set(),
+              handedBackSteerIds: ReadonlySet<string> = new Set(),
+            ) => {
+              const unowned: { queueId: string; steerId?: string }[] = []
+              for (const entry of dropped) {
+                if (handedBackQueueIds.has(entry.queueId)
+                  || (!!entry.steerId && handedBackSteerIds.has(entry.steerId))) continue
+                const content = entry.steerId
+                  ? readSideSteerSubmittedText(slot, entry.steerId)
+                  : undefined
+                if (content !== undefined && entry.steerId) {
+                  writeSideChatDraft(slot, mergeIntoDraft(readSideChatDraft(slot), content))
+                  forgetSideSteerSubmittedText(slot, entry.steerId)
+                } else unowned.push(entry)
+              }
+              noteSideQueueDroppedByClose(slot, unowned)
+            }
+            let closing = store.getState().chat.slotSide[closed.slot]
+            // This tab clears before sending the request. Rows, a run id, or a queue
+            // card present on its echo therefore came back from the gateway after that
+            // clear and still belong to the conversation the close dropped. A lone
+            // optimistic row, accepted or not, has no frame ahead of the echo, so its
+            // send belongs to the conversation that follows the close.
+            const hasGatewayState = !!closing && (
+              closing.messages.some(message => !message.optimistic)
+              || typeof closing.lastRunId === 'string'
+              || !!closing.queue?.length
+            )
+            if (closed.origin_client === TAB_ID && !hasGatewayState) {
+              handBackOrNoteDropped()
+              break
+            }
+            // A panel can be showing another slot, or be unmounted, when the requeued
+            // card arrives. Mark only cards whose submitted steer text this tab retained;
+            // a raw card already holds newer local wording and remains authoritative.
+            for (const entry of closing?.queue ?? []) {
+              if (entry.raw || !entry.steerId) continue
+              const content = readSideSteerSubmittedText(closed.slot, entry.steerId)
+              if (content !== undefined) {
+                dispatch(sseSideQueue({
+                  slot: closed.slot,
+                  action: 'edit',
+                  queue_id: entry.id,
+                  content,
+                  raw: true,
+                }))
+              }
+            }
+            closing = store.getState().chat.slotSide[closed.slot]
+            // The gateway dropped the queue with the conversation. A question this tab
+            // typed into it has no other copy, so it goes back to this tab's composer,
+            // after one already cancelled here that still waits for this slot's panel.
+            if (closing?.releasedText) {
+              writeSideChatDraft(closed.slot, mergeIntoDraft(readSideChatDraft(closed.slot), closing.releasedText))
+            }
+            const handedBackQueueIds = new Set<string>()
+            const handedBackSteerIds = new Set<string>()
+            for (const entry of closing?.queue ?? []) {
+              if (entry.raw) {
+                const content = takeSideQueueEditForClose(closed.slot, entry.id) ?? entry.content
+                writeSideChatDraft(closed.slot, mergeIntoDraft(readSideChatDraft(closed.slot), content))
+                handedBackQueueIds.add(entry.id)
+                if (entry.steerId) handedBackSteerIds.add(entry.steerId)
+              }
+              if (entry.steerId) forgetSideSteerSubmittedText(closed.slot, entry.steerId)
+            }
+            handBackOrNoteDropped(handedBackQueueIds, handedBackSteerIds)
+            dispatch(sideClose(closed.slot))
+            break
+          }
           case 'chat.thread_reply':
             handleThreadReply(queryClient, data)
             break
