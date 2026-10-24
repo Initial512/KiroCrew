@@ -510,7 +510,11 @@ def _url_payload_command(n: int) -> str:
 #:
 #: Raised by 3, from 32,527, for the ``web-push`` leaf in ``paths_lists`` (the Web
 #: Push key and device secrets): the leaf and its two-line reason. No rule changed.
-_PACKAGE_LINE_BUDGET = 32_530
+#:
+#: Raised by 3, from 32,530, for one ``_CREW_SECRET_LEAVES`` entry in ``paths_lists``:
+#: the mediated-secret request directory (``secret-request-policy``), denied to the
+#: agent file tools as a whole. Data, not rule logic: the matcher is unchanged.
+_PACKAGE_LINE_BUDGET = 32_533
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second
