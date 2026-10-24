@@ -173,7 +173,6 @@ export type {
   CrewmateExportPreview,
   MemberRosterRow,
   MemberActivityEntry,
-  MemberRecap,
   MemberGoals,
   MemberGoal,
   GoalKeyResult,
