@@ -12167,6 +12167,8 @@
       "retry_delete_all": "如需重试，请再次点击“清除”。",
       "could_not_open_this_session": "无法打开\"{{title}}\"。请重试。",
       "could_not_regenerate": "无法重新生成",
+      "regenerate_previous_reply": "上一版本。新版本到来后仍会保留。",
+      "regenerate_new_reply": "新版本",
       "could_not_set_the_agent_default_model": "无法设置代理的默认模型",
       "could_not_switch_variant": "无法切换版本",
       "side_chat_pane_gone": "无法为该分栏打开随手问——它的会话已不可用：{{error}}",

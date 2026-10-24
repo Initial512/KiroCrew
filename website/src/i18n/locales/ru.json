@@ -12725,6 +12725,8 @@
       "retry_delete_all": "Чтобы повторить попытку, снова нажми «Очистить».",
       "could_not_open_this_session": "Не удалось открыть «{{title}}». Попробуйте снова.",
       "could_not_regenerate": "Не удалось сгенерировать заново",
+      "regenerate_previous_reply": "Предыдущая версия. Сохранится, когда придёт новая.",
+      "regenerate_new_reply": "Новая версия",
       "could_not_set_the_agent_default_model": "Не удалось назначить модель по умолчанию для агента",
       "could_not_switch_variant": "Не удалось переключить версию",
       "side_chat_pane_gone": "Не удалось открыть боковой чат для этой панели — её сессия больше недоступна: {{error}}",

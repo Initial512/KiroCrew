@@ -15,7 +15,7 @@ from chat_test_helpers import _make_app, _make_state
 
 class TestRegenerateAndVariants:
     @pytest.mark.asyncio
-    async def test_regenerate_truncates_and_stashes_variant(self, tmp_path, monkeypatch):
+    async def test_regenerate_keeps_the_reply_and_stashes_variant(self, tmp_path, monkeypatch):
         monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
         state = _make_state(tmp_path)
         slot = state.get_or_create_slot("s1")
@@ -32,7 +32,8 @@ class TestRegenerateAndVariants:
                 resp = await client.post("/api/chat/slots/s1/regenerate")
                 assert resp.status == 200
                 await asyncio.sleep(0)
-        assert [m["role"] for m in slot.messages] == ["user"]
+        # The previous reply stays until a new one replaces it.
+        assert [m["role"] for m in slot.messages] == ["user", "assistant"]
         assert len(captured) == 1
         assert captured[0]["content"] == "hello v1"
 
@@ -196,6 +197,147 @@ class TestRegenerateAndVariants:
         assert captured[-1]["content"] == "newest"
 
     @pytest.mark.asyncio
+    async def test_regenerate_keeps_the_shown_version_when_the_list_is_full(
+        self, tmp_path, monkeypatch
+    ):
+        """The user is reading the OLDEST of a full version list when they press
+        Regenerate: that answer is the one being replaced, so the cap drops the
+        oldest other version instead of it."""
+        from kiro_crew.dashboard.chat import _MAX_VARIANTS
+
+        monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
+        state = _make_state(tmp_path)
+        slot = state.get_or_create_slot("s1")
+        slot.append("user", "hi")
+        slot.append("assistant", "v0")
+        existing = [{"content": f"v{i}", "ts": f"t{i}"} for i in range(_MAX_VARIANTS + 1)]
+        slot.messages[-1]["variants"] = existing
+        slot.messages[-1]["variant_idx"] = 0
+        slot.drain()
+        captured = []
+
+        async def _capture(*a, **kw):
+            captured.extend(list(slot._pending_variants))
+
+        with patch("kiro_crew.dashboard.chat_regenerate._run_chat", new=_capture):
+            async with TestClient(TestServer(_make_app(state))) as client:
+                resp = await client.post("/api/chat/slots/s1/regenerate")
+                assert resp.status == 200
+                await asyncio.sleep(0)
+        contents = [v["content"] for v in captured]
+        # Room is left for the new reply: the reply ends with _MAX_VARIANTS versions.
+        assert len(contents) == _MAX_VARIANTS - 1
+        assert contents[0] == "v0"
+        assert "v1" not in contents and "v2" not in contents
+        assert contents[-1] == f"v{_MAX_VARIANTS}"
+
+    def test_cap_variants_keeping_drops_the_oldest_others_in_order(self):
+        from kiro_crew.dashboard.chat_regenerate import _MAX_VARIANTS, cap_variants_keeping
+
+        full = [{"content": f"v{i}"} for i in range(_MAX_VARIANTS + 2)]
+        kept = [v["content"] for v in cap_variants_keeping(full, {"content": "v0"})]
+        assert kept == ["v0"] + [f"v{i}" for i in range(4, _MAX_VARIANTS + 2)]
+        newest = [
+            v["content"] for v in cap_variants_keeping(full, {"content": f"v{_MAX_VARIANTS + 1}"})
+        ]
+        assert newest == [f"v{i}" for i in range(3, _MAX_VARIANTS + 2)]
+        under = full[: _MAX_VARIANTS - 1]
+        assert cap_variants_keeping(under, {"content": "v0"}) == under
+
+    @pytest.mark.asyncio
+    async def test_regenerate_keeps_versions_that_share_text_but_link_elsewhere(
+        self, tmp_path, monkeypatch
+    ):
+        """Two answers linking different paths on one host redact to the same text
+        and differ only in their blocked-link records. Regenerating from the older
+        one keeps BOTH, each with its own records, and keeps the one on screen."""
+        from kiro_crew.security.exfil import redact_exfiltration_urls_with_records
+
+        tail = "a" * 300
+        one = redact_exfiltration_urls_with_records(f"see https://evil.example.com/one?d={tail}")
+        two = redact_exfiltration_urls_with_records(f"see https://evil.example.com/two?d={tail}")
+        assert one[0] == two[0] and one[-1] != two[-1]
+        text = one[0]
+        monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
+        state = _make_state(tmp_path)
+        slot = state.get_or_create_slot("s1")
+        slot.append("user", "hi")
+        # Version 1 of 2 (the older) is on screen, with its own records.
+        slot.append("assistant", text, meta={"blocked_links": one[-1]})
+        slot.messages[-1]["variants"] = [
+            {"content": text, "ts": "t0", "blocked_links": one[-1]},
+            {"content": text, "ts": "t1", "blocked_links": two[-1]},
+        ]
+        slot.messages[-1]["variant_idx"] = 0
+        slot.drain()
+        captured = []
+
+        async def _capture(*a, **kw):
+            captured.extend(list(slot._pending_variants))
+
+        with patch("kiro_crew.dashboard.chat_regenerate._run_chat", new=_capture):
+            async with TestClient(TestServer(_make_app(state))) as client:
+                resp = await client.post("/api/chat/slots/s1/regenerate")
+                assert resp.status == 200
+                await asyncio.sleep(0)
+        assert [v["ts"] for v in captured] == ["t0", "t1"]
+        assert [v["blocked_links"] for v in captured] == [one[-1], two[-1]]
+
+    def test_cap_variants_keeping_protects_the_shown_index_over_a_text_match(self):
+        """Under the cap, the entry at the shown index is the one kept when it is
+        that version; an entry with the same text but other records is a
+        different version and stays too."""
+        from kiro_crew.dashboard.chat_regenerate import _MAX_VARIANTS, cap_variants_keeping
+
+        a = {"content": "same", "blocked_links": [{"url": "a"}]}
+        b = {"content": "same", "blocked_links": [{"url": "b"}]}
+        fillers = [{"content": f"v{i}"} for i in range(_MAX_VARIANTS)]
+        kept = cap_variants_keeping([a, *fillers, b], dict(a), shown_idx=0)
+        assert len(kept) == _MAX_VARIANTS - 1
+        assert kept[0] is a
+        # b is a different version: it is evicted only as an oldest-first excess,
+        # never as a duplicate of a. Here it is the newest, so it survives.
+        assert kept[-1] is b
+
+    def test_cap_variants_keeping_bounds_a_list_of_identical_versions(self):
+        """Every version holds the shown text (a command whose answer never
+        changes): one is protected, the rest still go, so the cap holds."""
+        from kiro_crew.dashboard.chat_regenerate import _MAX_VARIANTS, cap_variants_keeping
+
+        same = [{"content": "No prompts found.", "ts": f"t{i}"} for i in range(_MAX_VARIANTS + 5)]
+        kept = cap_variants_keeping(same, {"content": "No prompts found."})
+        # One copy of the shown answer is kept: the newest; its duplicates go.
+        assert [e["ts"] for e in kept] == [f"t{_MAX_VARIANTS + 4}"]
+
+    @pytest.mark.asyncio
+    async def test_regenerating_an_unchanging_answer_keeps_the_list_bounded(
+        self, tmp_path, monkeypatch
+    ):
+        from kiro_crew.dashboard.chat import _MAX_VARIANTS
+
+        monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
+        state = _make_state(tmp_path)
+        slot = state.get_or_create_slot("s1")
+        slot.append("user", "/prompts")
+        slot.append("assistant", "No prompts found.")
+        slot.messages[-1]["variants"] = [
+            {"content": "No prompts found.", "ts": f"t{i}"} for i in range(_MAX_VARIANTS + 1)
+        ]
+        slot.messages[-1]["variant_idx"] = _MAX_VARIANTS
+        slot.drain()
+        captured = []
+
+        async def _capture(*a, **kw):
+            captured.extend(list(slot._pending_variants))
+
+        with patch("kiro_crew.dashboard.chat_regenerate._run_chat", new=_capture):
+            async with TestClient(TestServer(_make_app(state))) as client:
+                resp = await client.post("/api/chat/slots/s1/regenerate")
+                assert resp.status == 200
+                await asyncio.sleep(0)
+        assert [v["content"] for v in captured] == ["No prompts found."]
+
+    @pytest.mark.asyncio
     async def test_regenerate_rejects_missing_slot(self, tmp_path, monkeypatch):
         monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
         state = _make_state(tmp_path)
@@ -215,27 +357,110 @@ class TestRegenerateAndVariants:
             assert resp.status == 400
 
     @pytest.mark.asyncio
-    async def test_regenerate_persists_to_disk(self, tmp_path, monkeypatch):
-        """After regenerate, on-disk history should reflect the truncation."""
+    async def test_regenerate_empty_turn_keeps_the_previous_reply(self, tmp_path, monkeypatch):
+        """A Regenerate whose turn ends before any reply -- refused,
+        cancelled, failed -- leaves the previous reply in the window and on disk."""
         monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
         state = _make_state(tmp_path)
         slot = state.get_or_create_slot("s1")
         slot.append("user", "hi")
         slot.append("assistant", "old")
         slot.drain()
-        # Save first so a file exists
+        from kiro_crew.dashboard import chat_runner
         from kiro_crew.dashboard.chat import _history_key_for, _save_slot_to_history
 
         _save_slot_to_history(state, slot)
-        with patch("kiro_crew.dashboard.chat_regenerate._run_chat", new=AsyncMock()):
+
+        async def _empty_turn(*a, **kw):
+            # The turn's end, as ``_end_turn_tail`` runs it, with no reply.
+            await chat_runner.settle_regenerate(state, slot)
+
+        with patch("kiro_crew.dashboard.chat_regenerate._run_chat", new=_empty_turn):
             async with TestClient(TestServer(_make_app(state))) as client:
                 resp = await client.post("/api/chat/slots/s1/regenerate")
                 assert resp.status == 200
-        # File should now only contain the user message (assistant truncated)
-        key = _history_key_for(slot.key)
-        persisted = state.conversation_log.read_messages(key)
-        roles = [m.get("role") for m in persisted]
-        assert roles == ["user"]
+                await slot.task
+        assert [m["content"] for m in slot.messages] == ["hi", "old"]
+        persisted = state.conversation_log.read_messages(_history_key_for(slot.key))
+        assert [m.get("content") for m in persisted] == ["hi", "old"]
+        assert slot._regenerate_target is None
+        assert slot._pending_variants == []
+
+    @pytest.mark.asyncio
+    async def test_regenerate_replaces_the_reply_once_a_new_one_exists(self, tmp_path, monkeypatch):
+        """A turn that produced a reply replaces the previous one in the window and
+        on disk, and keeps it as a variant."""
+        monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
+        state = _make_state(tmp_path)
+        slot = state.get_or_create_slot("s1")
+        slot.append("user", "hi")
+        slot.append("assistant", "old")
+        slot.drain()
+        from kiro_crew.dashboard import chat_runner
+        from kiro_crew.dashboard.chat import _history_key_for, _save_slot_to_history
+
+        _save_slot_to_history(state, slot)
+
+        async def _turn(*a, **kw):
+            # A reply the turn recorded, then the turn's own append-only save.
+            chat_runner._append_command_reply(slot, "new")
+            _save_slot_to_history(state, slot)
+            await chat_runner.settle_regenerate(state, slot)
+
+        with patch("kiro_crew.dashboard.chat_regenerate._run_chat", new=_turn):
+            async with TestClient(TestServer(_make_app(state))) as client:
+                resp = await client.post("/api/chat/slots/s1/regenerate")
+                assert resp.status == 200
+                await slot.task
+        assert [m["content"] for m in slot.messages] == ["hi", "new"]
+        assert [v["content"] for v in slot.messages[-1]["variants"]] == ["old", "new"]
+        assert slot.messages[-1]["variant_idx"] == 1
+        persisted = state.conversation_log.read_messages(_history_key_for(slot.key))
+        assert [m.get("content") for m in persisted] == ["hi", "new"]
+
+    @pytest.mark.asyncio
+    async def test_a_regenerate_after_a_notice_only_one_re_runs_the_kept_reply(
+        self, tmp_path, monkeypatch
+    ):
+        """A Regenerate that saved only ``Compacting...`` and ended keeps the
+        previous reply. The next Regenerate re-runs that reply, not the notice
+        row, so a success keeps it as a version instead of dropping it."""
+        monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
+        state = _make_state(tmp_path)
+        slot = state.get_or_create_slot("s1")
+        slot.append("user", "hi")
+        slot.append("assistant", "old")
+        slot.drain()
+        from kiro_crew.dashboard import chat_runner
+        from kiro_crew.dashboard.chat import _history_key_for, _save_slot_to_history
+
+        _save_slot_to_history(state, slot)
+
+        async def _notice_only_turn(*a, **kw):
+            chat_runner.note_regenerate_notice(slot, "Compacting...")
+            chat_runner._flush_segment(state, slot, "Compacting...", broadcast=False)
+            _save_slot_to_history(state, slot)
+            await chat_runner.settle_regenerate(state, slot)
+
+        async def _turn(*a, **kw):
+            chat_runner._append_command_reply(slot, "new")
+            _save_slot_to_history(state, slot)
+            await chat_runner.settle_regenerate(state, slot)
+
+        async with TestClient(TestServer(_make_app(state))) as client:
+            with patch("kiro_crew.dashboard.chat_regenerate._run_chat", new=_notice_only_turn):
+                resp = await client.post("/api/chat/slots/s1/regenerate")
+                assert resp.status == 200
+                await slot.task
+            assert [m["content"] for m in slot.messages] == ["hi", "old", "Compacting..."]
+            persisted = state.conversation_log.read_messages(_history_key_for(slot.key))
+            assert (persisted[-1].get("meta") or {}).get("kind") == "compaction"
+            with patch("kiro_crew.dashboard.chat_regenerate._run_chat", new=_turn):
+                resp = await client.post("/api/chat/slots/s1/regenerate")
+                assert resp.status == 200
+                await slot.task
+        assert [m["content"] for m in slot.messages] == ["hi", "new"]
+        assert [v["content"] for v in slot.messages[-1]["variants"]] == ["old", "new"]
 
     @pytest.mark.asyncio
     async def test_save_slot_redacts_variants(self, tmp_path, monkeypatch):

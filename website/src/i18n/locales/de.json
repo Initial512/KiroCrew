@@ -12353,6 +12353,8 @@
       "retry_delete_all": "Für einen neuen Versuch drücke noch einmal „Leeren“.",
       "could_not_open_this_session": "„{{title}}“ konnte nicht geöffnet werden. Versuche es erneut.",
       "could_not_regenerate": "Neu erstellen fehlgeschlagen",
+      "regenerate_previous_reply": "Vorherige Version. Bleibt erhalten, wenn die neue kommt.",
+      "regenerate_new_reply": "Neue Version",
       "could_not_set_the_agent_default_model": "Standardmodell des Agenten konnte nicht festgelegt werden",
       "could_not_switch_variant": "Versionswechsel fehlgeschlagen",
       "side_chat_pane_gone": "Für diesen Bereich konnte kein Seitenchat geöffnet werden — seine Sitzung ist nicht mehr verfügbar: {{error}}",

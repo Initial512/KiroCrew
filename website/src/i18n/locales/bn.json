@@ -12353,6 +12353,8 @@
       "retry_delete_all": "আবার চেষ্টা করতে সব মুছে ফেলার বোতামটি আবার চাপো।",
       "could_not_open_this_session": "\"{{title}}\" খোলা যায়নি। আবার চেষ্টা করুন।",
       "could_not_regenerate": "পুনরায় তৈরি করা যায়নি",
+      "regenerate_previous_reply": "আগের সংস্করণ। নতুনটি এলে এটি রাখা থাকবে।",
+      "regenerate_new_reply": "নতুন সংস্করণ",
       "could_not_set_the_agent_default_model": "এজেন্টের ডিফল্ট মডেল সেট করা যায়নি",
       "could_not_switch_variant": "সংস্করণ পরিবর্তন করা যায়নি",
       "side_chat_pane_gone": "ওই প্যানের জন্য সাইড চ্যাট খোলা যায়নি — তার সেশন আর উপলব্ধ নেই: {{error}}",

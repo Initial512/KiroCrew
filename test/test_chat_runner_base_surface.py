@@ -765,7 +765,7 @@ _BASE_SURFACE: dict[str, tuple[tuple[str, str, str], ...]] = {
         (
             "_segment_row_meta",
             "function",
-            "(slot: '_ChatSlot', blocked_links: 'list[dict]', redactions: 'list[dict] | None' = None) -> 'dict | None'",
+            "(slot: '_ChatSlot', blocked_links: 'list[dict]', redactions: 'list[dict] | None' = None, *, text: 'str | None' = None) -> 'dict | None'",
         ),
         ("_SEGMENT_RAW_MAX_CHARS", "value", "int"),
         (

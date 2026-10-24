@@ -12539,6 +12539,8 @@
       "retry_delete_all": "Pour réessayer, appuie à nouveau sur « Effacer ».",
       "could_not_open_this_session": "« {{title}} » n'a pas pu être ouvert. Réessayez.",
       "could_not_regenerate": "Impossible de régénérer",
+      "regenerate_previous_reply": "Version précédente. Conservée quand la nouvelle arrive.",
+      "regenerate_new_reply": "Nouvelle version",
       "could_not_set_the_agent_default_model": "Impossible de définir le modèle par défaut de l’agent",
       "could_not_switch_variant": "Impossible de changer de version",
       "side_chat_pane_gone": "Impossible d’ouvrir un Chat annexe pour ce volet — sa session n’est plus disponible : {{error}}",

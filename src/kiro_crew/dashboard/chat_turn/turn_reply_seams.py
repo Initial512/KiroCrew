@@ -110,7 +110,7 @@ async def _persist_partial_reply(turn, reason: str = "") -> None:
                 "assistant",
                 _redacted,
                 "msg msg-a",
-                meta=_segment_row_meta(slot, _blocked, _redactions),
+                meta=_segment_row_meta(slot, _blocked, _redactions, text=_redacted),
             ),
         )
         # Saved once per turn: a recovery arm saves it here, and a cancel

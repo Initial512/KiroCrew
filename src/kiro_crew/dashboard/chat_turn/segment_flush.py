@@ -82,6 +82,10 @@ if TYPE_CHECKING:
         _should_suppress_requeue,
         refusal_card_text,
     )
+    from kiro_crew.dashboard.chat_turn.regenerate_swap import (
+        is_regenerate_answer,
+        note_regenerate_reply,
+    )
     from kiro_crew.dashboard.chat_turn.steer_queue import _has_user_queued_followup
     from kiro_crew.dashboard.chat_turn.turn_entry import _session_stop_generation, _stop_pressed
     from kiro_crew.dashboard.chat_turn.turn_ledgers import _queue_recovery, _report_consumed
@@ -145,8 +149,19 @@ def _log_glued_footer_text(slot: Any, glued: list[str]) -> None:
     )
 
 
+#: ``meta["notice"]`` on a Regenerate row whose text is only backend control
+#: notices (the claude adapter's ``Compacting...``). The row is tagged as a
+#: compaction notice so every Regenerate scan, here and in the frontend, skips
+#: it the way it skips every other system notice, also after a reload.
+REGENERATE_NOTICE_ONLY = "regenerate_notice_only"
+
+
 def _segment_row_meta(
-    slot: _ChatSlot, blocked_links: list[dict], redactions: list[dict] | None = None
+    slot: _ChatSlot,
+    blocked_links: list[dict],
+    redactions: list[dict] | None = None,
+    *,
+    text: str | None = None,
 ) -> dict | None:
     """The assistant row's ``meta``: the decision strip, redaction records and the
     segment's native message id, which this consumes.
@@ -156,14 +171,23 @@ def _segment_row_meta(
     written onto the row afterwards would persist but be missing from the frame
     an open tab renders. Returns None when there is nothing to carry, which is
     what ``slot.append`` expects for a row with no meta.
+
+    *text* is the row's saved body. When a Regenerate owns the turn and the
+    body is only control notices, the row is tagged a system notice
+    (:data:`REGENERATE_NOTICE_ONLY`): it answers nothing, so a later Regenerate
+    must not take it for the reply it re-runs.
     """
     meta = _decisions_strip_meta(slot)
     message_id = getattr(slot, "segment_message_id", "")
     if message_id:
         slot.segment_message_id = ""
-    if not blocked_links and not redactions and not message_id:
+    notice_only = text is not None and not is_regenerate_answer(slot, text)
+    if not blocked_links and not redactions and not message_id and not notice_only:
         return meta
     out = dict(meta) if meta else {}
+    if notice_only:
+        out["kind"] = "compaction"
+        out["notice"] = REGENERATE_NOTICE_ONLY
     if message_id:
         out["native_message_id"] = message_id
     if blocked_links:
@@ -631,7 +655,10 @@ def _append_command_reply(slot: _ChatSlot, text: str) -> None:
         meta["blocked_links"] = blocked_links
     if redactions:
         meta["redactions"] = redactions
-    slot.append("assistant", redacted, "msg msg-a", meta=meta or None)
+    row = slot.append("assistant", redacted, "msg msg-a", meta=meta or None)
+    # A Regenerate whose message is a command replaces its previous reply with
+    # this row at the turn's end, as it does with a model reply.
+    note_regenerate_reply(slot, row)
 
 
 #: Window rows a tool group puts between a segment's chunk rows: the call row,
@@ -752,7 +779,7 @@ def _flush_segment(
             # from the redaction above. Passed here rather than written onto the row
             # afterwards so the frame this call broadcasts carries them too -- see
             # _decisions_strip_meta for why that matters.
-            meta=_segment_row_meta(slot, blocked_links, redactions),
+            meta=_segment_row_meta(slot, blocked_links, redactions, text=redacted),
         ),
     )
     # The append-only log's copy of the same body. Written here rather than at the
@@ -769,31 +796,18 @@ def _flush_segment(
         interrupted=interrupted,
     )
     last_msg: dict = slot.messages[-1]
-    # If a regenerate is pending, attach the stashed variants to this fresh assistant message.
-    if slot._pending_variants:
-        pending_list = []
-        for v in slot._pending_variants:
-            if not isinstance(v, dict):
-                continue
-            # A stashed variant's text is ALREADY redacted, so its records are
-            # carried rather than derived: the URL they describe is gone from that
-            # text and a rescan of it would return nothing, which would destroy
-            # the only explanation the reader can switch back to. Records are
-            # derived exactly once, at the redaction that writes the placeholder.
-            # The removers still run -- they are idempotent, and a variant that
-            # reached here unredacted must not be stored that way.
-            v_text, _ = redact_exfiltration_urls(v.get("content", ""))
-            entry = with_bounded_redaction_records({**v, "content": redact_credentials(v_text)[0]})
-            pending_list.append(entry)
+    # If a regenerate is pending, attach the stashed variants to this fresh assistant
+    # message -- unless it is only a backend control notice, which answers nothing:
+    # the variants wait for the reply (or the continuation that brings it).
+    if slot._pending_variants and is_regenerate_answer(slot, redacted):
         newest: dict = {"content": redacted, "ts": last_msg.get("ts", "")}
         if blocked_links:
             newest["blocked_links"] = blocked_links
         if redactions:
             newest["redactions"] = redactions
-        pending_list.append(newest)
+        pending_list = _adopt_pending_variants(slot, newest)
         last_msg["variants"] = pending_list
         last_msg["variant_idx"] = len(pending_list) - 1
-        slot._pending_variants = []
     # Re-append any stop_event that belongs to this segment's trailing run,
     # placed AFTER the finalized assistant message so the UI shows
     # prose → stop card.
@@ -817,6 +831,32 @@ def _flush_segment(
     # the segment redaction just stripped out of chat.
     _schedule_widget_registration(state, slot, redacted, str(last_msg.get("ts", "")))
     return last_msg
+
+
+def _adopt_pending_variants(slot: _ChatSlot, newest: dict) -> list[dict]:
+    """The regenerate's stashed variants followed by ``newest``; empties the stash.
+
+    Shared by the first segment flush and the Regenerate settle step
+    (``regenerate_swap.settle_regenerate``), which adopts them for a reply that
+    no flush wrote (a partial reply, a local command's answer).
+    """
+    pending_list = []
+    for v in slot._pending_variants:
+        if not isinstance(v, dict):
+            continue
+        # A stashed variant's text is ALREADY redacted, so its records are
+        # carried rather than derived: the URL they describe is gone from that
+        # text and a rescan of it would return nothing, which would destroy
+        # the only explanation the reader can switch back to. Records are
+        # derived exactly once, at the redaction that writes the placeholder.
+        # The removers still run -- they are idempotent, and a variant that
+        # reached here unredacted must not be stored that way.
+        v_text, _ = redact_exfiltration_urls(v.get("content", ""))
+        entry = with_bounded_redaction_records({**v, "content": redact_credentials(v_text)[0]})
+        pending_list.append(entry)
+    pending_list.append(newest)
+    slot._pending_variants = []
+    return pending_list
 
 
 def _schedule_widget_registration(

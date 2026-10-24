@@ -12167,6 +12167,8 @@
       "retry_delete_all": "再試行するには、もう一度「クリア」を押してください。",
       "could_not_open_this_session": "「{{title}}」を開けませんでした。もう一度お試しください。",
       "could_not_regenerate": "再生成できませんでした",
+      "regenerate_previous_reply": "前のバージョンです。新しいバージョンが届いても保存されます。",
+      "regenerate_new_reply": "新しいバージョン",
       "could_not_set_the_agent_default_model": "エージェントのデフォルトモデルを設定できませんでした",
       "could_not_switch_variant": "バージョンを切り替えられませんでした",
       "side_chat_pane_gone": "そのペインのサイドチャットを開けませんでした — セッションが利用できなくなっています: {{error}}",

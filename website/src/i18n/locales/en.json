@@ -6927,6 +6927,8 @@
       "retry_delete_all": "To retry, press Delete all again.",
       "could_not_open_this_session": "Couldn't open \"{{title}}\". Try again.",
       "could_not_regenerate": "Couldn't regenerate",
+      "regenerate_previous_reply": "Previous version. Kept when the new one arrives.",
+      "regenerate_new_reply": "New version",
       "could_not_set_the_agent_default_model": "Could not set the agent's default model",
       "could_not_switch_variant": "Couldn't switch version",
       "side_chat_pane_gone": "Couldn't open a Side Chat for that pane — its session is no longer available: {{error}}",

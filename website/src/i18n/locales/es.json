@@ -12539,6 +12539,8 @@
       "retry_delete_all": "Para reintentarlo, vuelve a pulsar «Borrar».",
       "could_not_open_this_session": "No se pudo abrir \"{{title}}\". Vuelve a intentarlo.",
       "could_not_regenerate": "No se pudo regenerar",
+      "regenerate_previous_reply": "Versión anterior. Se conserva cuando llegue la nueva.",
+      "regenerate_new_reply": "Nueva versión",
       "could_not_set_the_agent_default_model": "No se pudo definir el modelo predeterminado del agente",
       "could_not_switch_variant": "No se pudo cambiar de versión",
       "side_chat_pane_gone": "No se pudo abrir un Chat lateral para ese panel: su sesión ya no está disponible: {{error}}",

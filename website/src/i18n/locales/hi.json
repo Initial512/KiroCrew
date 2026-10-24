@@ -12353,6 +12353,8 @@
       "retry_delete_all": "फिर से कोशिश करने के लिए सब हटाने वाला बटन दोबारा दबाओ।",
       "could_not_open_this_session": "\"{{title}}\" नहीं खोला जा सका। दोबारा कोशिश करें।",
       "could_not_regenerate": "पुनः नहीं बना सके",
+      "regenerate_previous_reply": "पिछला संस्करण। नया आने पर यह रखा रहेगा।",
+      "regenerate_new_reply": "नया संस्करण",
       "could_not_set_the_agent_default_model": "एजेंट का डिफ़ॉल्ट मॉडल सेट नहीं हो सका",
       "could_not_switch_variant": "संस्करण नहीं बदल सके",
       "side_chat_pane_gone": "उस पैन के लिए साइड चैट नहीं खुल सका — उसका सेशन अब उपलब्ध नहीं है: {{error}}",
