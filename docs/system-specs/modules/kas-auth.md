@@ -377,6 +377,21 @@ access token.
   retires running identity-store processes (`dashboard/handlers/kas_login.py`), so
   neither a refresh in flight nor a process holding the old access token in memory
   outlives the logout.
+- The dashboard surfaces that NAME the signed-in account read the vault, never
+  `kiro-cli whoami`, whenever the vault is the harness's credential (the KAS bundle
+  route whatever the vault holds, or the relay route with a usable Crew sign-in --
+  the usage poll's `_vault_owns_usage` verdict): the credit reading's `account_type`
+  label and the identity door `fetch_local_identity` both come from
+  `auth/bridge.vault_identity_claims`, one `resolve()` that yields the identity
+  fingerprint and the token-free slot and provider claims together, mapped onto
+  whoami's vocabulary by `dashboard/handlers/kiro_vault_identity.py`. The vault
+  stores no e-mail or portal URL, so a Crew sign-in shows its provider kind (and an
+  enterprise profile's display name from the usage API), not an address. The
+  identity door keeps whoami's three-way answer: `{}` (nothing to inherit) only
+  for a vault `TokenStore.holds_no_identity` proves empty, `None` (unknown) for
+  one that did not read or holds an entry that will not decrypt, so an unreadable
+  vault never proposes the default Builder ID target to an Identity Center
+  operator. Spec: learn-cron-dashboard.md, GET `/api/sessions/usage`.
 - Known limit, by decision: the spawn-time probe (`auth/bridge.vault_holds_identity`)
   accepts a stored identity whose access token is live or which carries a refresh
   token; it cannot know without a network call that an issuer will reject that
