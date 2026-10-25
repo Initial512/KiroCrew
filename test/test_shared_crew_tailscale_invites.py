@@ -583,19 +583,25 @@ async def test_revoke_while_sync_admits_waits_and_then_removes(
     )
     fake.accept(made[0]["id"], "u-1", "a@example.com")
     real_writer = invites.allowlist_writer
+    real_locked = invites._revoke_locked
     revoking: list[asyncio.Task[Any]] = []
+    order: list[str] = []
+
+    async def revoke_locked(*args: Any, **kwargs: Any) -> Any:
+        order.append("revoke")
+        return await real_locked(*args, **kwargs)
 
     async def writer(login: str, add: bool) -> Any:
         if add and not revoking:
-            task = asyncio.ensure_future(invites.revoke(made[0]["id"], "owner"))
-            revoking.append(task)
-            # Give an unlocked revoke the time to finish before the admit commits.
-            await asyncio.wait({task}, timeout=0.5)
+            revoking.append(asyncio.ensure_future(invites.revoke(made[0]["id"], "owner")))
         return await real_writer(login, add)
 
+    monkeypatch.setattr(invites, "_revoke_locked", revoke_locked)
     monkeypatch.setattr(invites, "allowlist_writer", writer)
     await invites.sync(force=True)
+    order.append("sync committed")
     await revoking[0]
+    assert order == ["sync committed", "revoke"]
     assert store.load_state()["members"] == {}
     assert made[0]["id"] not in fake.invites
     assert tailnet.login_allowed("a@example.com", (OWNER_LOGIN, "a@example.com")) is False
