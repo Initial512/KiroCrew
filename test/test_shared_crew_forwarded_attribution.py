@@ -121,7 +121,7 @@ async def test_the_post_start_probe_fills_both_rows(monkeypatch):
 async def test_the_maintenance_starter_kicks_the_host_probe(monkeypatch):
     from aiohttp import web
 
-    from kiro_crew.shared_crew import enterprise_gates, host_power
+    from kiro_crew.shared_crew import host_power, lifecycle
 
     ran: list[bool] = []
 
@@ -129,7 +129,7 @@ async def test_the_maintenance_starter_kicks_the_host_probe(monkeypatch):
         ran.append(True)
 
     monkeypatch.setattr(host_power, "probe_after_start", probe)
-    start = enterprise_gates.install_lifecycle(web.Application())
+    start = lifecycle.install_lifecycle(web.Application())
     start()
     start()
     for _ in range(5):

@@ -401,20 +401,8 @@ async def admitted_cron_dispatch(job: Any, dispatch: Coroutine[Any, Any, Any]) -
     Charged to the principal the job recorded as its initiator, else to the
     bounded automation owner. A refused or expired fire is skipped like a
     governance denial: recorded on the job, never fed to the auto-pause counter.
-    With fair admission off this awaits *dispatch* unchanged. A fire the
-    inference budget refuses never dispatches either, whether or not fair
-    admission is on.
+    With fair admission off this awaits *dispatch* unchanged.
     """
-    from kiro_crew.shared_crew.enterprise import OperationKind as BudgetOperation
-    from kiro_crew.shared_crew.enterprise_gates import check_background_inference_off_loop
-
-    verdict = await check_background_inference_off_loop(BudgetOperation.AUTOMATION_RUN)
-    if not verdict.allowed:
-        dispatch.close()
-        job.last_status = "error"
-        job.last_error = f"the inference budget refused this run ({verdict.reason})"
-        logger.info("cron %s: %s", getattr(job, "id", "?"), job.last_error)
-        return None
     try:
         return await _gate.admit_and_run(
             dispatch,

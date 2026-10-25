@@ -65,7 +65,6 @@ from kiro_crew.platform.governance import (
 )
 from kiro_crew.platform.profile import resolve_profile
 from kiro_crew.platform.security_authority import PolicyAuthority, assert_security_floor
-from kiro_crew.platform.shared_crew_enterprise import DefaultSharedCrewEnterpriseProvider
 
 if TYPE_CHECKING:
     from kiro_crew.config.loader import KiroCrewConfig
@@ -231,7 +230,6 @@ def build_default_context(
         speech=DefaultSpeechProviderRegistry(),
         feature_apps=(),
         governance=governance,
-        shared_crew_enterprise=DefaultSharedCrewEnterpriseProvider(),
     )
 
 

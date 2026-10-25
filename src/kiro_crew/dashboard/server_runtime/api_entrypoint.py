@@ -316,10 +316,10 @@ async def start_api_server(
         tailnet_trust=_tailnet_trust,
     )
 
-    from kiro_crew.shared_crew import enterprise_gates
+    from kiro_crew.shared_crew import lifecycle
 
-    enterprise_gates.install(app)
-    start_shared_crew_maintenance = enterprise_gates.install_lifecycle(app)
+    lifecycle.install(app)
+    start_shared_crew_maintenance = lifecycle.install_lifecycle(app)
     _register_mcp_routes(app)
 
     # Probe parity with the full dashboard server. Headless gateways are often

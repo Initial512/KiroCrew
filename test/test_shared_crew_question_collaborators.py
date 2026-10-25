@@ -306,7 +306,6 @@ def test_only_membership_provenances_are_collaborators():
     ctx = _ctx
     assert collaborators.is_collaborator_actor(ctx(BOB))
     assert collaborators.is_collaborator_actor(ctx(LISTENER))
-    assert collaborators.is_collaborator_actor(ctx(_person("e@x.test", Provenance.ENTERPRISE)))
     for p in (DIRECT, LOCAL, Principal.unknown()):
         assert not collaborators.is_collaborator_actor(ctx(p))
     assert not collaborators.is_collaborator_actor(None)

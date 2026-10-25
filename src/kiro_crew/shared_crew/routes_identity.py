@@ -114,15 +114,12 @@ async def api_shared_crew_mode(request: web.Request) -> web.Response:
     from kiro_crew.gateway_identity import gateway_id
     from kiro_crew.shared_crew.access import setup_paths_dict
     from kiro_crew.shared_crew.crew_mode import mode_view
-    from kiro_crew.shared_crew.enterprise import resolve_enterprise
 
     rows = [r for r in await _catalog_rows(request) if not _machine_only(str(r.get("key") or ""))]
-    seams = await asyncio.to_thread(resolve_enterprise)
     crew_id = await asyncio.to_thread(gateway_id)
     body = mode_view(
         viewer_principal(request),
         _observed_principals(),
-        seams=seams,
         setup_paths=setup_paths_dict(),
         crew_id=crew_id,
         creators=_session_creators(rows),

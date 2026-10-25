@@ -3,7 +3,7 @@
 A collaborator is the dashboard owner, or a dashboard-user request whose
 verified actor is a person the operator admitted through an identity boundary
 that enforces membership: a tailnet login on the serve path (the middleware
-allowlists it and pins the token to it) or a validated enterprise assertion.
+allowlists it and pins the token to it).
 A Slack-allowlist dashboard token, an app token, an internal caller, a direct
 tailnet peer (attribution only, never allowlisted) and an Unknown actor are not
 collaborators, so they keep every refusal they had.
@@ -32,9 +32,7 @@ __all__ = [
 ]
 
 #: Provenances whose principal was admitted by an enforced membership boundary.
-_MEMBER_PROVENANCES = frozenset(
-    {Provenance.TAILSCALE_SERVE, Provenance.TAILSCALE_LISTENER, Provenance.ENTERPRISE}
-)
+_MEMBER_PROVENANCES = frozenset({Provenance.TAILSCALE_SERVE, Provenance.TAILSCALE_LISTENER})
 
 
 def is_collaborator_actor(actor: object) -> bool:

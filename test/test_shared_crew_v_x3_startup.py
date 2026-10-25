@@ -11,8 +11,16 @@ from aiohttp.test_utils import make_mocked_request
 
 from kiro_crew.config.sections_shared_crew import effective_limits, shared_crew_config_from
 from kiro_crew.dashboard import server
-from kiro_crew.shared_crew import admission_gate, containment, enterprise_gates, turn_gate, wiring
-from kiro_crew.shared_crew.enterprise import BudgetState, DeploymentContext, EnterpriseSeams
+from kiro_crew.shared_crew import access, admission_gate, containment, turn_gate, wiring
+from kiro_crew.shared_crew.contracts import (
+    ACTOR_REQUEST_KEY,
+    ActorContext,
+    Principal,
+    PrincipalKind,
+    Provenance,
+    Transport,
+    principal_id_for,
+)
 
 
 class _BeforeBind(Exception):
@@ -83,37 +91,38 @@ async def test_headless_installs_admission_and_hard_refusal_before_bind(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_headless_installs_enterprise_gate_inside_auth(tmp_path, monkeypatch):
+async def test_headless_installs_the_team_config_gate_inside_auth(tmp_path, monkeypatch):
     async with _headless_app(tmp_path, monkeypatch) as headless_app:
         middlewares = list(headless_app.middlewares)
-    gate = next((mw for mw in middlewares if mw.__name__ == "enterprise_gate_middleware"), None)
+    gate = next((mw for mw in middlewares if mw.__name__ == "team_config_middleware"), None)
     assert gate is not None
     auth = next(mw for mw in middlewares if getattr(mw, "_is_token_auth", False))
     assert middlewares.index(auth) < middlewares.index(gate)
 
 
 @pytest.mark.asyncio
-async def test_installed_headless_gate_refuses_exhausted_budget(tmp_path, monkeypatch):
-    class Budget:
-        def state(self, deployment):
-            return BudgetState.EXHAUSTED
-
-    gates = enterprise_gates.EnterpriseGates(
-        EnterpriseSeams(inference_budget=Budget(), deployment=DeploymentContext())
+async def test_installed_gate_refuses_a_tailnet_person_while_the_allowlist_is_unreadable(
+    tmp_path, monkeypatch
+):
+    pid = principal_id_for("tailscale", "node", "alice@example.test")
+    alice = Principal(
+        id=pid,
+        kind=PrincipalKind.HUMAN,
+        provider="tailscale",
+        issuer="node",
+        subject="alice@example.test",
+        provenance=Provenance.TAILSCALE_DIRECT,
     )
     async with _headless_app(tmp_path, monkeypatch) as headless_app:
-        monkeypatch.setattr(enterprise_gates, "resolve_enterprise", lambda: gates.seams)
-        monkeypatch.setattr(enterprise_gates, "_CACHED", None)
         gate = next(
-            (mw for mw in headless_app.middlewares if mw.__name__ == "enterprise_gate_middleware"),
-            None,
+            mw for mw in headless_app.middlewares if mw.__name__ == "team_config_middleware"
         )
-        assert gate is not None
-        # The installed factory holds current_gates; its resolver default is patched
-        # at that function's own binding rather than substituting the middleware.
-        monkeypatch.setattr(enterprise_gates.current_gates, "__defaults__", (lambda: gates.seams,))
+        monkeypatch.setattr(access, "_identity_config_unreadable", True)
         handler = AsyncMock(return_value=web.json_response({"ok": True}))
         request = make_mocked_request("POST", "/api/spawn", app=headless_app)
+        request[ACTOR_REQUEST_KEY] = ActorContext(
+            principal=alice, request_id="r", transport=Transport.HTTP
+        )
         response = await gate(request, handler)
     assert response.status == 403
     handler.assert_not_awaited()

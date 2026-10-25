@@ -885,9 +885,9 @@ async def start_dashboard(
     # slices in the table's original sequence -- see that package's docstring.
     register_all(app)
 
-    from kiro_crew.shared_crew import enterprise_gates
+    from kiro_crew.shared_crew import lifecycle
 
-    start_shared_crew_maintenance = enterprise_gates.install_lifecycle(app)
+    start_shared_crew_maintenance = lifecycle.install_lifecycle(app)
 
     # Register built-in apps (idempotent — surfaces baked-in features in App Store).
     # Runs on the executor: escalation cleanup can traverse/delete legacy app
@@ -1167,10 +1167,10 @@ async def start_dashboard(
         _register_connections_warm_lifecycle(app, state)
         _register_workflow_lifecycle(app, state)
         _register_crewmate_prune_gate(app, state)
-        # Shared Crew enterprise grant and budget gates; a no-op on the default seam.
-        from kiro_crew.shared_crew import enterprise_gates
+        # Shared Crew team-config gate for tailnet people.
+        from kiro_crew.shared_crew import lifecycle
 
-        enterprise_gates.install(app)
+        lifecycle.install(app)
         _register_change_card_hook(app)
 
         # Unix-socket cleanup hook — registered before runner.setup freezes the

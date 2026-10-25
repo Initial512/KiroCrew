@@ -25,8 +25,7 @@ mode only. Tailscale is the only access authority: nobody types the set of peopl
 who get in.
 
 No permission scoping in this release: every collaborator a Crew admits has the same
-rights, and no code path reads a role or an ACL. The enterprise `GrantGate` decides
-only whether a person may use the Crew at all, never what they may do in it.
+rights, and no code path reads a role or an ACL.
 
 A Crew is a machine identity, not a group of people. Its synthetic principal is the
 Crew acting as itself; the people who may work in it are individual grants, and
@@ -293,42 +292,24 @@ setup guidance and session list follow it, and the modes never mix:
 |---|---|---|---|
 | `personal` | no setup path is available or degraded, and no principal but the local operator viewing has been seen (the operator's bootstrap subjects `local-app`, `local-startup` and the configured owner are the same person; session creators are matched by id, never by a stored provenance) | setup guidance with each adapter's honest status, personal Remote Control | no creator bylines, no All/Mine control |
 | `network` | a Tailscale or Systems Manager path is on, or a network person or another operator has been seen | who has been seen (labelled as seen), each adapter read-only, personal Remote Control | bylines, filter |
-| `console` | the enterprise provider backs a sign-in seam (`human_credentials` or `human_sign_in`) and `individual_grants` | read-only Team Access (people seen signing in) and the Console link; no share, Remote Control or Tailscale setup | bylines, filter |
-| `invalid` | a team configuration exists but is refused | one error state with the reason code | bylines, filter |
+| `invalid` | the tailnet login allowlist could not be read | one error state with the reason code | bylines, filter |
 
-A team configuration is refused (`crew_mode.team_config_problem`) with a
-machine-readable reason:
-
-| Reason | Cause |
-|---|---|
-| `network_identity_config_unreadable` | the tailnet login allowlist could not be read (`config.resolution.tailnet_identity_unknown`, recorded by `access.note_tailnet`) |
-| `console_provider_unusable` | the enterprise provider is composed but no slot is usable (`provider_failed`, `test_provider_refused`); `cause` names which |
-| `console_capability_missing` | a sign-in or grant slot failed or was refused, or sign-in is on with no per-person grants; `capability` and `cause` name it |
-| `conflicting_team_modes` | a Console team and a network sharing path are both on |
-
+A team configuration is refused (`crew_mode.team_config_problem`) with reason
+`network_identity_config_unreadable` while the tailnet login allowlist could not be
+read (`config.resolution.tailnet_identity_unknown`, recorded by `access.note_tailnet`).
 The gateway logs the refusal at start (`crew_mode.validate_at_startup`, from
-`wiring.install`) and the enterprise gate middleware refuses every shared-access
-principal (tailnet or enterprise provenance) with 403 `{error, code:
-team_config_invalid, reason}` while it holds. The local operator keeps working and
-sees the error in People. An invalid team setup never falls back to personal mode,
-and the browser treats an unreadable mode route as an error, not as personal. A
-provider that marks itself test-only reaching a production gateway is
-`console_provider_unusable`.
+`wiring.install`) and `lifecycle.team_config_middleware` refuses every tailnet
+person with 403 `{error, code: team_config_invalid, reason}` while it holds. The
+local operator keeps working and sees the error in People. An invalid team setup
+never falls back to personal mode, and the browser treats an unreadable mode route
+as an error, not as personal.
 
-The mode body: `mode`, `crew_id` (the Crew binding's id, else the gateway id; it
-keys the browser's remembered list filter), `viewer`, `team_config` (`state`
-`not_configured` | `valid` | `invalid`, with `reason`, `capability`, `cause`),
-`console` (`state` `available` | `not_offered` | `invalid`, `url`), `adapters`
-(the setup paths), `systems_manager_attribution` (always `unavailable`) and
-`workload_identity_ref`.
-
-The Console link comes only from the composed provider's optional
-`console_link()`, never from config, a request or a peer, and only in `console`
-mode. `crew_mode.validate_console_link` accepts an absolute `https` URL to a named
-host on the default port with no credentials, whitespace or control characters,
-and refuses an address literal, a single-label host and `*.localhost`; the browser
-re-checks it. The Tailscale and Session Manager links are fixed public
-documentation pages.
+The mode body: `mode`, `crew_id` (the gateway id; it keys the browser's remembered
+list filter), `viewer`, `team_config` (`state` `not_configured` | `invalid`, with
+`reason`, `capability`, `cause`), `console` (always `not_offered`), `adapters` (the
+setup paths), `systems_manager_attribution` (always `unavailable`) and
+`workload_identity_ref` (always `unavailable`). The Tailscale and Session Manager
+links are fixed public documentation pages.
 
 AWS Systems Manager governs its path through IAM and Session Manager. A port-forwarded
 Session Manager connection arrives on loopback with no forwarding header, so
@@ -340,8 +321,7 @@ Identity is never inferred from the OS user or a typed label, and loopback alone
 yields the local operator only together with a dashboard token.
 
 People has no role control in any mode. Its one invite and revoke control is the
-Tailscale invite card below, shown in `personal` and `network` mode to the owner only;
-`console` mode never shows it.
+Tailscale invite card below, shown in `personal` and `network` mode to the owner only.
 
 ### Access set
 
@@ -400,8 +380,8 @@ its session's queue before any merge: the drain's per-entry check
 (`AdmissionService._cancelled_parked`) refuses work ended by `cancelled_by_user`
 or `access_removed`, with that reason, so their text never runs merged into
 someone else's turn. Work of theirs that reaches the front of a
-queue later is refused at revalidation (`enterprise_revocation.queued_dispatch_recheck`
-consults `access_set.principal_removed`). With fair admission off (the default)
+queue later is refused at revalidation (`AdmissionService._revalidate` consults
+`access_set.principal_removed`). With fair admission off (the default)
 no work record exists, so `access_set.slot_work_stopper`
 (`routes_access.stop_slot_work`) drops the queued messages the person sent first
 and then stops each turn they started through `stop_slot_turn`: a turn running
@@ -631,9 +611,8 @@ ids and a reduced principal (id, kind, provenance, login). That log's HMAC chain
 size rotation and age retention bound it; there is no second audit store.
 
 Every record also carries, in `ActionRecord.extra` and the event metadata,
-`workload_identity_ref`: the Crew workload identity reference from the Crew
-binding (`crew_mode.crew_identity_refs`), `unavailable` when none is composed, so
-the human and the Crew workload are named separately. Work no person started (a
+`workload_identity_ref`, always `unavailable` in this build, so the human and the
+Crew workload are named separately. Work no person started (a
 system or Unknown initiator in a `cron` or `hook` session) adds `trigger` `{kind,
 ref, name}`; a human initiator never gets one. The causal join is the record's
 `target` (the work id for work actions), `session_key`, `turn_id`,
@@ -1052,7 +1031,7 @@ An agent question belongs to every collaborator. `collaborators.is_collaborator_
 admits the owner (`is_owner_dashboard_request`) and a dashboard-user session whose
 verified actor is a person a membership boundary admitted: provenance
 `tailscale_serve` (allowlisted and pinned by the middleware), `tailscale_listener`
-(admitted by the direct tailnet listener's access set) or `enterprise`. A
+(admitted by the direct tailnet listener's access set). A
 `tailscale_direct` peer (attribution only, on a widened bind), a Slack-allowlist
 dashboard token, an app token, an internal caller and Unknown are not
 collaborators and keep the owner gate's 403.
@@ -1293,8 +1272,7 @@ People, owner only (`TailscaleAccess`, theme tokens, rows wrap at narrow widths)
 `unavailable`, so a build that wires nothing claims nothing. `containment_level`
 states the effective guarantee (`hard`, `best_effort`, `none`), never the configured
 intent. `membership_link` is an id from the closed `MEMBERSHIP_LINKS` set, never a
-URL taken from config or a peer. Enterprise providers compose through the platform
-seams in `kiro_crew.platform` and stay disabled in the public build.
+URL taken from config or a peer.
 
 ### Aggregation
 
@@ -1320,7 +1298,6 @@ A source answers from state it already holds; it does no I/O on the request path
   forwarded-identity gap (`platform_unprovable`, `daemon_same_user`,
   `daemon_not_found`, see Derivation). A source names a reason in
   `CapabilityContribution.reasons`; the weakest answer's reason is reported;
-- `enterprise`: each key in `enterprise.ENTERPRISE_CAPABILITY_KEYS` to `{state, reason}`;
 - `setup_paths`: each shared-access setup path (`access.SETUP_PATHS`: `tailscale`,
   `kiro_login`, `systems_manager`) to `{state, reason}`. Tailscale reports what the
   gateway resolved at start (`access.note_tailnet`): `available` once Tailscale access
@@ -1328,10 +1305,6 @@ A source answers from state it already holds; it does no I/O on the request path
   (`tailscale serve` set up by hand), `degraded` (`tailnet_unreachable`) when it is
   on without a name, else `not_configured`. A path no source registered for
   (`access.register_setup_path_source`) reports `not_in_this_build`;
-- `access_modes`: `shared_multi_user`, `personal_remote_control` and
-  `agent_workload_identity`, each with `state` and `requires` (see Access modes);
-- `workload_identity`: `supported_hosts`, the detected `host`, `host_supported` and a
-  `reason` (`host_not_supported` off a supported host);
 - `keep_awake`: `state` (`available` | `unavailable`), `reason` (`no_backend`,
   `unsupported_platform`, `not_checked` until the post-start probe has run),
   `backend`, `laptop` and `laptop_reason` (`battery_present`, `no_battery`,
@@ -1343,260 +1316,12 @@ path is `available` and no one but the viewer has been seen: it names the three 
 capability reports and a link to existing docs only. It offers no button that does
 nothing.
 
-### Enterprise seams
+### Not in this build
 
-`PlatformContext.shared_crew_enterprise` (`platform.shared_crew_enterprise`) is the
-one slot an edition fills. The public default answers `enabled() -> False` and `None`
-for every provider. `enterprise.resolve_enterprise` checks each provider against its
-protocol before use and reports one capability per concern:
-
-| Key | Contract | Disabled behaviour |
-|---|---|---|
-| `human_credentials` | `CredentialVerifier`; `verify_credential` checks issuer, audience, key id, key rotation window, signature, lifetime, expiry and not-before with bounded skew | every credential rejected `unavailable` |
-| `individual_grants` | `GrantAuthority.lookup` per person per Crew; `GrantGate` decides new access | `not_configured`; Tailscale and dashboard auth govern alone |
-| `workload_identity` | `WorkloadIdentityProvider.bind` / `renew`; `WorkloadLease` binds, renews, disables; only on a host in `access.SUPPORTED_WORKLOAD_HOSTS` | `unavailable`; `host_not_supported` on any other host; no fallback credential exists |
-| `crew_identity` | `CrewBindingProvider`; `CrewBinding` pairs `CrewIdentity` with a synthetic `system` principal | none |
-| `heartbeat` | `HeartbeatTransport.send(payload, workload credential)`; `HeartbeatTracker` | never sent; needs `workload_identity` too |
-| `inference_budget` | `InferenceBudgetProvider.state`; `BudgetGate` | `not_enforced` |
-| `deployment_context` | opaque `deployment_ref`, `tenant_ref`, `resource_policy_ref` | empty |
-| `human_sign_in` | `enterprise_signin.RelyingParty` over a pinned `RelyingPartyConfig` | no sign-in path |
-| `revocation` | `enterprise_revocation.RevocationFeed` (removal stream plus `RevocationPolicy`) | no enforcer; queued-work recheck is a no-op |
-| `workload_verifier` | `enterprise_workload.WorkloadVerifierConfig` (registered trust anchors, exact SPIFFE IDs, audience) | no workload token is accepted |
-| `crew_registration` | `enterprise_registration.CrewRegistry` | none |
-| `directory` | `enterprise_directory.DirectoryProvider` | `not_configured` error, never an empty list |
-| `channel_actors` | `enterprise_signin.ChannelActorMapping` | channel users are mapped to no one |
-
-An edition written before an accessor existed may omit it; that reads as
-`not_configured`, never `provider_failed`.
-
-`available` means a checked provider is composed. It says the Crew is configured for
-the concern, not that the remote service answered. A provider, or anything it
-returns, that sets `TEST_ONLY = True` is refused with `test_provider_refused` unless
-the caller passes `allow_test_providers=True`, which only tests do.
-
-No production credential format is defined in core. A provider parses its own format
-into `PresentedCredential` and supplies the `KeySet`. A pass yields a `human`
-principal keyed by `(provider, issuer, subject)` with `enterprise` provenance.
-
-Identity class. A human credential carries an `access.IdentityClass`:
-`organization_directory` (organization-managed, directory-backed), `individual` (an
-individually authenticated consumer account) or `tailnet` (a Tailscale user). The
-verifier copies `CredentialClaims.identity_class` onto the principal's `extra`; a
-credential that states none, or an unknown value, is `individual`. A tailnet principal
-is `tailnet`. The class is data, not policy: no rule in core allows or refuses shared
-access because of it (`access.shared_access_eligibility` answers
-`external_decision_required` for every person). Personal remote control of one's own
-machine admits every human class (`access.remote_control_eligibility`) and stays a
-separate, same-account path. Tailscale attribution is unchanged.
-
-Access decisions. Shared multi-user eligibility is the external authority's decision.
-`GrantAuthority.lookup` returns an `IndividualGrant` whose `state` is `active`,
-`revoked` or `warning_only`, with the authority's `decision_reason` token, which
-`AccessDecision.authority_reason` carries through. Only `active` admits. A
-`warning_only` member addition is recorded and refused `warning_only_not_a_grant`.
-With no authority composed, the capabilities report shows
-`access_modes.shared_multi_user.eligibility` as `{decided_by: external_authority,
-state: unavailable, reason: not_configured}`: no person is granted shared access through
-it, and the default never allows everyone. `shared_multi_user.state` stays the network
-setup path, so Tailscale behaviour is unchanged. A sign-in never grants Crew access: a
-request from an `enterprise` principal with no authority composed is refused
-`access_decision_unavailable`, and `SignInResult.grants_access` is always false.
-
-Grants are individual only: no group field, and `GrantGate.decide` reads only the
-principal and the authority. Session attribution, authorship, presence, heartbeat state
-and identity class are not inputs, so none of them grants access. Non-human principals
-are refused `not_individual`.
-
-Channel actors. A channel (for example a chat workspace) reaches the Crew without the
-web sign-in. While a grant authority is composed, a channel user acts as a person only
-through the authority's `ChannelActorMapping` (`EnterpriseGates.check_channel_actor`),
-and an unmapped user is refused `channel_actor_unmapped`. A channel-generated dashboard
-link authenticates a token subject; opened through a proxy it resolves to Unknown, and
-an authenticated Unknown caller is refused `unattributed_actor` while the authority is
-composed, so the link cannot bypass team-access policy. With no authority composed the
-channel allowlist governs alone, as before.
-
-Human sign-in (draft, per-Crew OIDC). `enterprise_signin.RelyingPartyConfig` pins the
-issuer (https), client id, audience, exact redirect URI (https, or loopback http for
-development) and a key-set reference; `openid` scope is required and a discovery URL
-alone is not a configuration. `RelyingParty.begin` issues a single-use `state` and a
-distinct `nonce` that expire (default 600 s, max 900 s; pending requests bounded).
-`complete` spends the `state` on first use, checks expiry and redirect, calls the
-provider's `CodeExchange`, binds the `nonce` (constant-time) and `azp`, then runs
-`verify_credential` against the pinned key set: issuer, audience, key id, key rotation
-window, signature, lifetime and expiry. A credential that names its own key location
-(`CredentialClaims.key_location`) is refused `key_location_refused`.
-
-Revocation (`enterprise_revocation`). A removal is committed by the authority; the
-Crew enforces it within `RevocationPolicy.max_propagation_seconds` (required, max 900;
-`poll_interval_seconds` must be shorter). `RevocationEnforcer` learns removals by cursor
-from `RevocationFeed.removals_since` (read off the event loop when due) or by
-`apply` for a push, closes the person's registered live connections, and refuses them at
-every `EnforcementPoint`: `cookie`, `websocket`, `relay_connection`, `reconnect`,
-`approval_submission` and `queued_dispatch` (`member_removed`). When the feed has not
-been read within the bound (a partition or outage), every member it admitted is refused
-`authority_stale`, so the bound holds without the feed. A configured feed whose policy cannot be built (its
-`policy()` raises or answers a policy `RevocationPolicy` rejects) is not cached: shared
-access, approvals and queued starts are refused `authority_stale` until a later read of
-the same feed builds, with no restart needed. An unexpired offline ID token is
-never proof of membership (`is_current_member` reads the enforcer). The dashboard gate
-checks the cookie, WebSocket upgrade and approval-submission points; queued work is
-rechecked in `AdmissionService._revalidate` through `queued_dispatch_recheck`, which is
-`None` with no enforcer installed. `measured_propagation` records the largest
-commit-to-enforcement delay per point; the contract tests measure it with a fake clock.
-`RevocationPolicy.running_work` (`continue` or `cancel`) has no default:
-`running_work_action` reports `undecided` until it is chosen, and nothing here releases
-capacity, because a disconnected person is not evidence that the runtime stopped.
-
-Call sites. `enterprise_gates.enterprise_gate_middleware` runs inner to token auth on
-the dashboard. A request from a person on a shared path (tailnet or enterprise
-provenance) passes `GrantGate.decide`; a POST that starts model work
-(`enterprise_gates.CHARGEABLE_ROUTES`: chat send, the OpenAI shim, continue, side
-turn, thread reply, member thread, regenerate, edit-resend, task retry, spawn,
-continue a subagent, cron run, task plan and execute) passes `BudgetGate.check`. A
-refusal is 403 `{error, code: shared_access_refused | inference_refused, reason}`. The local
-operator, automation and apps are not shared access. With the default seam neither
-gate is composed, so the middleware is a no-op and both concerns report unavailable.
-Model work that does not arrive over HTTP asks the same budget at its entry point
-(`enterprise_gates.check_background_inference`): a scheduled cron fire
-(`admission_entry.admitted_cron_dispatch`, as an automation run) is skipped and
-recorded on the job, and a channel turn (`turn_gate.run_channel_turn`, and
-`run_admitted` for `channel_turn` work) is not started and its surface gets a
-one-line reply naming the budget reason. Both run whether or not fair admission is on.
-
-Cache and outage policy (`GrantCachePolicy`): a confirmed active grant is reused for
-`fresh_seconds` (default 60, max 300). After that the authority is asked; when it is
-unreachable the last confirmed active grant is honoured for `outage_grace_seconds`
-more (default 240, max 900), then access is refused `authority_unavailable`. A
-revocation is therefore noticed within `revocation_bound_seconds` (default 300). A
-pushed revocation applies at once, and an older revision never overrides a newer one.
-A missing or revoked grant is never extended by an outage. A clock that moves back
-forces a fresh check. The cache is bounded (LRU).
-
-Workload disablement is terminal for the lease: after it, no bind or renew is
-attempted. A failed renewal keeps the current credential until it expires and no
-longer. `WorkloadCredentialRef` is a handle, never material.
-
-Workload verification (draft, SPIFFE-shaped; `enterprise_workload.verify_workload`).
-A receiver accepts a workload token only when its issuer is a registered `TrustAnchor`
-(`untrusted_provider` otherwise, whatever trust domain the token asserts), the SPIFFE
-ID's trust domain is the one that anchor was registered for (`trust_domain_mismatch`),
-the SPIFFE ID is exactly one the receiver expects (`unexpected_spiffe_id`), the
-receiver's own audience is in the token (another Crew's or another destination's token
-is `wrong_audience`), and key id, rotation window, signature, lifetime and expiry pass
-`verify_credential` against the anchor's pinned key set. A token naming a key location
-is `key_location_refused`. There is no static-key or shared-secret path. The pod
-boundary is reported as `workload_identity.pod_boundary = {scope: any_process_in_pod,
-per_process_isolation: false}`: any process in an attested pod can obtain the identity,
-and credential stripping and the sandbox stay as they are.
-
-Logical Crew identity (`enterprise_registration`). `LogicalCrewIdentity` is `crew_id`,
-SPIFFE ID and `profile_ref`; quotas key on `crew_id` and no credential is part of it, so
-restarts, upgrades, extra replicas and credential rotation keep quota and Profile.
-Registration states are `unregistered`, `in_use` and `released`. A claim from the
-holding deployment with the current fencing token joins as a replica; a different
-logical deployment while in use is `identity_in_use`; after release and re-registration
-the fencing token advances, so the old deployment is `fenced`; an unprovisioned id is
-`unknown_identity` and registering never creates one. `InMemoryCrewRegistry` is a
-`TEST_ONLY` reference implementation; no persistent store is defined.
-
-Directory and client states (`enterprise_directory`). A directory answer is
-`{status: ok, entries}` (possibly empty) or `{status: error, error}`; anything unclear,
-and a missing or failing provider, is an error, never an empty list. Entries carry a
-stable `crew_id` and a `CrewConnectionState`: `available`, `revoked`, `offline`,
-`relay_unavailable`, `sign_in_expired`, `host_disabled`, `version_incompatible`.
-`classify_connection_failure` checks access loss before reachability, so a removed
-person is never shown `offline`. A listed Crew connects only on an explicit Connect.
-
-Personal Remote Control. Registration, discovery, connect and enabling remote access
-are separate transitions (`RemoteControl`). Everything starts off; `turn_on` (Turn on
-Remote Control, the proposed baseline) registers through an explicit action and does
-nothing else; nothing registers, publishes or calls out on its own; with no registrar it
-is `not_configured`. Disabling remote access keeps local execution.
-
-The synthetic Crew principal is keyed under its own provider namespace
-(`crew-workload`), so no human credential can produce its id. `CrewBinding.inference_owner`
-is the Crew, so chargeable inference is never billed to the human who started it.
-
-Health has exactly three values, `healthy`, `heartbeat_late` and `not_connected`; a
-Crew that never connected is `not_connected`, and one whose last acknowledged heartbeat
-is older than the disconnect threshold reads `not_connected` again. `last_success` (the
-last acknowledged send) and `last_attempt` (the last send tried) are tracked apart. The
-interval and thresholds (defaults 60, 180 and 900 s) are placeholders and live in
-memory only; their real values and where health is stored are unresolved, so no store
-exists for them. The payload is the closed `HEARTBEAT_PAYLOAD_KEYS` set of
-ids, counts and capability states; anything else is refused before sending, so no
-transcript, prompt, title or principal can ride in it. Freshness is telemetry, never
-authorization.
-
-Budget: `CHARGEABLE_OPERATIONS` (new turn, steer, retry, spawn, automation run) stop
-with `inference_budget_exhausted` when spent and `inference_budget_unknown` when the
-budget cannot be read. Reads, listing, export and cancel always proceed.
-
-Caps compose by intersection: `effective_limit` takes the smallest of the tenant,
-Crew and principal caps and names the binding scope, so a tenant cap added later only
-tightens.
-
-Credential isolation: an edition keeps credentials under
-`enterprise.enterprise_state_dir(data_home)`, inside the secret vault directory. The
-sensitive-path gate refuses it to every file tool and every sandbox mode hides it. No
-enterprise setting is read from `config.json`.
-
-### Service prerequisites and open decisions
-
-Access modes and what each needs (`access.access_modes_dict`):
-
-| Mode | Needs | Who is eligible |
-|---|---|---|
-| `shared_multi_user` | a cloud account setup | decided by the external authority (`eligibility`), never by identity class |
-| `agent_workload_identity` | a cloud account setup, on a supported host | the Crew's own machine identity |
-| `personal_remote_control` | an individual login only | every human class, for the person's own machine |
-
-Workload identity runs only on EKS at launch (`SUPPORTED_WORKLOAD_HOSTS = ('eks',)`,
-detected by `access.detect_workload_host`); any other host reports
-`host_not_supported`, and there is no static-key fallback. Personal remote control
-is off by default (opt-in, `REMOTE_CONTROL_DEFAULT_ENABLED = False`) until that is
-decided.
-
-Infrastructure cost of the hosted platform belongs to the customer's own account. The
-product shows no cost UI and reports no cost.
-
-Live enterprise verification needs, none of which exist in the public build:
-
-- an approved human credential contract and issuer key distribution, and a per-Crew
-  relying-party registration;
-- an authoritative individual-assignment service with a removal feed or push and a
-  recorded revocation bound;
-- a registered workload trust anchor and a token exchange that accepts it;
-- a Crew registry, a directory and a personal registrar;
-- a workload identity provider on the target runtime;
-- a heartbeat and discovery endpoint that accepts workload-authenticated calls;
-- an inference budget and Profile service.
-
-### Unresolved decisions
-
-Core holds a seam and a disabled default for each of these. None is decided in code.
-
-| Topic | Current behaviour in core | Unresolved |
-|---|---|---|
-| Network versus enterprise access | Tailscale and Systems Manager paths work without a product login; `shared_multi_user.state` reports them | how the network path and an enterprise-only multi-user offering are worded together; no broad eligibility claim is made |
-| Member eligibility | external authority decides (`eligibility`); warning-only additions are not grants; identity class is data | which account tiers are eligible and which identity providers are supported at launch |
-| Revocation mechanism and bound | `RevocationPolicy` requires a recorded bound; feed or push; fail closed past the bound | the authority, its enforcement points beyond this Crew, the invalidation protocol and the bound's value |
-| Running work on removal | `running_work` has no default; reported `undecided`; capacity not released | whether running work continues or is cancelled |
-| External attribution display | the acting person is recorded in Crew logs and audit only | whether and where downstream systems show who acted; metadata is not delegation |
-| Same-account deployment templates | no same-account check exists | whether generated templates assume one cloud account for Crew and console |
-| Health storage and timing | three states in memory; placeholder thresholds | interval, late and disconnect thresholds, and whether state lives in a backend or rides a relay |
-| Personal relay registration | off by default; explicit Turn on registers | explicit, login-driven or default-on registration, and QR coexistence |
-| API keys for other hosts | not implemented | whether other hosts get keys, creation and rotation, under what contract |
-| Per-task permissions | every admitted person can use everything the Crew can; no per-task authorization layer | a customer-validation gate: if that assumption fails for a customer, it is a product and security blocker |
-| Unknown budget | refuses new chargeable inference | whether to allow for a bounded window instead |
-
-Acceptance probes once services exist: forged, expired, wrong-audience, wrong-issuer
-and retired-key credentials are refused; a revoked person cannot start work within the
-revocation bound; the authority down past the bound refuses; disabling the workload
-stops renewals and heartbeats; the Console shows `heartbeat_late` after the threshold; a
-heartbeat capture holds only allowlisted keys; an exhausted budget refuses a new turn
-and still serves an existing result.
+Enterprise sign-in, per-person grants, revocation feeds, workload identity, Crew
+registration and inference budgets are not part of this build; their seams are
+described in the design doc. Every admitted person can use everything the Crew
+can: there is no per-task authorization layer.
 
 ## 9. Records and migration
 
@@ -1689,5 +1414,4 @@ Known limits. Containment is `best_effort`: runtimes share the gateway's uid. IO
 limited, and disk is accounting of accepted request bytes, not a filesystem quota. A
 shared session's runtime stays in its first initiator's slice. Channel senders are
 Unknown. The internal one-shot helpers and the CLI's own processes in the table in
-section 1 bypass fair admission. Enterprise grant and budget gates exist as contracts
-(section 8) and nothing calls them yet.
+section 1 bypass fair admission.

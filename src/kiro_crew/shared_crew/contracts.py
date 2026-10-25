@@ -75,8 +75,6 @@ class Provenance(str, enum.Enum):
     TAILSCALE_LISTENER = "tailscale_listener"
     #: The single local operator: a loopback or owner-minted dashboard token.
     LOCAL_OPERATOR = "local_operator"
-    #: An enterprise identity assertion validated by an edition provider.
-    ENTERPRISE = "enterprise"
     #: Server-internal automation with a named owner component.
     INTERNAL = "internal"
     NONE = "none"

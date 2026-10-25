@@ -439,7 +439,7 @@ _LAZY_IMPORTS = {
     "kiro_crew.sel": "sel",
     "kiro_crew.slack.handler": "load_voice_reply_config",
     "kiro_crew.stt": "engine stt_models",
-    "kiro_crew.shared_crew": "enterprise_gates",
+    "kiro_crew.shared_crew": "lifecycle",
     "kiro_crew.shared_crew.host_hooks": "mark_sessions_restored",
     "kiro_crew.shared_crew.host_power": "shared_use_wants_awake",
     "kiro_crew.subagent": "_available_memory_gb",

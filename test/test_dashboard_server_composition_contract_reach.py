@@ -679,7 +679,7 @@ _DASHBOARD_CHAIN = (
     ("spa_fallback", "_install_dashboard_middlewares.<locals>."),
     ("_workflow_ready", "_register_workflow_lifecycle.<locals>."),
     ("_crewmate_prune_gate", "_register_crewmate_prune_gate.<locals>."),
-    ("enterprise_gate_middleware", "make_enterprise_gate_middleware.<locals>."),
+    ("team_config_middleware", "team_config_middleware"),
     ("_change_card_hook", "_register_change_card_hook.<locals>."),
 )
 _API_CHAIN = (
@@ -692,7 +692,7 @@ _API_CHAIN = (
     ("middleware", "token_auth_middleware.<locals>."),
     ("sel_audit_middleware", "_install_api_middlewares.<locals>."),
     ("slot_ownership_middleware", "slot_ownership_middleware"),
-    ("enterprise_gate_middleware", "make_enterprise_gate_middleware.<locals>."),
+    ("team_config_middleware", "team_config_middleware"),
     ("_workflow_ready", "_register_workflow_lifecycle.<locals>."),
 )
 

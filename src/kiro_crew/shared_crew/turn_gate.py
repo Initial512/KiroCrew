@@ -174,27 +174,7 @@ def capacity_note(reason: object) -> str:
     if raw == ReasonCode.ACCESS_REMOVED.value:
         return "This message did not start: its sender no longer has access to this Crew."
     label = raw.replace("_", " ")
-    if raw.startswith(_BUDGET_REASON_PREFIX):
-        return f"This message did not start: the Crew's inference budget ({label})."
     return f"This message did not start: Crew capacity ({label}). Try again later."
-
-
-_BUDGET_REASON_PREFIX = "inference_budget"
-
-
-async def inference_refusal(operation: OperationKind) -> str | None:
-    """The budget reason refusing a channel turn's model work, or None to proceed.
-
-    Only channel turns are asked here: every other turn ``run_admitted`` serves
-    arrives over HTTP, where the enterprise middleware already asked.
-    """
-    if operation is not OperationKind.CHANNEL_TURN:
-        return None
-    from kiro_crew.shared_crew.enterprise import OperationKind as BudgetOperation
-    from kiro_crew.shared_crew.enterprise_gates import check_background_inference_off_loop
-
-    verdict = await check_background_inference_off_loop(BudgetOperation.NEW_TURN)
-    return None if verdict.allowed else verdict.reason
 
 
 def _reset_unadmitted_for_tests() -> None:
@@ -417,11 +397,6 @@ async def run_admitted(
         except Exception:  # noqa: BLE001 -- the note is best effort
             logger.debug("shared crew: refusal note failed", exc_info=True)
 
-    spent = None if _ADMITTED_WORK.get() else await inference_refusal(operation)
-    if spent is not None:
-        work.close()
-        await _tell(spent)
-        return None
     admission = await admit_turn(
         budget_key=budget, session_key=session_key, text=text, operation=operation
     )
@@ -491,9 +466,6 @@ async def run_channel_turn(
     *refused* answers a turn that was refused or ended before it ran.
     """
     budget = _gate.AUTOMATION_PRINCIPAL.id if automation else Principal.unknown().id
-    spent = await inference_refusal(OperationKind.CHANNEL_TURN)
-    if spent is not None:
-        return await refused(spent)
 
     async def _inside() -> T:
         token = _IN_CHANNEL_TURN.set(True)

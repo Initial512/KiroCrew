@@ -26,7 +26,6 @@ from kiro_crew.shared_crew.contracts import (
     CapabilityState,
     EnforcementLevel,
 )
-from kiro_crew.shared_crew.enterprise import ENTERPRISE_CAPABILITY_KEYS
 from kiro_crew.shared_crew.routes_capabilities import CAPABILITIES_PATH, register
 
 A = CapabilityState.AVAILABLE
@@ -164,7 +163,6 @@ class TestAggregation:
         )
         body = aggregate_capabilities().to_dict()
         assert Capabilities.from_dict(body).attribution is A
-        assert set(body["enterprise"]) == set(ENTERPRISE_CAPABILITY_KEYS)
 
 
 class TestRoute:
@@ -183,8 +181,6 @@ class TestRoute:
         assert body["membership_link"] == ""
         assert body["protocols"] == [1]
         assert set(body["reasons"]) == set(CAPABILITY_FIELDS)
-        for key in ENTERPRISE_CAPABILITY_KEYS:
-            assert body["enterprise"][key] == {"state": "unavailable", "reason": "not_configured"}
 
     @pytest.mark.asyncio
     async def test_route_carries_no_references_or_secrets(self) -> None:

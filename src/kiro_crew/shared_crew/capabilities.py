@@ -27,25 +27,12 @@ import threading
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Mapping, Optional
 
-from kiro_crew.shared_crew.access import (
-    HOST_LOCAL,
-    access_modes_dict,
-    detect_workload_host,
-    setup_paths_dict,
-    tailnet_direct,
-    workload_host_dict,
-)
+from kiro_crew.shared_crew.access import setup_paths_dict, tailnet_direct
 from kiro_crew.shared_crew.contracts import (
     MEMBERSHIP_LINKS,
     Capabilities,
     CapabilityState,
     EnforcementLevel,
-)
-from kiro_crew.shared_crew.enterprise import (
-    CAP_INDIVIDUAL_GRANTS,
-    CAP_WORKLOAD_IDENTITY,
-    EnterpriseSeams,
-    resolve_enterprise,
 )
 
 logger = logging.getLogger(__name__)
@@ -141,37 +128,15 @@ def _reset_capability_sources_for_tests() -> None:
 class CapabilityReport:
     capabilities: Capabilities
     reasons: Mapping[str, str]
-    enterprise: EnterpriseSeams
-
-    workload_host: str = HOST_LOCAL
 
     def to_dict(self) -> dict[str, Any]:
         """The wire body: the frozen fields plus the additive report keys.
 
         ``setup_paths`` is each shared-access setup path's availability.
-        ``access_modes`` keeps shared multi-user access, personal remote control
-        and agent workload identity apart, each with its own requirement; the
-        shared mode's ``eligibility`` is the external access decision, which
-        reads ``unavailable`` when no authority is composed.
-        ``workload_identity`` names the supported hosts, this host and the pod
-        boundary (no per-process isolation).
         """
         body = self.capabilities.to_dict()
         body["reasons"] = dict(self.reasons)
-        enterprise = self.enterprise.capabilities_dict()
-        body["enterprise"] = enterprise
-        setup = setup_paths_dict()
-        body["setup_paths"] = setup
-        shared_on = any(row["state"] == CapabilityState.AVAILABLE.value for row in setup.values())
-        workload = enterprise[CAP_WORKLOAD_IDENTITY]["state"]
-        grants = enterprise[CAP_INDIVIDUAL_GRANTS]
-        body["access_modes"] = access_modes_dict(
-            shared_state=CapabilityState.AVAILABLE if shared_on else CapabilityState.UNAVAILABLE,
-            workload_state=CapabilityState(workload),
-            eligibility_state=CapabilityState(grants["state"]),
-            eligibility_reason=grants["reason"],
-        )
-        body["workload_identity"] = workload_host_dict(self.workload_host)
+        body["setup_paths"] = setup_paths_dict()
         direct = tailnet_direct()
         body["tailnet_direct"] = direct.to_dict()
         # Which verified path names people, when attribution is available.
@@ -189,7 +154,7 @@ def _weaker_state(a: Optional[CapabilityState], b: CapabilityState) -> Capabilit
     return a if _STATE_RANK[a] <= _STATE_RANK[b] else b
 
 
-def aggregate_capabilities(*, enterprise: Optional[EnterpriseSeams] = None) -> CapabilityReport:
+def aggregate_capabilities() -> CapabilityReport:
     """Combine every registered source into one truthful report."""
     with _REGISTRY_LOCK:
         registrations = list(_REGISTRY.items())
@@ -265,8 +230,4 @@ def aggregate_capabilities(*, enterprise: Optional[EnterpriseSeams] = None) -> C
         membership_link=membership_link,
         remote_actions=states.get("remote_actions", CapabilityState.UNAVAILABLE),
     )
-    host = detect_workload_host()
-    seams = enterprise if enterprise is not None else resolve_enterprise(workload_host=host)
-    return CapabilityReport(
-        capabilities=caps, reasons=reasons, enterprise=seams, workload_host=host
-    )
+    return CapabilityReport(capabilities=caps, reasons=reasons)

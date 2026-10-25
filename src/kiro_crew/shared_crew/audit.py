@@ -12,9 +12,9 @@ issuer subject beyond that or a display name), the target id, the outcome, the
 correlation id and the causal link. Two references ride in the record's
 ``extra`` and the event metadata:
 
-* ``workload_identity_ref``: the Crew's workload identity from the Crew binding
-  (``crew_mode.crew_identity_refs``), ``unavailable`` when none is composed, so
-  every record names the human and the Crew workload separately;
+* ``workload_identity_ref``: always ``unavailable``, since this build has no
+  Crew workload identity, so every record names the human and the Crew
+  workload separately;
 * ``trigger``: for work no person started (a schedule, a webhook, the Crew), the
   trigger behind its session (:mod:`kiro_crew.shared_crew.trigger`). It is never
   set for a human initiator and never stands in for one.
@@ -54,7 +54,7 @@ from kiro_crew.shared_crew.contracts import (
     Principal,
     PrincipalKind,
 )
-from kiro_crew.shared_crew.crew_mode import WORKLOAD_UNAVAILABLE, current_workload_identity_ref
+from kiro_crew.shared_crew.crew_mode import WORKLOAD_UNAVAILABLE
 from kiro_crew.shared_crew.trigger import trigger_of
 
 logger = logging.getLogger(__name__)
@@ -112,24 +112,15 @@ def new_action_record(
     runtime_ref: str = "",
     causal_action_id: str = "",
     now: float | None = None,
-    workload_ref: str | None = None,
     extra: dict[str, Any] | None = None,
 ) -> ActionRecord:
     """Build a record for an action *initiator* asked for.
 
-    *workload_ref* defaults to the Crew's current workload identity reference.
     *extra* adds action-specific keys (:data:`EXTRA_MEMORY_CHANGE`); it cannot
     replace the workload reference or the trigger.
     """
     extra = {**(extra or {})}
-    extra.update(
-        {
-            EXTRA_WORKLOAD_REF: _clip(
-                current_workload_identity_ref() if workload_ref is None else workload_ref
-            )
-            or WORKLOAD_UNAVAILABLE,
-        }
-    )
+    extra[EXTRA_WORKLOAD_REF] = WORKLOAD_UNAVAILABLE
     extra.pop(EXTRA_TRIGGER, None)
     trigger = _unattended_trigger(initiator.principal, session_key)
     if trigger is not None:

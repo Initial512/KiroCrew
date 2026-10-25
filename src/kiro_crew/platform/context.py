@@ -23,7 +23,7 @@ import logging
 import re
 import threading
 from collections import OrderedDict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional, Tuple, TypeVar
 
 if TYPE_CHECKING:  # avoid import cycles — config.loader imports heavy modules
@@ -66,11 +66,6 @@ if TYPE_CHECKING:  # avoid import cycles — config.loader imports heavy modules
         TunnelProvider,
     )
     from kiro_crew.platform.security_authority import PolicyAuthority
-
-from kiro_crew.platform.shared_crew_enterprise import (
-    DefaultSharedCrewEnterpriseProvider,
-    SharedCrewEnterpriseProvider,
-)
 
 # Bumped on any field add/rename or interface-semantics change.  A companion
 # built against a different CONTRACT_VERSION refuses to compose (see
@@ -369,16 +364,6 @@ class PlatformContext:
     # the single constructor and the companion's ``dataclasses.replace`` paths
     # need no change beyond opting in.
     governance: "Optional[GovernanceCeiling]" = None
-
-    # ── Shared Crew enterprise providers ──
-    # Grants, credential verification, workload identity, the synthetic Crew
-    # identity, heartbeat and inference budget, read through
-    # ``shared_crew.enterprise.resolve_enterprise``. Defaulted to the disabled
-    # provider so the companion's ``dataclasses.replace`` path opts in explicitly.
-    # v1 addition (no CONTRACT_VERSION bump).
-    shared_crew_enterprise: SharedCrewEnterpriseProvider = field(
-        default_factory=DefaultSharedCrewEnterpriseProvider
-    )
 
     def __post_init__(self) -> None:
         """Bind the ``CapabilityManager`` bound + warn on reserved-slot overrides.
