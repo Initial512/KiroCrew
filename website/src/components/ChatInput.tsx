@@ -696,6 +696,7 @@ function ChatInput({
   // Escape command, so the binding holds with "Style Markdown While Typing" on.
   const stopTurnOnEscape = useComposerStopKey({
     isRunning, onStop, anyPickerOpenRef, voiceRecording, voiceDrainCancellable, hasApproval, approvalNudgeActive,
+    optimizingRef, onCancelOptimize: cancelOptimize,
   })
   const handleKeyDown = useComposerKeyDown({
     rawPasteRef, handleUndoKey, endUndoBurst, handleTokenKey, onMentionKey, promptOptimizer: promptOptimizer && !terminal.active, connected, optimizePrompt: optimizeUnlessLocked, sendOnEnter, onChange, valueFromUserRef, optimizingRef,
