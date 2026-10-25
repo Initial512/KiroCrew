@@ -517,7 +517,11 @@ def _url_payload_command(n: int) -> str:
 #: the dispatcher that falls back to the Python gate (kept verbatim as
 #: ``_might_contain_credential_py``) on a missing, stale, disabled or failing module.
 #: Seventy-one lines. No pattern moved and no pass changed.
-_PACKAGE_LINE_BUDGET = 32_601
+#:
+#: Raised by 12, from 32,601, for the crewmate folder's state files in ``paths_lists``
+#: (owners, kits, revoked approvals, tool access, migration ledger), write-denied
+#: like the folder itself. Data, not rule logic: the matcher is unchanged.
+_PACKAGE_LINE_BUDGET = 32_613
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second
