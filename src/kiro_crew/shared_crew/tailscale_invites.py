@@ -517,12 +517,13 @@ connection_closer: ConnectionCloser = _no_closer
 async def revoke(invite_id: str, actor: str) -> dict[str, Any]:
     api, _ = await asyncio.to_thread(_api)
     async with _commit_lock():
-        row, member, closed = await _revoke_locked(api, invite_id, actor)
+        row, members, closed = await _revoke_locked(api, invite_id, actor)
     stopped = {"cancelled_queued": 0, "stopped_running": 0}
-    if member:
+    for member in members:
         # Their running turn stops now; the slot frees once its runtime has stopped.
         login = str(member.get("login") or "")
-        stopped = await access_set.stop_work(login, frozenset(), actor=actor)
+        for key, n in (await access_set.stop_work(login, frozenset(), actor=actor)).items():
+            stopped[key] = stopped.get(key, 0) + n
     await _audit_async(
         "revoke",
         "granted",
@@ -532,7 +533,7 @@ async def revoke(invite_id: str, actor: str) -> dict[str, Any]:
     )
     return {
         "revoked": invite_id,
-        "member_removed": bool(member),
+        "member_removed": bool(members),
         "closed_connections": closed,
         **stopped,
     }
@@ -540,21 +541,15 @@ async def revoke(invite_id: str, actor: str) -> dict[str, Any]:
 
 async def _revoke_locked(
     api: TailscaleApi, invite_id: str, actor: str
-) -> tuple[dict[str, Any], dict[str, Any] | None, int]:
-    """Delete the share and drop its member; ``(invite row, member, sockets closed)``."""
+) -> tuple[dict[str, Any], list[dict[str, Any]], int]:
+    """Delete the share and drop every member it admitted; ``(row, members, sockets closed)``."""
     state = await asyncio.to_thread(store.load_state)
     row = (state.get("invites") or {}).get(invite_id) or {}
-    member_id = str(row.get("accepted_user_id") or "")
-    if not member_id:
-        member_id = next(
-            (
-                uid
-                for uid, m in (state.get("members") or {}).items()
-                if m.get("invite_id") == invite_id
-            ),
-            "",
-        )
-    member = (state.get("members") or {}).get(member_id)
+    all_members = state.get("members") or {}
+    member_ids = {str(row.get("accepted_user_id") or "")} | {
+        uid for uid, m in all_members.items() if m.get("invite_id") == invite_id
+    }
+    members = [all_members[uid] for uid in sorted(member_ids) if uid in all_members]
     try:
         await api.delete_invite(invite_id)
     except TailscaleApiError as exc:
@@ -564,7 +559,7 @@ async def _revoke_locked(
             )
             raise
     closed = 0
-    if member:
+    for member in members:
         login = str(member.get("login") or "")
         from kiro_crew.dashboard import tailnet_live_allowlist
 
@@ -573,17 +568,17 @@ async def _revoke_locked(
             await allowlist_writer(login, False)
         except Exception:  # noqa: BLE001 -- the live revoke already holds
             logger.warning("removing a revoked login from the allowlist failed", exc_info=True)
-        closed = int(await connection_closer(login) or 0)
+        closed += int(await connection_closer(login) or 0)
 
     def _mutate(s: dict[str, Any]) -> None:
         s["invites"].pop(invite_id, None)
-        if member_id:
-            s["members"].pop(member_id, None)
+        for uid in member_ids:
+            s["members"].pop(uid, None)
 
     await asyncio.to_thread(store.update_state, _mutate)
-    if member:
+    if members:
         await asyncio.to_thread(access_set.rebuild)
-    return row, member, closed
+    return row, members, closed
 
 
 # ── background poll ──

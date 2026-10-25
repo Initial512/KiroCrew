@@ -5,11 +5,13 @@ several into one turn. These helpers decide when such a turn must not run
 (a person stopped one of its messages), end every merged message with the
 turn's outcome, and stop an execution whose admitted work ended while its start
 was still in flight. :mod:`admission_gate` keeps the service's own methods as
-the call sites; the service is passed in.
+the call sites; the service is passed in. A caller cancelled before its work
+started ends that work here, so it never keeps a slot.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import replace
 from typing import TYPE_CHECKING
@@ -131,3 +133,13 @@ __all__ = [
     "settle_followers",
     "stop_late_start",
 ]
+
+
+async def end_unstarted(service: AdmissionService, live: _Live, exc: BaseException) -> None:
+    """End work whose caller was cancelled before it started, so its slot is freed."""
+    if not isinstance(exc, asyncio.CancelledError) or live.work.state in TERMINAL:
+        return
+    try:
+        await service._end(live, S.CANCELLED, reason=ReasonCode.CANCELLED_BY_USER)
+    except Exception:  # noqa: BLE001 -- the restart reconcile settles it
+        logger.warning("shared crew: ending %s failed", live.work.work_id, exc_info=True)

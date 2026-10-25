@@ -934,44 +934,45 @@ class AdmissionService:
             raise AdmissionEnded(live.work)
         try:
             await self.wait_admitted(work_id)
-        except BaseException:
-            coro.close()
-            raise
-        if self.stopping():
-            # The host is going away: work that never started is cancelled, not run.
-            coro.close()
-            await self._end(
-                live, S.CANCELLED, reason=None, extra={RECONCILE_DETAIL_KEY: STOPPED_BEFORE_START}
+            if self.stopping():
+                # The host is going away: work that never started is cancelled, not run.
+                await self._end(
+                    live,
+                    S.CANCELLED,
+                    reason=None,
+                    extra={RECONCILE_DETAIL_KEY: STOPPED_BEFORE_START},
+                )
+                raise AdmissionEnded(live.work)
+            refusal = await self._revalidate(live, revalidate)
+            if refusal is not None:
+                terminal = S.EXPIRED if refusal is ReasonCode.QUEUE_EXPIRED else S.CANCELLED
+                await self._end(live, terminal, reason=refusal)
+                raise AdmissionEnded(live.work)
+            unit = await self.prepare_principal_slice(live.work.budget_key)
+            if self._limits.hard_limits and not unit:
+                await self._end(live, S.CANCELLED, reason=ReasonCode.CONTAINMENT_UNAVAILABLE)
+                raise AdmissionEnded(live.work)
+            runtime = RuntimeOwnershipRef(
+                execution_id=work_id,
+                root_execution_id=live.root_work_id or work_id,
+                parent_execution_id=live.request.parent_execution_id,
+                containment=ContainmentKind.SYSTEMD_SCOPE if unit else ContainmentKind.NONE,
+                containment_unit=unit,
+                liveness=Liveness.ALIVE,
+                reconciled_at=None,
             )
-            raise AdmissionEnded(live.work)
-        refusal = await self._revalidate(live, revalidate)
-        if refusal is not None:
+            try:
+                live.work = await self._store.advance(live.work, S.RUNNING, runtime=runtime)
+            except (StaleRevision, InvalidTransition):
+                current = await self._store.get(work_id)
+                if current is not None:
+                    live.work = current
+                raise AdmissionEnded(live.work) from None
+        except BaseException as exc:
+            # Every path that does not start the work closes its coroutine here.
             coro.close()
-            terminal = S.EXPIRED if refusal is ReasonCode.QUEUE_EXPIRED else S.CANCELLED
-            await self._end(live, terminal, reason=refusal)
-            raise AdmissionEnded(live.work)
-        unit = await self.prepare_principal_slice(live.work.budget_key)
-        if self._limits.hard_limits and not unit:
-            coro.close()
-            await self._end(live, S.CANCELLED, reason=ReasonCode.CONTAINMENT_UNAVAILABLE)
-            raise AdmissionEnded(live.work)
-        runtime = RuntimeOwnershipRef(
-            execution_id=work_id,
-            root_execution_id=live.root_work_id or work_id,
-            parent_execution_id=live.request.parent_execution_id,
-            containment=ContainmentKind.SYSTEMD_SCOPE if unit else ContainmentKind.NONE,
-            containment_unit=unit,
-            liveness=Liveness.ALIVE,
-            reconciled_at=None,
-        )
-        try:
-            live.work = await self._store.advance(live.work, S.RUNNING, runtime=runtime)
-        except (StaleRevision, InvalidTransition):
-            coro.close()
-            current = await self._store.get(work_id)
-            if current is not None:
-                live.work = current
-            raise AdmissionEnded(live.work) from None
+            await _parked.end_unstarted(self, live, exc)
+            raise
         self.bind_session(live.work.session_key, live.work.budget_key, work_id)
         from kiro_crew.shared_crew.turn_gate import mark_admitted
 

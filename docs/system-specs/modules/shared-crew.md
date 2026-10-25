@@ -491,7 +491,8 @@ WebP by magic bytes, at most 256 KiB, named by digest, served same-origin with
 verified tailnet peer show the alias and avatar bound to that login; a session
 creator read back from stored attribution never borrows one.
 
-**Revoke.** Delete the invite at Tailscale, take the login out of the access set and
+**Revoke.** Delete the invite at Tailscale; for every person it admitted (each one
+who accepted a reusable link), take the login out of the access set and
 the config mirror (never the machine owner's own), refuse it live, close that
 person's dashboard sockets (`_shared_crew_actor` on each socket) and stop their
 queued and running work (Access set, Removal stops work now). Revoking an accepted invite is assumed
@@ -815,7 +816,9 @@ timeout), `AdmissionService._end` puts the ticket back in its own place
 (`FairScheduler.restore_queued`): the work stays `queued`, the cancel raises, and
 the next tick expires it again. A finished run whose terminal write fails keeps its
 slot and its merged messages; the next tick writes the outcome again
-(`_Live.unsettled`), and the slot is freed once that write is durable.
+(`_Live.unsettled`), and the slot is freed once that write is durable. A caller
+cancelled before its work starts (a queued chat closed while it waits) ends that
+work `cancelled` (`admission_parked.end_unstarted`), so its ticket never holds a slot.
 
 A background run admitted now can be cancelled while its start is still in flight.
 `_end` remembers the ended, not-yet-attached work with its operation's cancel hook,

@@ -533,6 +533,34 @@ async def test_a_failed_completion_write_is_written_again_by_the_next_tick(tmp_p
 
 
 @pytest.mark.asyncio
+async def test_a_queued_turn_whose_caller_is_cancelled_frees_its_place(tmp_path, clock):
+    svc = _service(tmp_path, clock, principal_concurrency=1, crew_concurrency=1)
+    running = await svc.admit(
+        budget_key=ALICE.id,
+        session_key="dashboard:a",
+        operation=OperationKind.CHAT_TURN,
+        idempotency_key="run-key-0001",
+        digest="a",
+    )
+    queued = await svc.admit(
+        budget_key=BOB.id,
+        session_key="dashboard:b",
+        operation=OperationKind.CHAT_TURN,
+        idempotency_key="run-key-0002",
+        digest="b",
+    )
+    assert running.admitted and queued.queued and queued.work is not None
+    work_id = queued.work.work_id
+    waiter = asyncio.ensure_future(queued.run(asyncio.sleep(0)))
+    await asyncio.sleep(0)
+    waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    assert svc._store.get_sync(work_id).state is S.CANCELLED
+    assert not svc._scheduler.is_queued(work_id) and not svc.holds_capacity(work_id)
+
+
+@pytest.mark.asyncio
 async def test_a_failed_expiry_write_requeues_and_the_next_tick_expires(tmp_path, clock):
     svc = _service(
         tmp_path, clock, principal_concurrency=1, crew_concurrency=1, queue_expiry_seconds=60

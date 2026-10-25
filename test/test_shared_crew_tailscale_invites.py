@@ -477,6 +477,20 @@ async def test_a_reusable_link_keeps_syncing_after_its_first_accept(
 
 
 @pytest.mark.asyncio
+async def test_revoking_a_reusable_link_removes_everyone_it_admitted(fake, config_file) -> None:
+    await invites.connect(KEY, "owner")
+    made = await invites.create_invites([], multi_use=True, alias="", avatar_id="", actor="o")
+    for uid, login in (("u-1", "a@example.com"), ("u-2", "b@example.com")):
+        fake.accept(made[0]["id"], uid, login)
+        await invites.sync(force=True)
+    assert {"a@example.com", "b@example.com"} <= set(_logins(config_file))
+    result = await invites.revoke(made[0]["id"], "owner")
+    assert result["member_removed"] is True
+    assert not {"a@example.com", "b@example.com"} & set(_logins(config_file))
+    assert store.load_state()["members"] == {}
+
+
+@pytest.mark.asyncio
 async def test_rate_limit_backs_off_with_retry_after(fake, config_file) -> None:
     await invites.connect(KEY, "owner")
     fake.rate_limit = 1
