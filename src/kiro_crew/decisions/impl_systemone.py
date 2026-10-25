@@ -140,64 +140,83 @@ _META_STR_MAX = 128
 VAULT_SECRET_NAME = HOSTED_TYPESAFE.vault_secret
 
 
-# One keep-alive HTTP session per event loop, shared by every oracle. ``decide``
-# builds a fresh ``SystemOneProvider`` for each decision, so a session owned by the oracle
-# would be a session per request: a hosted provider then pays its full TCP and TLS
-# handshake on every decision (over a second to Cloudflare's API, against tens of
-# milliseconds of inference), which is longer than the default ``timeout_ms``. The
-# pool is keyed by loop because an aiohttp session is bound to the loop it was
-# created on; a loop that has closed takes its session with it (see
-# :func:`_session_for_running_loop`).
+# One persistent HTTP client per event loop, shared by every oracle. ``decide``
+# builds a fresh ``SystemOneProvider`` for each decision, so a client owned by the
+# oracle would be a connection per request: a hosted provider then pays its full
+# TCP and TLS handshake on every decision (over a second to Cloudflare's API,
+# against tens of milliseconds of inference), which is longer than the default
+# ``timeout_ms``. The client speaks HTTP/2 where the server offers it (ALPN), so
+# several decisions in flight ride ONE connection as separate streams instead of
+# queueing for a pool slot; a plain-HTTP or HTTP/1.1-only server gets keep-alive
+# HTTP/1.1. The pool is keyed by loop because the client's connections are bound
+# to the loop they were opened on; a loop that has closed takes its client with it
+# (see :func:`_session_for_running_loop`).
 #
-# Nothing per-endpoint or per-request lives on the session: the ``Authorization``
-# header, the URL and the timeout are all passed on each ``post``, and the connector
-# pools by host and port, so a changed ``provider.endpoint`` simply opens a new
-# connection and the old one idles out after ``_KEEPALIVE_SECS``. A credential is
-# therefore never attached to a connection, only to the request sent over it.
+# Nothing per-endpoint or per-request lives on the client: the ``Authorization``
+# header, the URL and the timeout are all passed on each request, and connections
+# pool by origin, so a changed ``provider.endpoint`` simply opens a new connection
+# and the old one idles out after ``_KEEPALIVE_SECS``. A credential is therefore
+# never attached to a connection, only to the request sent over it.
 _KEEPALIVE_SECS = 15.0
 _POOL_LIMIT = 16
 _sessions: dict[asyncio.AbstractEventLoop, Any] = {}
 _sessions_lock = threading.Lock()
 
 
+def _refuse_all_cookies() -> Any:
+    """A cookie jar that stores nothing: a ``Set-Cookie`` is never replayed."""
+    from http.cookiejar import CookieJar, DefaultCookiePolicy
+
+    return CookieJar(policy=DefaultCookiePolicy(allowed_domains=[]))
+
+
 def _session_for_running_loop() -> Any:
-    """The shared keep-alive session for the running loop, created on first use.
+    """The shared persistent client for the running loop, created on first use.
 
     Recreated when it was closed, and never shared across loops. Entries whose loop
-    has closed are dropped here: no running loop can close their session,
-    and ``detach`` marks it closed so dropping the last reference is quiet; the
-    connector closes its own sockets when it is collected.
+    has closed are dropped here: no running loop can close their client, and the
+    sockets go with the loop.
 
-    The cookie jar is a ``DummyCookieJar`` on purpose. A session that outlives a
+    The cookie jar refuses every cookie on purpose: a client that outlives a
     request would otherwise replay any ``Set-Cookie`` the provider (or something in
-    front of it) sent on every later decision, state that the one-session-per-request
-    code could not carry.
+    front of it) sent on every later decision. ``trust_env`` is off so no proxy
+    variable and no ``.netrc`` credential is read from the environment, and TLS
+    verification uses the process's default context (the system trust store the
+    gateway installs), not a bundled CA file.
     """
-    import aiohttp
+    import ssl
+
+    import httpx
 
     loop = asyncio.get_running_loop()
     with _sessions_lock:
         for dead in [lp for lp in _sessions if lp.is_closed()]:
-            _sessions.pop(dead).detach()
+            _sessions.pop(dead)
         session = _sessions.get(loop)
-        if session is None or session.closed:
-            session = aiohttp.ClientSession(
-                connector=aiohttp.TCPConnector(
-                    limit=_POOL_LIMIT, keepalive_timeout=_KEEPALIVE_SECS
+        if session is None or session.is_closed:
+            session = httpx.AsyncClient(
+                http2=True,
+                verify=ssl.create_default_context(),
+                trust_env=False,
+                follow_redirects=False,
+                cookies=_refuse_all_cookies(),
+                limits=httpx.Limits(
+                    max_connections=_POOL_LIMIT,
+                    max_keepalive_connections=_POOL_LIMIT,
+                    keepalive_expiry=_KEEPALIVE_SECS,
                 ),
-                cookie_jar=aiohttp.DummyCookieJar(),
             )
             _sessions[loop] = session
         return session
 
 
 async def close_sessions() -> None:
-    """Close every shared session; the gateway's shutdown hook calls this.
+    """Close every shared client; the gateway's shutdown hook calls this.
 
-    The running loop's session is closed in place. A session on another loop that
-    is still running is closed on that loop without waiting for it, and one on a
+    The running loop's client is closed in place. A client on another loop that is
+    still running is closed on that loop without waiting for it, and one on a
     closed loop is only dropped. Safe to call with nothing open, and a later
-    ``ask`` simply makes a new session.
+    ``ask`` simply makes a new client.
     """
     running = asyncio.get_running_loop()
     with _sessions_lock:
@@ -206,12 +225,10 @@ async def close_sessions() -> None:
     for loop, session in held:
         if loop is running:
             with contextlib.suppress(Exception):
-                await session.close()
-        elif loop.is_closed():
-            session.detach()
-        else:
+                await session.aclose()
+        elif not loop.is_closed():
             with contextlib.suppress(Exception):
-                asyncio.run_coroutine_threadsafe(session.close(), loop)
+                asyncio.run_coroutine_threadsafe(session.aclose(), loop)
 
 
 class ProviderProtocolError(RuntimeError):
@@ -570,53 +587,75 @@ class SystemOneProvider:
         else:
             _warn_keyless_custom_loopback(self._endpoint, self._model)
 
-        import aiohttp
+        import httpx
 
         body = _to_wire(state, self._model, questions, assets)
         timeout_ms = _as_float_or_none(self._timeout_ms)
-        # Per request, not per session: the session is shared, and the total covers
+        # Per request, not per client: the client is shared, and the bound covers
         # waiting for a pooled connection as well as the exchange itself.
-        timeout = aiohttp.ClientTimeout(total=max(0.001, (timeout_ms or 0.0) / 1000.0))
+        seconds = max(0.001, (timeout_ms or 0.0) / 1000.0)
         session = _session_for_running_loop()
         # No redirects, ever: consent is bound to THIS endpoint, and following a
         # 3xx would replay the body -- conversation text and skill descriptions
         # -- to whatever Location the server named. A 3xx is refused below as a
         # non-2xx, so the row says the provider misbehaved, not that we sent.
-        async with session.post(
-            self._endpoint,
-            json=body,
-            allow_redirects=False,
-            headers=headers,
-            timeout=timeout,
-        ) as resp:
-            if resp.status < 200 or resp.status >= 300:
-                raise ProviderHttpError(f"HTTP {resp.status}")
-            # Read inside the response context, before the body: the header is
-            # the one piece of metadata that does not live in the parsed body.
-            request_id = resp.headers.get(_REQUEST_ID_HEADER)
-            # Bounded and chunked: `resp.text()` reads to EOF, and a single
-            # `read(n)` may return short while more is coming, so only a
-            # running total refuses on the real size instead of truncating.
-            chunks: list[bytes] = []
-            total = 0
-            async for chunk in resp.content.iter_chunked(_RESPONSE_CHUNK_BYTES):
-                total += len(chunk)
-                if total > _MAX_RESPONSE_BYTES:
-                    raise ProviderProtocolError(f"response exceeded {_MAX_RESPONSE_BYTES} bytes")
-                chunks.append(chunk)
-            text = b"".join(chunks).decode("utf-8", errors="replace")
-            import json
+        try:
+            async with asyncio.timeout(seconds):
+                async with session.stream(
+                    "POST",
+                    self._endpoint,
+                    json=body,
+                    headers=headers,
+                    timeout=httpx.Timeout(seconds),
+                ) as resp:
+                    if resp.status_code < 200 or resp.status_code >= 300:
+                        raise ProviderHttpError(f"HTTP {resp.status_code}")
+                    # Read inside the response context, before the body: the header
+                    # is the one piece of metadata that does not live in the body.
+                    request_id = resp.headers.get(_REQUEST_ID_HEADER)
+                    # Bounded and chunked: only a running total refuses on the real
+                    # size instead of truncating, and a chunked body is covered too.
+                    # Decoded bytes (a gzip or br body is decompressed as it streams),
+                    # so the cap bounds what is held, a compression bomb included.
+                    chunks: list[bytes] = []
+                    total = 0
+                    async for chunk in resp.aiter_bytes(_RESPONSE_CHUNK_BYTES):
+                        total += len(chunk)
+                        if total > _MAX_RESPONSE_BYTES:
+                            raise ProviderProtocolError(
+                                f"response exceeded {_MAX_RESPONSE_BYTES} bytes"
+                            )
+                        chunks.append(chunk)
+        except httpx.TimeoutException:
+            # The gate reads a timeout by its class; keep it one.
+            raise asyncio.TimeoutError from None
+        text = b"".join(chunks).decode("utf-8", errors="replace")
+        import json
 
-            try:
-                parsed = json.loads(text)
-            except ValueError:
-                raise ProviderProtocolError("response is not JSON") from None
+        try:
+            parsed = json.loads(text)
+        except ValueError:
+            raise ProviderProtocolError("response is not JSON") from None
         answers = _from_wire(parsed, questions)
         # Only after a fully-valid parse: a row never carries metadata for a
         # response the gate is about to treat as an error. Built from the parsed
         # body plus the header, every value bounded, no conversation text.
         self.last_response_meta = _response_meta(parsed, request_id)
         return answers
+
+    async def warm(self) -> None:
+        """Open the connection a burst of decisions will ride, before the first one.
+
+        A bodiless ``HEAD`` to the configured endpoint, with no credential, no
+        state and no question: only the handshake is wanted, so its status is
+        ignored. The gate calls this only where it would also send a decision.
+        """
+        session = _session_for_running_loop()
+        seconds = max(0.001, (_as_float_or_none(self._timeout_ms) or 0.0) / 1000.0)
+        import httpx
+
+        with contextlib.suppress(httpx.HTTPError):
+            await session.head(self._endpoint, timeout=httpx.Timeout(max(seconds, 2.0)))
 
 
 #: Former names, kept for one release so an importer of the old spellings keeps

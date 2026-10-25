@@ -692,7 +692,7 @@ def _oracle(lane: str, provider: Any, model: str = "") -> _provider.DecisionProv
 
     ``decisions.provider.select`` picks the registered spec; its factory imports
     the implementation at call time, for the reason every import in this module is
-    function-local: the package is reached from hot paths, and neither ``aiohttp``
+    function-local: the package is reached from hot paths, and neither ``httpx``
     (the endpoint lane) nor the session layer (the LLM lane) belongs on their import
     graph. Each lane pays only its own dependency.
 
@@ -994,6 +994,54 @@ def provider_supports(needs: frozenset[str], config: Any | None = None) -> bool:
     except Exception:
         return False
     return needs <= spec.supports
+
+
+def capabilities(config: Any | None = None) -> _provider.Capabilities | None:
+    """What the endpoint lane's configured provider declares, or ``None``. Pure.
+
+    A caller that adapts its pace or its inputs (the browser's ``reflex`` loop)
+    reads this instead of a provider's name. Grants nothing: every request still
+    goes through :func:`decide`, which re-checks support, consent and scopes.
+    """
+    try:
+        cfg = config if config is not None else _snapshot()
+        provider = getattr(_decisions_config(cfg), "provider", None)
+        spec = _provider.select(
+            LANE_ENDPOINT,
+            endpoint=_consent.normalize_endpoint(getattr(provider, "endpoint", "")),
+            model=str(getattr(provider, "model", "") or ""),
+        )
+    except Exception:
+        return None
+    return spec.capabilities()
+
+
+async def warm(point: str, *, session_key: str | None = None) -> bool:
+    """Open the provider's connection before a burst of decisions. Never raises.
+
+    Only where :func:`decide` would send (the same consent, governance and bucket
+    checks), and only to a provider whose client offers ``warm()``; it carries no
+    state and no question. ``False`` when nothing was opened.
+    """
+    try:
+        cfg = _snapshot()
+        if cfg is None:
+            return False
+        consented = await asyncio.to_thread(_consented_for, cfg, session_key, point)
+        if point == JUDGE_POINT or not _sampled(point, session_key, cfg, consented=consented):
+            return False
+        provider = getattr(_decisions_config(cfg), "provider", None)
+        oracle = _oracle(LANE_ENDPOINT, provider, lane_model(cfg, lane=LANE_ENDPOINT))
+        opener = getattr(oracle, "warm", None)
+        if opener is None:
+            return False
+        await asyncio.wait_for(opener(), timeout=timeout_secs(cfg) + 1.0)
+        return True
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logger.debug("decisions: warm(%s) failed (%s)", point, type(exc).__name__)
+        return False
 
 
 def request_scope_granted(scope: str) -> bool:

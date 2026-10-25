@@ -94,6 +94,7 @@ HELPERS: Mapping[str, tuple[str, ...]] = {
     "close_tab": ("target",),
     "current_tab": (),
     "js": ("expression", "target_id"),
+    "page_clock": ("state",),
 }
 
 #: The daemon's instance name. Not ``default``: a named daemon creates its own tab

@@ -7,7 +7,8 @@ through ``/api/browser/op``), and it reaches the browser only two ways:
 * ``ctx.helper(helper, **kwargs)`` -- one allowlisted Harness helper over the
   daemon's IPC (``goto``, ``click``, ``type_text``, ``press_key``, ``scroll``,
   ``mouse_move``, ``drag``, ``screenshot``, ``page_info``, ``wait_for_load``,
-  ``new_tab``, ``switch_tab``, ``list_tabs``, ``js``);
+  ``new_tab``, ``switch_tab``, ``list_tabs``, ``js``, and the ``reflex`` op's
+  ``page_clock``);
 * the ``js`` helper, ONLY with :data:`WALKER_SOURCE` -- the page-side half of
   this module (``snapshot_walker.js``) -- so every read or write in the page is
   a method on that one script. No arbitrary expression is ever evaluated.

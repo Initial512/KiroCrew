@@ -14,6 +14,12 @@
 // Every method returns a JSON-serialisable value. A refusal is a return value
 // (`{ok:false, code}`), never a throw, so Python can tell "the page said no"
 // from a transport failure.
+//
+// `observe`, `check` and the element table they share follow the snapshot of
+// browser-use/jev-ultrafast (jev_ultrafast/snapshot.js, MIT, Copyright (c) 2026
+// Browser Use; see NOTICE): one atomic read of the visible controls and text, an
+// identity per real node (here: our `eN` refs), a scoped guard per element, and a
+// re-check of the target's geometry and occlusion just before input.
 (() => {
   var NAME_CAP = 120;
   var CONSOLE_CAP = 500;
@@ -212,6 +218,186 @@
     window.addEventListener("unhandledrejection", function (ev) {
       push("error", ["Unhandled promise rejection: " + String(ev && ev.reason)]);
     });
+  }
+
+  // -- the reflex loop's observation (element table, change counters) ----------
+
+  var TABLE_CAP = 250;
+  var TABLE_TEXT_CAP = 3000;
+  var READ_CAP = 4096;
+  var TABLE_ROLES = {
+    button: 1, link: 1, checkbox: 1, radio: 1, "switch": 1, tab: 1, menuitem: 1,
+    menuitemradio: 1, option: 1, gridcell: 1, combobox: 1, textbox: 1, searchbox: 1,
+    spinbutton: 1, slider: 1
+  };
+  var TABLE_SELECTOR = "a[href],button,input,textarea,select,summary,[contenteditable=\"true\"]," +
+    Object.keys(TABLE_ROLES).map(function (r) { return "[role=\"" + r + "\"]"; }).join(",");
+  var EDITABLE_ROLES = { textbox: 1, searchbox: 1, spinbutton: 1, combobox: 1 };
+
+  // Change counters, once per document: DOM mutation records and animation frames.
+  // A pipelined answer asked before the counter moved may be stale (`supersede`).
+  function installCounters() {
+    if (window.__kcTickDoc === document && window.__kcTick) return window.__kcTick;
+    var tick = { m: 0, f: 0 };
+    window.__kcTick = tick;
+    window.__kcTickDoc = document;
+    try {
+      new MutationObserver(function (records) { tick.m += records.length; }).observe(
+        document.documentElement, { subtree: true, childList: true, attributes: true, characterData: true }
+      );
+    } catch (e) {}
+    (function frame() {
+      tick.f++;
+      try { requestAnimationFrame(frame); } catch (e) {}
+    })();
+    return tick;
+  }
+
+  function hash(text) {
+    // FNV-1a, two seeds: a short fingerprint, never sent as page text.
+    var a = 2166136261, b = 5381;
+    for (var i = 0; i < text.length; i++) {
+      var c = text.charCodeAt(i);
+      a = Math.imul(a ^ c, 16777619) >>> 0;
+      b = ((b << 5) + b + c) >>> 0;
+    }
+    return a.toString(16) + b.toString(16);
+  }
+
+  function shown(el) {
+    if (el.closest && el.closest("[aria-hidden=\"true\"],[inert]")) return false;
+    if (typeof el.checkVisibility === "function") {
+      return el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true });
+    }
+    return visible(el);
+  }
+
+  function inViewport(r) {
+    var x = r.left + r.width / 2, y = r.top + r.height / 2;
+    return r.width > 0 && r.height > 0 && x >= 0 && y >= 0 && x < innerWidth && y < innerHeight;
+  }
+
+  function tableRole(el) {
+    var role = explicitRole(el);
+    if (TABLE_ROLES[role]) return role;
+    var tag = el.tagName.toLowerCase();
+    if (tag === "summary") return "button";
+    if (el.isContentEditable && tag !== "input") return "textbox";
+    if (tag === "input") {
+      var t = inputType(el);
+      if (t === "search") return "searchbox";
+      if (t === "number") return "spinbutton";
+      if (t === "range") return "slider";
+      if (t === "image") return "button";
+      if (["file", "hidden", "password", "color"].indexOf(t) !== -1) return "";
+    }
+    return roleFor(el);
+  }
+
+  function disabledEl(el) {
+    return !!((el.matches && el.matches(":disabled")) || (el.closest && el.closest("[aria-disabled=\"true\"]")));
+  }
+
+  function editable(el, role) {
+    if (el.readOnly || (el.getAttribute && el.getAttribute("aria-readonly") === "true")) return false;
+    if (!EDITABLE_ROLES[role]) return false;
+    var tag = el.tagName.toLowerCase();
+    return role !== "combobox" || tag === "input" || tag === "textarea" || el.isContentEditable;
+  }
+
+  function fieldValue(el, role) {
+    if (secretish(el)) return "";
+    if ("value" in el && el.tagName.toLowerCase() !== "button") return String(el.value == null ? "" : el.value);
+    if (el.isContentEditable || role === "combobox") return (el.innerText || "").trim().slice(0, NAME_CAP);
+    var now = el.getAttribute && el.getAttribute("aria-valuenow");
+    return now === null || now === undefined ? "" : String(now);
+  }
+
+  // The element's identity plus its meaning and its row/form/dialog context: an
+  // answer about it is used only while this still matches.
+  function guardOf(el, role) {
+    var scope = (el.closest && el.closest("form,dialog,[role=\"dialog\"],article,li,tr,[role=\"row\"]")) || el.parentElement;
+    return hash(JSON.stringify([
+      el.__kcRef || "", role, accName(el), fieldValue(el, role), !!el.checked, el.selectedIndex == null ? -1 : el.selectedIndex,
+      disabledEl(el), el.getAttribute("aria-expanded"), el.getAttribute("aria-checked"),
+      el.getAttribute("aria-selected"), el.getAttribute("href"),
+      scope && scope.innerText ? scope.innerText.slice(0, 2000) : ""
+    ]));
+  }
+
+  function tableRow(el, role) {
+    var row = { ref: assignRef(el), role: role, name: accName(el) || role, ops: [] };
+    var value = fieldValue(el, role);
+    if (value) row.value = value.slice(0, NAME_CAP);
+    ["checked", "selected", "expanded"].forEach(function (key) {
+      var v = el.getAttribute("aria-" + key);
+      if (v !== null) row[key] = v;
+    });
+    if (role === "checkbox" || role === "radio") row.checked = String(!!el.checked);
+    if (el.tagName.toLowerCase() === "select") {
+      row.ops.push("select");
+      row.options = [];
+      for (var i = 0; i < el.options.length && row.options.length < 50; i++) {
+        var o = el.options[i];
+        if (o.selected || o.disabled || (o.closest && o.closest("optgroup[disabled]"))) continue;
+        row.options.push({ i: i, label: (o.label || o.textContent || "").trim().slice(0, NAME_CAP), value: o.value });
+      }
+    } else {
+      row.ops.push("click", "hover");
+      if (editable(el, role)) row.ops.push("type");
+    }
+    row.g = guardOf(el, role);
+    return row;
+  }
+
+  function regionRoot(selector) {
+    if (!selector) return document.body || document.documentElement;
+    try { return document.querySelector(String(selector)); } catch (e) { return null; }
+  }
+
+  function visibleText(root) {
+    var words = [], length = 0, range = document.createRange();
+    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    var node;
+    while ((node = walker.nextNode()) && length < TABLE_TEXT_CAP) {
+      var value = (node.textContent || "").trim();
+      var parent = node.parentElement;
+      if (!value || !parent || parent.closest("script,style,noscript,template") || !shown(parent)) continue;
+      if (parent.closest("input,textarea,select")) continue;
+      range.selectNodeContents(node);
+      var r = range.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0 && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth) {
+        words.push(value);
+        length += value.length;
+      }
+    }
+    return words.join("\n").slice(0, TABLE_TEXT_CAP);
+  }
+
+  // Declarative reads the agent names: never script. A field the outline would
+  // withhold (password, secret-named) reads as null, and the whole answer is
+  // capped at READ_CAP characters.
+  function readProbe(probe) {
+    var sel = probe && probe.sel, prop = String(probe && probe.prop || "text");
+    var found;
+    try { found = document.querySelectorAll(String(sel)); } catch (e) { return null; }
+    if (prop === "count") return found.length;
+    var el = found[0];
+    if (!el) return null;
+    // A secret field reads as null whatever is asked of it.
+    if (inputType(el) === "password" || secretish(el)) return null;
+    if (prop === "text") return (el.innerText || el.textContent || "").trim().slice(0, 200);
+    if (prop === "value") return String(el.value == null ? "" : el.value).slice(0, 200);
+    if (prop === "checked") return !!el.checked;
+    if (prop === "box") {
+      var b = el.getBoundingClientRect();
+      return [Math.round(b.left), Math.round(b.top), Math.round(b.width), Math.round(b.height)];
+    }
+    if (prop.indexOf("attr:") === 0) {
+      var v = el.getAttribute(prop.slice(5));
+      return v === null ? null : String(v).slice(0, 200);
+    }
+    return null;
   }
 
   var api = {
@@ -417,6 +603,124 @@
         out.push([b.left, b.top, b.width, b.height]);
       }
       return rects;
+    },
+
+    // ONE atomic read for one `reflex` decision. `opts`: `region` (a CSS selector
+    // the table and text are limited to), `table` (the indexed element table),
+    // `text`, `read` (declarative probes), `until` (text to look for). Always
+    // carries the change counters and a fingerprint of what it read.
+    observe: function (opts) {
+      opts = opts || {};
+      var tick = installCounters();
+      var root = regionRoot(opts.region);
+      var out = {
+        ok: !!root, url: String(location.href), title: String(document.title),
+        w: innerWidth, h: innerHeight,
+        scroll: { y: Math.round(scrollY), height: document.documentElement.scrollHeight },
+        mut: tick.m, frames: tick.f
+      };
+      if (!root) return out;
+      var semantic = [];
+      if (opts.table) {
+        var rows = [], omitted = 0, found = root.querySelectorAll(TABLE_SELECTOR);
+        for (var i = 0; i < found.length; i++) {
+          var el = found[i], role = tableRole(el);
+          if (!role || disabledEl(el) || !shown(el)) continue;
+          if (role === "gridcell" && el.querySelector("button,[role=\"button\"]")) continue;
+          if (!inViewport(el.getBoundingClientRect())) continue;
+          if (rows.length >= TABLE_CAP) { omitted++; continue; }
+          var row = tableRow(el, role);
+          rows.push(row);
+          semantic.push([row.ref, row.role, row.name, row.value || "", row.checked || "", row.expanded || ""]);
+        }
+        out.elements = rows;
+        if (omitted) out.omitted = omitted;
+      }
+      if (opts.text) {
+        out.text = visibleText(root);
+        semantic.push(out.text);
+      }
+      if (Array.isArray(opts.read)) {
+        var read = {}, size = 0;
+        for (var j = 0; j < opts.read.length && j < 16; j++) {
+          var value = readProbe(opts.read[j]);
+          size += JSON.stringify(value === undefined ? null : value).length;
+          if (size > READ_CAP) { read.truncated = true; break; }
+          read[String(opts.read[j].name || ("r" + j))] = value;
+        }
+        out.read = read;
+        semantic.push(read);
+      }
+      if (opts.until) {
+        out.until = (document.body && (document.body.innerText || "").indexOf(String(opts.until)) !== -1) || false;
+      }
+      out.fp = hash(JSON.stringify([out.url, out.scroll.y, semantic]));
+      return out;
+    },
+
+    // The executor's guard, just before input: the observed element still is what
+    // the answer was about (same guard), is enabled, visible, in the viewport and
+    // not covered at its centre; a typed-into field is editable and not secret; a
+    // select still offers the option. Answers its centre, or why not.
+    check: function (ref, kind, guard, optionIndex) {
+      var el = lookup(ref);
+      if (!el) return { ok: false, code: "gone" };
+      var role = tableRole(el);
+      if (guard && guardOf(el, role) !== guard) return { ok: false, code: "stale" };
+      if (disabledEl(el) || !shown(el)) return { ok: false, code: "disabled" };
+      if (kind === "type" && (secretish(el) || inputType(el) === "password")) return { ok: false, code: "password_field" };
+      if (kind === "type" && !editable(el, role)) return { ok: false, code: "readonly" };
+      var r = el.getBoundingClientRect();
+      if (!inViewport(r)) return { ok: false, code: "offscreen" };
+      var x = r.left + r.width / 2, y = r.top + r.height / 2;
+      var hit = document.elementFromPoint(x, y);
+      if (!hit || !(el === hit || el.contains(hit))) return { ok: false, code: "covered" };
+      if (kind === "select") {
+        var opt = el.options && el.options[optionIndex];
+        if (!opt || opt.disabled) return { ok: false, code: "stale" };
+        return { ok: true, value: opt.value };
+      }
+      return { ok: true, x: x, y: y };
+    },
+
+    // Focus a field and select its whole text, so the next typed text replaces it.
+    selectText: function (ref) {
+      var el = lookup(ref);
+      if (!el) return { ok: false, code: "gone" };
+      if (inputType(el) === "password" || secretish(el)) return { ok: false, code: "password_field" };
+      try { el.focus(); } catch (e) {}
+      try {
+        if (typeof el.select === "function") el.select();
+        else if (el.isContentEditable) {
+          var range = document.createRange();
+          range.selectNodeContents(el);
+          var sel = window.getSelection();
+          sel.removeAllRanges();
+          sel.addRange(range);
+        }
+      } catch (e) {}
+      return { ok: deepActive() === el };
+    },
+
+    // The change counters alone, for the short settle after an action.
+    ticks: function () {
+      var tick = installCounters();
+      return { m: tick.m, f: tick.f };
+    },
+
+    // Whether a combobox's suggestions are on screen (its aria-controls/owns lists,
+    // else any visible role=option): the settle after typing into one waits for this.
+    optionsShown: function (ref) {
+      var el = lookup(ref);
+      var ids = el ? ((el.getAttribute("aria-controls") || el.getAttribute("aria-owns") || "").split(/\s+/).filter(Boolean)) : [];
+      var roots = ids.length ? ids.map(function (id) { return document.getElementById(id); }).filter(Boolean) : [document];
+      for (var i = 0; i < roots.length; i++) {
+        var options = roots[i].querySelectorAll("[role=\"option\"]");
+        for (var j = 0; j < options.length; j++) {
+          if (shown(options[j]) && inViewport(options[j].getBoundingClientRect())) return true;
+        }
+      }
+      return false;
     }
   };
   return api;

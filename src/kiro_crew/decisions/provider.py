@@ -20,7 +20,7 @@ to :data:`_REGISTRY` that a reviewer reads beside the gate, because each entry
 names a destination conversation text can reach.
 
 Imports nothing heavy: every factory imports its implementation at call time, so
-neither ``aiohttp`` nor the session layer lands on a hot caller's import graph,
+neither ``httpx`` nor the session layer lands on a hot caller's import graph,
 and a test that patches an implementation's class attribute is honoured.
 """
 
@@ -113,6 +113,20 @@ ProviderFactory = Callable[[Any, str], DecisionProvider]
 
 
 @dataclass(frozen=True)
+class Capabilities:
+    """What the provider that would answer can do, for a caller that adapts to it.
+
+    A caller reads these instead of a provider's name: one request at a time means
+    no pipelining. (Whether images may be sent is the gate's own check,
+    ``gate.provider_supports``.) Neither grants anything; consent and scopes stay
+    in the gate.
+    """
+
+    max_in_flight: int
+    latency_ms: int
+
+
+@dataclass(frozen=True)
 class ProviderSpec:
     """One registered provider: what it is, where it sends, and how it is built."""
 
@@ -130,6 +144,21 @@ class ProviderSpec:
     #: ``provider.timeout_ms`` as configured.
     timeout_window: tuple[float, float] | None
     factory: ProviderFactory
+    #: How many requests it takes at once without queueing them, as declared by its
+    #: client: a caller that pipelines (the browser's ``reflex`` realtime mode)
+    #: keeps at most this many in flight, and one that needs more falls back to a
+    #: mode that asks one at a time.
+    max_in_flight: int = 1
+    #: Typical answer time in milliseconds, as declared. A caller reads it only to
+    #: pick a pace before it has measured its own; it never bounds a request.
+    latency_ms: int = 1000
+
+    def capabilities(self) -> Capabilities:
+        """What a caller may plan around, read off this spec."""
+        return Capabilities(
+            max_in_flight=self.max_in_flight,
+            latency_ms=self.latency_ms,
+        )
 
     @property
     def local(self) -> bool:
@@ -173,6 +202,9 @@ _REGISTRY: dict[str, ProviderSpec] = {
             supports=QUESTION_KINDS | {KIND_BOX, CAPABILITY_IMAGE},
             timeout_window=None,
             factory=_build_system_one,
+            # One HTTP/2 connection carries many streams; measured p50 ~150 ms.
+            max_in_flight=8,
+            latency_ms=150,
         ),
         ProviderSpec(
             id=PROVIDER_LOCAL,
@@ -184,6 +216,9 @@ _REGISTRY: dict[str, ProviderSpec] = {
             supports=QUESTION_KINDS,
             timeout_window=None,
             factory=_build_system_one,
+            # A CPU model server answers one request at a time.
+            max_in_flight=1,
+            latency_ms=400,
         ),
         ProviderSpec(
             id=PROVIDER_SESSION_LLM,
@@ -195,6 +230,8 @@ _REGISTRY: dict[str, ProviderSpec] = {
             supports=QUESTION_KINDS,
             timeout_window=SESSION_LLM_TIMEOUT_WINDOW,
             factory=_build_session_llm,
+            max_in_flight=1,
+            latency_ms=8000,
         ),
     )
 }

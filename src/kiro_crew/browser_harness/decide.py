@@ -13,8 +13,12 @@ consent stands), three things may happen, each one request through
   outlines (or screenshots, with the ``browser_images`` scope) are compared and the
   answer rides on the op result as a ``verify`` hint. The op's own result is never
   changed.
-* **reflex** -- one request per step of the ``reflex`` op's loop
-  (:func:`reflex_step`); the loop itself lives in ``browser_harness.reflex``.
+* **reflex** -- one request per decision of the ``reflex`` op's loop
+  (:func:`reflex_step`): an operation head, a speculative target head per
+  targeted operation, and the stop Nouls. The loop lives in
+  ``browser_harness.reflex``; it reads the provider's declared capabilities
+  (:func:`capabilities`) and opens its connection early (:func:`warm`) through
+  the gate, never naming a provider.
 * **box** -- a ``click``/``hover`` whose target is not in the outline, on a page
   with a visible ``<canvas>``, may be located on a screenshot. Used only when the
   box's centre is inside a canvas.
@@ -470,23 +474,49 @@ async def _snapshot(ctx: _ops.OpContext) -> tuple[str, str, list[Any]] | None:
     return outline, str(data.get("title", "")), data["nodes"]
 
 
+def capabilities() -> Any:
+    """What the configured provider declares (``decisions.provider.Capabilities``), or ``None``.
+
+    The ``reflex`` loop paces itself by these, never by a provider's name.
+    """
+    from kiro_crew.decisions import gate
+
+    return gate.capabilities()
+
+
+async def warm(session_key: str) -> bool:
+    """Open the provider's connection before a burst of ``reflex`` decisions."""
+    from kiro_crew.decisions import gate
+
+    return await gate.warm(POINT, session_key=session_key)
+
+
 async def reflex_step(
     session_key: str,
     state: dict[str, Any],
-    options: dict[str, str],
+    operations: dict[str, str],
+    targets: dict[str, dict[str, str]],
+    values: list[str],
     risk_labels: list[str],
     *,
+    until: str | None,
     subject: str,
     frame: bytes | None,
     step: int,
+    wait_s: float | None = None,
 ) -> dict[str, Any] | None:
-    """One step of the ``reflex`` loop (``browser_harness.reflex``): one request.
+    """One decision of the ``reflex`` loop (``browser_harness.reflex``): one request.
 
-    A Choice ``next`` over *options* (option name -> label), the ``done``,
-    ``stuck`` and ``off_path`` Nouls, and a ``risk_<i>`` Noul per label in
-    *risk_labels*. With *frame* the masked screenshot goes along under the image
-    scope and the questions name it. Answers ``{pick, done, stuck, off_path,
-    risk: [p per label]}`` or ``None`` for every refusal; the loop decides.
+    A Choice ``operation`` over *operations* (option name -> label); per targeted
+    operation a Choice ``<operation>_target`` over its elements (option -> words),
+    each asked as if that operation were the one picked; a Choice ``value`` over
+    *values* when typing is offered with more than one; the ``done``, ``stuck`` and
+    ``off_path`` Nouls, the caller's own ``until`` Noul, and a ``risk_<i>`` Noul per
+    label in *risk_labels*. With *frame* the masked screenshot goes along under the
+    image scope and the questions name it. Answers ``{operation, picks, value, done,
+    stuck, off_path, until, risk}`` or ``None`` for every refusal; the loop decides.
+    *wait_s* widens the per-call ceiling for a provider that declares itself slow;
+    the gate still clamps it to the provider's own budget.
     """
     from kiro_crew.decisions import gate
     from kiro_crew.decisions.types import Choice, ImageAsset, Noul, Question
@@ -502,11 +532,34 @@ async def reflex_step(
         named = "`screen`"
     questions: list[Question] = [
         Choice(
-            id="next",
-            prompt=f"Which action moves {named} closest to `goal`?",
-            options=list(options),
-            criteria=dict(options),
-        ),
+            id="operation",
+            prompt=f"Which operation, done now, moves {named} closest to `goal`?",
+            options=list(operations),
+            criteria=dict(operations),
+        )
+    ]
+    for op, cands in targets.items():
+        questions.append(
+            Choice(
+                id=f"{op.lower()}_target",
+                prompt=(
+                    f"If the next operation is {op}, which element in `elements` should it "
+                    "act on to move toward `goal`? Another question decides the operation."
+                ),
+                options=list(cands),
+                criteria=dict(cands),
+            )
+        )
+    if "TYPE_TEXT" in targets and len(values) > 1:
+        questions.append(
+            Choice(
+                id="value",
+                prompt="If text is typed next, which of these values belongs in the field?",
+                options=[f"v{i}" for i in range(len(values))],
+                criteria={f"v{i}": v for i, v in enumerate(values)},
+            )
+        )
+    questions += [
         Noul(
             id="done",
             prompt=f"Does {named} show that `goal` has been reached?",
@@ -532,6 +585,8 @@ async def reflex_step(
             false_means="The page shown is where the goal is being done.",
         ),
     ]
+    if until:
+        questions.append(Noul(id="until", prompt=f"Looking at {named}: {until}"))
     for i, label in enumerate(risk_labels):
         questions.append(
             Noul(
@@ -554,15 +609,26 @@ async def reflex_step(
         extra={"kind": "reflex", "step": step},
         scopes=scopes,
         images=images,
-        max_wait_s=IMAGE_WAIT_S if images else TEXT_WAIT_S,
+        max_wait_s=max(wait_s or 0.0, IMAGE_WAIT_S if images else TEXT_WAIT_S),
     )
     if answers is None:
         return None
-    choice = answers.get("next")
+
+    def _pick(qid: str) -> str | None:
+        answer = answers.get(qid)
+        return str(answer.value) if answer is not None else None
+
+    value = values[0] if len(values) == 1 else None
+    picked = _pick("value")
+    if picked and picked.startswith("v") and picked[1:].isdigit() and int(picked[1:]) < len(values):
+        value = values[int(picked[1:])]
     return {
-        "pick": str(choice.value) if choice is not None else None,
+        "operation": _pick("operation"),
+        "picks": {op: _pick(f"{op.lower()}_target") for op in targets},
+        "value": value,
         "done": _noul_value(answers, "done"),
         "stuck": _noul_value(answers, "stuck"),
         "off_path": _noul_value(answers, "off_path"),
+        "until": _noul_value(answers, "until") if until else 0.0,
         "risk": [_noul_value(answers, f"risk_{i}") for i in range(len(risk_labels))],
     }

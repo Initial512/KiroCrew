@@ -1,26 +1,45 @@
 """The ``reflex`` op: a fast observe -> judge -> act loop inside ONE browser op.
 
-The agent names a goal and a CLOSED set of actions (keys to press, refs to click,
-ref pairs to drag, values to type into a ref). The gateway then loops with no LLM
-turn in between: each step reads the page (a grid of cells the agent named by CSS
-selector, or the outline, plus a masked frame when ``see`` is on), asks the
-decision seam ONE request -- a Choice over the actions and the done / stuck /
-off-path Nouls, plus a risk Noul for each action not yet judged -- and runs the
-picked action through the ordinary op handlers. The model only judges; the stop
-rules, the no-op withdrawal, the budget, the terminal checks and every safety gate
-are code here.
+The agent names a goal and a CLOSED set of moves: keys to press, drags, scrolls,
+bound text to type, and the operations whose target the decision model picks from
+the page's own element table (``targets``: click, hover, type, select). The gateway
+then loops with no LLM turn in between. Each decision is ONE request through the
+decision seam (``browser_harness.decide``): an operation head, a speculative target
+head per targeted operation, and the done / stuck / off-path / risk Nouls. The
+model only judges; the stop rules, the risk threshold, the no-op withdrawal, the
+budgets, the terminal checks and every safety gate are code here.
+
+Three modes, one op (``mode``):
+
+* ``step`` -- observe, decide, act, settle, repeat. For forms, menus, grids.
+* ``realtime`` -- a decision is asked every ``tick_ms`` without waiting for the
+  last one, up to ``max_in_flight`` at once (``reflex_realtime``). An answer whose
+  question was asked before an action ran (or, with ``supersede: "change"``, before
+  the page changed) is discarded and counted; an early answer can be held until
+  the moment it was asked about (``lead``). For pages that move on their own.
+* ``virtual_time`` -- the page's script is held while each decision is pending and
+  runs ``step_ms`` between decisions (``reflex_realtime``). For a moving page with a
+  provider too slow, or too narrow, for ``realtime``.
+
+The loop reads what the configured provider declares (concurrency, latency, and
+through the gate's own check whether it takes images) and never its name: no image
+support means structured state only, a provider that takes one request at a time
+turns ``realtime`` into ``virtual_time``. Both are said in the result, never an
+error.
 
 Off is free: without an armed ``browser.step`` point (no provider, no consent,
 governance denied), or when the first decision fails, the op answers
-``not_available`` before it has touched the page, and the agent carries on with
-single ops. No other op's path changes.
+``not_available`` before it has touched the page. No other op's path changes.
 
-Fences are the ones every op has: the route's gateway lock, the per-session tab
-and the claim fence (a Take over cancels the op task); the loop also checks
-``in_control`` before each action. The landed URL after every action goes through
-the navigate gate. A text value must appear verbatim in the goal, a fact or the
-page, so the model never writes text. An action judged hard to undo stops the loop
-and hands it to the person. Every action is one step label on the live card.
+Fences are the ones every op has: the route's gateway lock, the per-session tab and
+the claim fence (a Take over cancels the op task; a held page is always let go).
+The loop also checks ``in_control`` before each action and after each decision. The
+landed URL after every action goes through the navigate gate. Text typed must
+appear verbatim in the goal, a fact or the page, so the model never writes text;
+a target is re-checked (same element, still enabled, visible, not covered) just
+before input; a password field is never typed into and never photographed. An
+action judged hard to undo stops the loop and hands it to the person. Every
+APPLIED action is one step label on the live card; discarded answers are counted.
 """
 
 from __future__ import annotations
@@ -28,6 +47,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import hashlib
+import importlib
 import logging
 import re
 import time
@@ -36,8 +56,12 @@ from typing import Any
 
 from kiro_crew.browser_harness import decide as _decide
 from kiro_crew.browser_harness import ops as _ops
+from kiro_crew.browser_harness import reflex_space as _space
+from kiro_crew.browser_harness.reflex_space import Move, Space
 
 logger = logging.getLogger(__name__)
+
+MODES = ("step", "realtime", "virtual_time")
 
 #: Caps on what one call may ask for. ``max_seconds`` stays inside the route's slow
 #: op budget, so a loop always ends with its own summary, never a route timeout.
@@ -46,19 +70,42 @@ MAX_STEPS = 300
 DEFAULT_STEPS = 60
 MAX_SECONDS = 45.0
 DEFAULT_SECONDS = 20.0
-DEFAULT_SETTLE_MS = 120
 MAX_SETTLE_MS = 1000
-#: Risk questions asked per request; the rest are asked on later steps.
+#: Decision requests per call, whatever the mode: the hard bound on spend.
+DEFAULT_DECISIONS = 600
+MAX_DECISIONS = 2000
+#: ``realtime``: the ask clock and the requests in flight.
+MIN_TICK_MS = 50
+DEFAULT_TICK_MS = 50
+DEFAULT_IN_FLIGHT = 6
+MAX_IN_FLIGHT = 16
+#: ``virtual_time``: how long the page runs between two decisions.
+DEFAULT_STEP_MS = 50
+MIN_STEP_MS = 16
+MAX_STEP_MS = 500
+#: After an action, the next read waits for two animation frames (at most 50 ms),
+#: or after typing into a combobox for its suggestions (at most 200 ms).
+SETTLE_FRAMES = 2
+SETTLE_S = 0.05
+SETTLE_COMBOBOX_S = 0.2
+SETTLE_POLL_S = 0.01
+#: ``lead``: the round-trip quantile a question looks ahead by, over this many.
+LEAD_QUANTILE = 0.9
+LEAD_WINDOW = 20
+#: An explicit WAIT in ``step`` mode.
+WAIT_S = 0.1
+#: Risk questions asked per request; the rest are asked on later decisions.
 RISK_PER_REQUEST = 8
 #: A risk Noul at or above this stops the loop before the action runs.
 RISK_STOP = 0.5
-#: The outline and the grid sent as state are cut to these sizes.
-STATE_OUTLINE_CAP = 6000
+#: The grid sent as state is cut to this size.
 GRID_CELL_CAP = 64
-#: Moves kept in the result.
+#: Moves kept in the result, and declarative reads per call.
 RECENT_MOVES = 20
+MAX_READS = 16
 _FACT_CAP = 500
 _SELECTOR_CAP = 200
+_VALUE_CAP = 200
 
 STOP_DONE = "done"
 STOP_STUCK = "stuck"
@@ -88,8 +135,10 @@ SAFE_KEYS = frozenset(
         "PageDown",
     }
 )
-
-_SAFE_ID = re.compile(r"[^A-Za-z0-9_]+")
+_TARGET_OPS = ("click", "hover", "type", "select")
+_READ_PROP = re.compile(r"\A(text|value|checked|box|count|attr:[A-Za-z_:][-A-Za-z0-9_:.]{0,63})\Z")
+#: Element states that mean a refused input target is stale, not broken.
+_STALE_CODES = frozenset({"gone", "stale", "covered", "offscreen", "disabled"})
 
 
 def not_available(why: str) -> dict[str, Any]:
@@ -100,29 +149,46 @@ def not_available(why: str) -> dict[str, Any]:
 
 
 @dataclass
-class Action:
-    """One closed-set action: its option name, its label, and the op that runs it."""
-
-    id: str
-    op: str
-    args: dict[str, Any]
-    label: str
-    risky: float | None = None
-
-
-@dataclass
 class Plan:
     goal: str
     facts: list[str]
-    actions: list[Action]
+    mode: str
+    moves: list[Move]
+    targets: tuple[str, ...]
+    allowed_refs: frozenset[str] | None
+    values: list[str]
+    region: str | None
+    read: list[dict[str, str]]
+    text: bool
     grid: str | None
     grid_items: str | None
     see: bool
     until_text: str | None
     until_url: str | None
+    until_noul: str | None
     max_steps: int
     max_seconds: float
-    settle_s: float
+    max_decisions: int
+    settle_s: float | None
+    tick_s: float
+    max_in_flight: int
+    lead: bool
+    supersede: str
+    step_s: float
+    wait: bool
+
+
+@dataclass
+class Seen:
+    """One observation: what the model reads, and what the loop compares."""
+
+    state: dict[str, Any]
+    fp: str
+    frame: bytes | None
+    rows: list[dict[str, Any]] | None
+    mut: int
+    url: str
+    until_hit: bool
 
 
 def _text(value: Any, cap: int) -> str | None:
@@ -142,13 +208,24 @@ def _int(value: Any, default: int, low: int, high: int) -> int:
     return default if number is None else max(low, min(high, int(number)))
 
 
-def _option_id(raw: str, taken: set[str]) -> str:
-    base = _SAFE_ID.sub("_", raw).strip("_")[:48] or "action"
-    name, n = base, 2
-    while name in taken:
-        name, n = f"{base}_{n}", n + 1
-    taken.add(name)
-    return name
+def _point(raw: str) -> dict[str, Any] | None:
+    """A drag end as a ref (``eN``) or a pixel pair (``x,y``), as the drag op takes it."""
+    raw = raw.strip()
+    if _ops._is_ref(raw):
+        return {"ref": raw}
+    x, sep, y = raw.partition(",")
+    nx, ny = _number_text(x), _number_text(y)
+    if sep and nx is not None and ny is not None and nx >= 0 and ny >= 0:
+        return {"x": nx, "y": ny}
+    return None
+
+
+def _number_text(raw: str) -> float | None:
+    try:
+        value = float(raw.strip())
+    except ValueError:
+        return None
+    return value if value == value and abs(value) != float("inf") else None
 
 
 def parse(args: dict[str, Any]) -> Plan | dict[str, Any]:
@@ -156,83 +233,148 @@ def parse(args: dict[str, Any]) -> Plan | dict[str, Any]:
     goal = _text(args.get("goal"), 500)
     if goal is None:
         return _ops.refusal("bad_goal", "reflex needs a `goal` string")
-    taken: set[str] = set()
-    actions: list[Action] = []
+    mode = args.get("mode", "step")
+    if mode not in MODES:
+        return _ops.refusal("bad_mode", f"`mode` is one of {', '.join(MODES)}")
+    moves: list[Move] = []
     for key in _strings(args.get("keys")):
         if key == "Space":
             key = " "
         if key not in _ops._NAMED_KEYS and len(key) != 1:
             return _ops.refusal("bad_key", f"unknown key in `keys`: {key!r}")
         name = "Space" if key == " " else key
-        actions.append(
-            Action(
-                _option_id(f"press_{name}", taken),
-                "press_key",
-                {"key": key},
+        moves.append(
+            Move(
+                f"press {name}",
+                "key",
                 f"Press {name}",
+                {"key": key},
                 risky=0.0 if key in SAFE_KEYS else None,
             )
         )
-    for ref in _strings(args.get("click")):
-        if not _ops._is_ref(ref):
-            return _ops.refusal("bad_ref", f"not a valid ref in `click`: {ref!r}")
-        actions.append(
-            Action(_option_id(f"click_{ref}", taken), "click", {"ref": ref}, f"Click {ref}")
-        )
-    for pair in _strings(args.get("drag")):
+    for n, pair in enumerate(_strings(args.get("drag")), 1):
         src, _, dst = pair.partition(">")
-        src, dst = src.strip(), dst.strip()
-        if not (_ops._is_ref(src) and _ops._is_ref(dst)):
-            return _ops.refusal("bad_ref", f"`drag` entries are 'eA>eB', got {pair!r}")
-        actions.append(
-            Action(
-                _option_id(f"drag_{src}_to_{dst}", taken),
-                "drag",
-                {"ref": src, "to_ref": dst},
-                f"Drag {src} to {dst}",
-            )
-        )
+        start, end = _point(src), _point(dst)
+        if start is None or end is None:
+            return _ops.refusal("bad_ref", f"`drag` entries are 'eA>eB' or 'x,y>x,y', got {pair!r}")
+        drag_args = {**start, **{f"to_{k}": v for k, v in end.items()}}
+        moves.append(Move(f"drag {n}", "drag", f"Drag {src.strip()} to {dst.strip()}", drag_args))
+    if args.get("scroll") is True:
+        moves.append(Move("scroll up", "scroll", "Scroll up", {"dy": -1}, risky=0.0))
+        moves.append(Move("scroll down", "scroll", "Scroll down", {"dy": 1}, risky=0.0))
     for entry in _strings(args.get("type")):
         ref, sep, value = entry.partition("=")
         ref = ref.strip()
         if not sep or not _ops._is_ref(ref) or not value:
             return _ops.refusal("bad_value", f"`type` entries are 'eN=value', got {entry[:60]!r}")
-        actions.append(
-            Action(
-                _option_id(f"type_{ref}", taken),
-                "type",
-                {"ref": ref, "text": value},
-                f"Type into {ref}",
-            )
+        moves.append(
+            Move(f"type {ref}", "type", f"Type into {ref}", {"ref": ref, "text": value}, risky=0.0)
         )
-    if not actions:
-        return _ops.refusal("no_actions", "reflex needs at least one of: keys, click, drag, type")
-    if len(actions) > MAX_ACTIONS:
+    targets = tuple(t for t in _TARGET_OPS if t in _strings(args.get("targets")))
+    unknown = set(_strings(args.get("targets"))) - set(_TARGET_OPS)
+    if unknown:
+        return _ops.refusal("bad_targets", f"`targets` takes {', '.join(_TARGET_OPS)}")
+    refs = _strings(args.get("click"))
+    for ref in refs:
+        if not _ops._is_ref(ref):
+            return _ops.refusal("bad_ref", f"not a valid ref in `click`: {ref!r}")
+    if refs and "click" not in targets:
+        targets = ("click", *targets)
+    values = [v[:_VALUE_CAP] for v in _strings(args.get("values"))][:20]
+    if "type" in targets and not values:
+        return _ops.refusal("bad_value", "`targets` with type needs `values` to type")
+    reads = _reads(args.get("read"))
+    if isinstance(reads, dict):
+        return reads
+    if not moves and not targets and mode == "step":
+        return _ops.refusal(
+            "no_actions", "reflex needs at least one of: keys, click, drag, scroll, type, targets"
+        )
+    if len(moves) > MAX_ACTIONS:
         return _ops.refusal("too_many_actions", f"reflex takes at most {MAX_ACTIONS} actions")
     seconds = _ops._number(args.get("max_seconds"))
+    grid = _text(args.get("grid"), _SELECTOR_CAP)
+    settle = _ops._number(args.get("settle_ms"))
+    supersede = args.get("supersede", "action")
+    if supersede not in ("action", "change"):
+        return _ops.refusal("bad_supersede", "`supersede` is 'action' or 'change'")
+    text = args.get("text")
     return Plan(
         goal=goal,
         facts=[f[:_FACT_CAP] for f in _strings(args.get("facts"))][:20],
-        actions=actions,
-        grid=_text(args.get("grid"), _SELECTOR_CAP),
+        mode=mode,
+        moves=moves,
+        targets=targets,
+        allowed_refs=frozenset(refs) if refs else None,
+        values=values,
+        region=_text(args.get("region"), _SELECTOR_CAP),
+        read=reads,
+        text=text if isinstance(text, bool) else not (grid or reads),
+        grid=grid,
         grid_items=_text(args.get("grid_items"), _SELECTOR_CAP),
         see=args.get("see") is True,
         until_text=_text(args.get("until_text"), 200),
         until_url=_text(args.get("until_url"), 500),
+        until_noul=_text(args.get("until_noul"), 300),
         max_steps=_int(args.get("max_steps"), DEFAULT_STEPS, 1, MAX_STEPS),
         max_seconds=DEFAULT_SECONDS if seconds is None else max(1.0, min(MAX_SECONDS, seconds)),
-        settle_s=_int(args.get("settle_ms"), DEFAULT_SETTLE_MS, 0, MAX_SETTLE_MS) / 1000.0,
+        max_decisions=_int(args.get("max_decisions"), DEFAULT_DECISIONS, 1, MAX_DECISIONS),
+        settle_s=None if settle is None else max(0.0, min(MAX_SETTLE_MS, settle)) / 1000.0,
+        tick_s=_int(args.get("tick_ms"), DEFAULT_TICK_MS, MIN_TICK_MS, 5000) / 1000.0,
+        max_in_flight=_int(args.get("max_in_flight"), DEFAULT_IN_FLIGHT, 1, MAX_IN_FLIGHT),
+        lead=args.get("lead") is True,
+        supersede=supersede,
+        step_s=_int(args.get("step_ms"), DEFAULT_STEP_MS, MIN_STEP_MS, MAX_STEP_MS) / 1000.0,
+        wait=args.get("wait") is True or mode != "step",
     )
 
 
+_READ_NAME = re.compile(r"\A([A-Za-z_][A-Za-z0-9_]{0,39})=(.+)\Z", re.DOTALL)
+
+
+def _read_entry(item: Any) -> dict[str, Any] | None:
+    """``'name=css@prop'`` (the tool's flat form) or ``{name?, sel, prop?}``."""
+    if isinstance(item, dict):
+        return item
+    if not isinstance(item, str):
+        return None
+    name, body = None, item.strip()
+    named = _READ_NAME.match(body)
+    if named:
+        name, body = named.group(1), named.group(2)
+    sel, at, prop = body.rpartition("@")
+    if not at:
+        sel, prop = body, "text"
+    return {"name": name, "sel": sel, "prop": prop}
+
+
+def _reads(raw: Any) -> list[dict[str, str]] | dict[str, Any]:
+    """Declarative page reads: a selector and what to read off it, never script."""
+    if raw is None:
+        return []
+    if not isinstance(raw, list) or len(raw) > MAX_READS:
+        return _ops.refusal("bad_read", f"`read` is a list of at most {MAX_READS} entries")
+    out = []
+    for i, entry in enumerate(raw):
+        item = _read_entry(entry) or {}
+        sel = _text(item.get("sel"), _SELECTOR_CAP)
+        prop = item.get("prop", "text")
+        if sel is None or not isinstance(prop, str) or not _READ_PROP.match(prop):
+            return _ops.refusal(
+                "bad_read", "each `read` entry is 'name=css@text|value|checked|box|count|attr:NAME'"
+            )
+        name = _text(item.get("name"), 40) or f"r{i}"
+        out.append({"name": name, "sel": sel, "prop": prop})
+    return out
+
+
 def values_sourced(plan: Plan, page_text: str) -> str | None:
-    """The first ``type`` value found in neither the goal, a fact nor the page, or ``None``."""
+    """The first value to type found in neither the goal, a fact nor the page, or ``None``."""
     sources = [plan.goal, *plan.facts, page_text]
-    for action in plan.actions:
-        if action.op == "type":
-            value = str(action.args["text"])
-            if not any(value in source for source in sources):
-                return value
+    wanted = [str(m.args["text"]) for m in plan.moves if m.kind == "type"] + plan.values
+    for value in wanted:
+        if not any(value in source for source in sources):
+            return value
     return None
 
 
@@ -289,29 +431,65 @@ async def _cells(ctx: _ops.OpContext, selector: str) -> list[dict[str, Any]] | N
     return [c for c in found["cells"] if isinstance(c, dict)]
 
 
-class _Loop:
-    def __init__(self, ctx: _ops.OpContext, plan: Plan, session_key: str, image: bool) -> None:
+class Loop:
+    """The state one ``reflex`` call carries, and the parts every mode shares."""
+
+    def __init__(
+        self, ctx: _ops.OpContext, plan: Plan, session_key: str, image: bool, caps: Any
+    ) -> None:
         self.ctx = ctx
         self.plan = plan
         self.session_key = session_key
         self.image = image
+        self.caps = caps
         self.moves: list[str] = []
         self.counts: dict[str, int] = {}
         self.decisions = 0
+        self.answered = 0
+        self.failed = 0
         self.decision_ms = 0
+        self.rtts: list[float] = []
+        self.known: dict[str, Move] = {}
+        self.pending_risk: list[Move] = []
         self.dropped: set[str] = set()
         self.step_no = 0
+        self.notes: list[str] = []
+        self.extra: dict[str, Any] = {}
         self.started = time.monotonic()
+        latency = getattr(caps, "latency_ms", 0) or 0
+        #: A provider that says it is slow gets a longer per-call ceiling.
+        self.wait_s = latency * 3 / 1000.0 if latency else None
 
     # -- observation ------------------------------------------------------------
 
-    async def observe(self) -> tuple[dict[str, Any], str, bytes | None] | None:
-        """``(state, fingerprint, frame)``: what the model reads, what no-op detection
-        compares, and the masked frame when ``see`` is on and one may be sent now."""
+    async def observe(self, *, frames: bool = True) -> Seen | None:
         plan = self.plan
+        opts: dict[str, Any] = {"table": bool(plan.targets), "text": plan.text}
+        if plan.region:
+            opts["region"] = plan.region
+        if plan.read:
+            opts["read"] = plan.read
+        if plan.until_text:
+            opts["until"] = plan.until_text
+        try:
+            seen = await _ops._page(self.ctx, "observe", opts)
+        except Exception:  # noqa: BLE001 - mid-navigation; the caller judges a None
+            logger.debug("reflex: observe failed", exc_info=True)
+            return None
+        if not isinstance(seen, dict) or not seen.get("ok"):
+            return None
         state: dict[str, Any] = {"goal": plan.goal}
         if plan.facts:
             state["facts"] = plan.facts
+        state["page_title"] = str(seen.get("title", ""))
+        rows = seen.get("elements") if isinstance(seen.get("elements"), list) else None
+        if rows is not None:
+            state["elements"] = _space.element_state(rows)
+        if plan.text:
+            state["text"] = str(seen.get("text", ""))
+        if plan.read:
+            state["read"] = seen.get("read") or {}
+        fp = str(seen.get("fp", ""))
         if plan.grid:
             slots = await _cells(self.ctx, plan.grid)
             items = await _cells(self.ctx, plan.grid_items) if plan.grid_items else None
@@ -319,73 +497,166 @@ class _Loop:
                 return None
             grid = arrange(slots, items)
             state["grid"] = grid
-            fingerprint = repr(grid)
-        else:
-            snap = await _decide._snapshot(self.ctx)
-            if snap is None:
-                return None
-            outline, title, _nodes = snap
-            state["page_title"] = title
-            state["page"] = outline[:STATE_OUTLINE_CAP]
-            fingerprint = outline
+            fp += repr(grid)
         frame = None
-        if self.image:
+        if self.image and frames:
             # The masked-frame rules of every screenshot the seam sends: none while a
             # password box is on the page or the person holds the browser. On a
-            # canvas the outline never changes, so the frame is the fingerprint too.
+            # canvas the DOM never changes, so the frame is the fingerprint too.
             frame = await _decide._capture(self.ctx)
             if frame is not None:
-                fingerprint += hashlib.sha256(frame).hexdigest()
-        return state, fingerprint, frame
+                fp += hashlib.sha256(frame).hexdigest()
+        mut = seen.get("mut")
+        return Seen(
+            state=state,
+            fp=fp,
+            frame=frame,
+            rows=rows,
+            mut=mut if isinstance(mut, int) else 0,
+            url=str(seen.get("url", "")),
+            until_hit=bool(seen.get("until"))
+            or bool(plan.until_url and plan.until_url in str(seen.get("url", ""))),
+        )
 
-    # -- one decision -----------------------------------------------------------
+    # -- the offer and one decision ---------------------------------------------
 
-    async def decide(
-        self, state: dict[str, Any], live: list[Action], frame: bytes | None
+    def offer(self, move: Move) -> bool:
+        return move.key not in self.dropped and (move.risky or 0.0) < RISK_STOP
+
+    def space(self, seen: Seen, *, wait: bool) -> Space:
+        plan = self.plan
+        return _space.build(
+            plan.moves,
+            plan.targets,
+            plan.allowed_refs,
+            seen.rows,
+            plan.values,
+            self.known,
+            wait=wait,
+            offer=self.offer,
+        )
+
+    def risk_batch(self, space: Space) -> list[Move]:
+        """Moves to judge with this request: picked-but-unjudged first, then the rest."""
+        batch: list[Move] = []
+        offered = [m for cands in space.targets.values() for m in cands.values()]
+        for move in [*self.pending_risk, *space.moves.values(), *offered]:
+            if move.risky is None and move not in batch:
+                batch.append(move)
+            if len(batch) >= RISK_PER_REQUEST:
+                break
+        return batch
+
+    def rtt_ms(self, share: float) -> int:
+        """The *share* quantile of the recent round trips; the declared latency before any."""
+        recent = sorted(self.rtts[-LEAD_WINDOW:])
+        if not recent:
+            return int(getattr(self.caps, "latency_ms", 0) or 0)
+        return int(recent[min(len(recent) - 1, int(len(recent) * share))] * 1000)
+
+    def lead_ms(self) -> int:
+        """How far ahead a pipelined question looks: the recent p90 round trip, so
+        nearly every answer is early and is held to the moment it was about, rather
+        than half of them landing late."""
+        return self.rtt_ms(LEAD_QUANTILE)
+
+    async def request(
+        self, seen: Seen, space: Space, risk: list[Move], *, lead_ms: int | None = None
     ) -> dict[str, Any] | None:
-        unjudged = [a for a in live if a.risky is None][:RISK_PER_REQUEST]
-        # Only an action with a verdict, or one judged in this very request, may be
-        # picked: the rest wait for a later request and never run unjudged.
-        offered = [a for a in live if a.risky is not None or a in unjudged]
+        state = seen.state
+        if lead_ms is not None:
+            # The state is this many ms old when the answer lands; the model may
+            # project it forward. Code projects nothing.
+            state = {**state, "lead_ms": lead_ms}
+        self.decisions += 1
+        # The words each risk question asks about, as this request sends them.
+        asked = [m.label for m in risk]
         started = time.monotonic()
         verdict = await _decide.reflex_step(
             self.session_key,
             state,
-            {a.id: a.label for a in offered},
-            [a.label for a in unjudged],
-            subject="grid" if self.plan.grid else "page",
-            frame=frame,
-            step=self.step_no,
+            space.operations,
+            space.target_criteria(),
+            space.values,
+            asked,
+            until=self.plan.until_noul,
+            subject="page" if not self.plan.grid else "grid",
+            frame=seen.frame,
+            step=self.decisions,
+            wait_s=self.wait_s,
         )
-        self.decision_ms += int((time.monotonic() - started) * 1000)
+        elapsed = time.monotonic() - started
         if verdict is None:
+            self.failed += 1
             return None
-        self.decisions += 1
-        for action, risk in zip(unjudged, verdict["risk"]):
-            action.risky = risk
+        self.answered += 1
+        self.decision_ms += int(elapsed * 1000)
+        self.rtts.append(elapsed)
+        for move, label, value in zip(risk, asked, verdict["risk"]):
+            if move.label != label:
+                # The element reads differently now: this verdict was about its old
+                # words, so it waits for a question about the new ones.
+                continue
+            # Two requests in flight may judge the same move: the more cautious
+            # answer stands, so the order the answers land in cannot lower it.
+            move.risky = value if move.risky is None else max(move.risky, value)
+            if move in self.pending_risk:
+                self.pending_risk.remove(move)
         return verdict
+
+    def stop_for(self, verdict: dict[str, Any]) -> str | None:
+        if verdict["done"] > _decide.YES:
+            return STOP_DONE
+        if verdict["stuck"] > _decide.YES:
+            return STOP_STUCK
+        if verdict["off_path"] > _decide.YES:
+            return STOP_OFF_PATH
+        if verdict["until"] > _decide.YES:
+            return STOP_UNTIL
+        return None
 
     # -- acting -----------------------------------------------------------------
 
-    async def act(self, action: Action) -> dict[str, Any]:
+    async def act(self, move: Move, value: str | None, guard: str | None = None) -> dict[str, Any]:
+        """Run *move* through the executor's guards and the ordinary op handlers.
+
+        *guard* is the target's guard as the request that chose it saw it
+        (``Space.guards``); the move's own is the latest any request saw.
+        """
+        ctx = self.ctx
+        if move.kind == "wait":
+            return {"ok": True}
         self.step_no += 1
         rate = self.rate()
         prefix = f"Reflex {self.step_no}: "
         suffix = f" ({rate:.1f}/s)" if rate else ""
-        outer = self.ctx
 
         def _step(label: str) -> Any:
-            return outer.step(f"{prefix}{label}{suffix}")
+            return ctx.step(f"{prefix}{label}{suffix}")
 
-        inner = dataclasses.replace(outer, step=_step, decisions=None)
-        handler = _ops._HANDLERS[action.op]
-        mark = outer.mark()
-        result = await handler(inner, dict(action.args))
+        inner = dataclasses.replace(ctx, step=_step, decisions=None)
+        handlers = _ops._HANDLERS
+        args = dict(move.args)
+        mark = ctx.mark()
+        if move.kind == "key":
+            op, result = "press_key", await handlers["press_key"](inner, args)
+        elif move.kind == "drag":
+            op, result = "drag", await handlers["drag"](inner, args)
+        elif move.kind == "scroll":
+            info = await ctx.helper("page_info")
+            height = float(info.get("h", 800)) if isinstance(info, dict) else 800.0
+            args = {"dy": args["dy"] * round(height * 0.8)}
+            op, result = "scroll", await handlers["scroll"](inner, args)
+        else:
+            op = {"select": "select_option"}.get(move.kind, move.kind)
+            result = await self._targeted(inner, move, value, guard)
         # Each action is its own step on the turn replay's timeline.
-        outer.record(action.op, dict(action.args), result, mark)
+        ctx.record(op, args, result, mark)
         if result.get("ok"):
-            self.moves.append(action.label)
-            self.counts[action.label] = self.counts.get(action.label, 0) + 1
+            self.moves.append(move.label)
+            self.counts[move.label] = self.counts.get(move.label, 0) + 1
+        else:
+            self.step_no -= 1
         self.report(None)
         return result
 
@@ -404,48 +675,106 @@ class _Loop:
             }
         )
 
+    async def _targeted(
+        self, inner: _ops.OpContext, move: Move, value: str | None, guard: str | None
+    ) -> dict[str, Any]:
+        ref = move.args["ref"]
+        kind = "click" if move.kind == "hover" else move.kind
+        seen = guard if guard is not None else move.guard
+        found = await _ops._page(
+            self.ctx, "check", ref, kind, seen or None, move.args.get("index", -1)
+        )
+        if not isinstance(found, dict) or not found.get("ok"):
+            code = found.get("code") if isinstance(found, dict) else "gone"
+            if code == "password_field":
+                return _ops._password_refusal(ref)
+            return _ops.refusal(str(code or "gone"), f"{ref} changed before the answer was used")
+        if move.kind in ("click", "hover"):
+            x, y = float(found["x"]), float(found["y"])
+            await _ops._step(inner, move.label)
+            if move.kind == "click":
+                await self.ctx.helper("click", x=x, y=y, button="left", clicks=1)
+            else:
+                await self.ctx.helper("mouse_move", x=x, y=y)
+            return {"ok": True, "x": x, "y": y}
+        if move.kind == "select":
+            return await _ops._HANDLERS["select_option"](
+                inner, {"ref": ref, "values": [str(found.get("value", ""))]}
+            )
+        text = move.args.get("text", value)
+        if not isinstance(text, str) or not text:
+            return _ops.refusal("bad_value", "no bound value to type")
+        selected = await _ops._page(self.ctx, "selectText", ref)
+        if isinstance(selected, dict) and selected.get("code") == "password_field":
+            return _ops._password_refusal(ref)
+        return await _ops._HANDLERS["type"](inner, {"ref": ref, "text": text})
+
+    async def settle(self, move: Move, rows: list[dict[str, Any]] | None) -> None:
+        """The short wait after an action, before the next read."""
+        if self.plan.settle_s is not None:
+            if self.plan.settle_s:
+                await self.ctx.sleep(self.plan.settle_s)
+            return
+        if move.kind == "wait":
+            await self.ctx.sleep(WAIT_S)
+            return
+        combobox = move.kind == "type" and any(
+            r.get("ref") == move.args.get("ref") and r.get("role") == "combobox" for r in rows or []
+        )
+        deadline = time.monotonic() + (SETTLE_COMBOBOX_S if combobox else SETTLE_S)
+        first = await _ops._page(self.ctx, "ticks")
+        start = first.get("f", 0) if isinstance(first, dict) else 0
+        while time.monotonic() < deadline:
+            if combobox:
+                if await _ops._page(self.ctx, "optionsShown", move.args["ref"]):
+                    return
+            else:
+                now = await _ops._page(self.ctx, "ticks")
+                if isinstance(now, dict) and now.get("f", 0) >= start + SETTLE_FRAMES:
+                    return
+            await self.ctx.sleep(SETTLE_POLL_S)
+
     def rate(self) -> float:
         elapsed = time.monotonic() - self.started
         return len(self.moves) / elapsed if elapsed > 0 and self.moves else 0.0
 
     async def landed_refusal(self) -> dict[str, Any] | None:
-        try:
-            state = await _ops._page(self.ctx, "state")
-        except Exception:  # noqa: BLE001 - mid-navigation; the next read judges it
-            return None
-        href = str(state.get("href", "")) if isinstance(state, dict) else ""
-        if href and href != "about:blank":
-            return await _ops._refuse_committed_url(self.ctx, href)
-        return None
+        return await _landed_refusal(self.ctx)
 
-    async def until(self) -> bool:
+    def over_budget(self) -> bool:
+        return self.decisions >= self.plan.max_decisions or self.out_of_time_or_steps()
+
+    def out_of_time_or_steps(self) -> bool:
+        """Whether an answer already in hand may still be acted on."""
         plan = self.plan
-        if plan.until_text and await _ops._page(self.ctx, "textPresent", plan.until_text):
-            return True
-        if plan.until_url:
-            state = await _ops._page(self.ctx, "state")
-            if isinstance(state, dict) and plan.until_url in str(state.get("href", "")):
-                return True
-        return False
+        return self.step_no >= plan.max_steps or time.monotonic() >= self.started + plan.max_seconds
 
     def summary(self, stop: str, state: dict[str, Any] | None, **more: Any) -> dict[str, Any]:
         elapsed = time.monotonic() - self.started
         out: dict[str, Any] = {
             "ok": True,
             "stop": stop,
+            "mode": self.plan.mode,
             "steps": self.step_no,
             "moves": len(self.moves),
             "recent": self.moves[-RECENT_MOVES:],
             "actions": dict(sorted(self.counts.items())),
             "decisions": self.decisions,
-            "decision_ms_avg": round(self.decision_ms / self.decisions) if self.decisions else 0,
+            "decision_ms_avg": round(self.decision_ms / self.answered) if self.answered else 0,
             "seconds": round(elapsed, 2),
             "rate": round(len(self.moves) / elapsed, 2) if elapsed > 0 else 0.0,
             "see": self.image,
         }
+        if self.failed:
+            out["failed"] = self.failed
+        out.update(self.extra)
+        if self.notes:
+            out["notes"] = list(self.notes)
         if state is not None:
             out["state"] = (
-                state.get("grid") if "grid" in state else str(state.get("page", ""))[:1500]
+                state.get("grid")
+                if "grid" in state
+                else state.get("read") if "read" in state else str(state.get("text", ""))[:1500]
             )
         out.update(more)
         return out
@@ -458,15 +787,12 @@ class _Loop:
         self.report(stop)
         return result
 
-    # -- the loop ---------------------------------------------------------------
+    # -- step mode ----------------------------------------------------------------
 
-    async def run(self) -> dict[str, Any]:
-        plan = self.plan
-        deadline = self.started + plan.max_seconds
+    async def run_step(self) -> dict[str, Any]:
         last_fp: str | None = None
         last_pick: str | None = None
         state: dict[str, Any] | None = None
-        self.report(None)
         while True:
             if await _ops._in_control(self.ctx):
                 return await self.finish(STOP_USER, state)
@@ -479,61 +805,77 @@ class _Loop:
             seen = await self.observe()
             if seen is None:
                 if self.decisions == 0:
-                    self.report(STOP_DECISION)
                     return not_available("the page state could not be read")
                 return await self.finish(STOP_DECISION, state, why="page state unreadable")
-            state, fp, frame = seen
+            state = seen.state
             # No-op withdrawal: an action that left the state as it was is not
             # offered again until the state changes.
             if last_fp is not None:
-                if fp == last_fp and last_pick is not None:
+                if seen.fp == last_fp and last_pick is not None:
                     self.dropped.add(last_pick)
-                elif fp != last_fp:
+                elif seen.fp != last_fp:
                     self.dropped.clear()
-            last_fp = fp
-            if (plan.until_text or plan.until_url) and await self.until():
+            last_fp, last_pick = seen.fp, None
+            if seen.until_hit:
                 return await self.finish(STOP_UNTIL, state)
-            if self.step_no >= plan.max_steps or time.monotonic() >= deadline:
+            if self.over_budget():
                 return await self.finish(STOP_BUDGET, state)
-            live = [
-                a for a in plan.actions if a.id not in self.dropped and (a.risky or 0.0) < RISK_STOP
-            ]
-            if not live:
-                risky = [a.label for a in plan.actions if (a.risky or 0.0) >= RISK_STOP]
-                if risky and len(risky) == len(plan.actions):
-                    return await self.finish(STOP_RISK, state, handoff=_handoff(risky[0]))
-                return await self.finish(STOP_NO_ACTIONS, state)
-            verdict = await self.decide(state, live, frame)
+            space = self.space(seen, wait=self.plan.wait)
+            if not space.operations:
+                return await self._nothing_left(state)
+            verdict = await self.request(seen, space, self.risk_batch(space))
             if verdict is None:
-                if self.decisions == 0:
-                    self.report(STOP_DECISION)
+                if self.answered == 0:
                     return not_available("no decision model answered")
                 return await self.finish(STOP_DECISION, state)
-            if verdict["done"] > _decide.YES:
-                return await self.finish(STOP_DONE, state)
-            if verdict["stuck"] > _decide.YES:
-                return await self.finish(STOP_STUCK, state)
-            if verdict["off_path"] > _decide.YES:
-                return await self.finish(STOP_OFF_PATH, state)
-            action = next(
-                (a for a in live if a.id == verdict["pick"] and a.risky is not None), None
-            )
-            if action is None:
+            stop = self.stop_for(verdict)
+            if stop is not None:
+                return await self.finish(stop, state)
+            move = space.resolve(verdict["operation"], verdict["picks"])
+            if move is None:
                 return await self.finish(STOP_DECISION, state, why="no action picked")
-            if (action.risky or 0.0) >= RISK_STOP:
-                return await self.finish(STOP_RISK, state, handoff=_handoff(action.label))
+            if move.risky is None:
+                # Judged before it may run: the next request carries its risk question.
+                self.pending_risk.append(move)
+                continue
+            if move.risky >= RISK_STOP:
+                return await self.finish(STOP_RISK, state, handoff=_handoff(move.label))
+            if self.out_of_time_or_steps():
+                # The answer came back past the deadline: it is not acted on.
+                return await self.finish(STOP_BUDGET, state)
             if await _ops._in_control(self.ctx):
                 return await self.finish(STOP_USER, state)
-            result = await self.act(action)
-            last_pick = action.id
+            result = await self.act(move, verdict["value"], space.guards.get(move.key))
             if not result.get("ok"):
                 if result.get("code") == "password_field":
                     return await self.finish(STOP_RISK, state, handoff=result["error"])
-                # A stale ref or an unfocusable field: withdraw it and go on.
-                self.dropped.add(action.id)
-                last_pick = None
-            if plan.settle_s:
-                await self.ctx.sleep(plan.settle_s)
+                if result.get("code") not in _STALE_CODES:
+                    # A move that failed for good (an unfocusable field, a refused
+                    # key): withdraw it. A target that was only stale (moved,
+                    # covered, re-rendered) stays on offer; the decision and time
+                    # budgets bound a page that never settles.
+                    self.dropped.add(move.key)
+                continue
+            last_pick = move.key
+            await self.settle(move, seen.rows)
+
+    async def _nothing_left(self, state: dict[str, Any] | None) -> dict[str, Any]:
+        risky = [m.label for m in self.known.values() if (m.risky or 0.0) >= RISK_STOP]
+        if risky and not any(self.offer(m) for m in self.plan.moves) and not self.plan.targets:
+            return await self.finish(STOP_RISK, state, handoff=_handoff(risky[0]))
+        return await self.finish(STOP_NO_ACTIONS, state)
+
+
+async def _landed_refusal(ctx: _ops.OpContext) -> dict[str, Any] | None:
+    """The URL gate on the page the tab is on now, before it is read or sent."""
+    try:
+        state = await _ops._page(ctx, "state")
+    except Exception:  # noqa: BLE001 - mid-navigation; the next read judges it
+        return None
+    href = str(state.get("href", "")) if isinstance(state, dict) else ""
+    if href and href != "about:blank":
+        return await _ops._refuse_committed_url(ctx, href)
+    return None
 
 
 def _handoff(label: str) -> str:
@@ -541,6 +883,16 @@ def _handoff(label: str) -> str:
         f"'{label}' looks hard to undo, so the loop stopped before it. Ask the user to "
         "take over the browser or to confirm, then do that step with a single op."
     )
+
+
+def _pace(plan: Plan, caps: Any) -> tuple[str, str | None]:
+    """The mode this provider can carry for *plan*, and why it changed, if it did."""
+    if plan.mode != "realtime":
+        return plan.mode, None
+    width = int(getattr(caps, "max_in_flight", 1) or 1)
+    if width < 2:
+        return "virtual_time", "the decision provider takes one request at a time"
+    return "realtime", None
 
 
 async def run(ctx: _ops.OpContext, args: dict[str, Any]) -> dict[str, Any]:
@@ -560,15 +912,43 @@ async def run(ctx: _ops.OpContext, args: dict[str, Any]) -> dict[str, Any]:
         return not_available("browser help did not answer")
     if not armed.text:
         return not_available("browser help is off")
-    if any(a.op == "type" for a in plan.actions):
-        snap = await _decide._snapshot(ctx)
-        page_text = snap[0] if snap is not None else ""
-        missing = values_sourced(plan, page_text)
+    if any(m.kind == "type" for m in plan.moves) or plan.values:
+        # The page is read below to source the values: the URL gate comes first.
+        refused = await _landed_refusal(ctx)
+        if refused is not None:
+            return refused
+        try:
+            seen = await _ops._page(ctx, "observe", {"table": True, "text": True})
+        except Exception:  # noqa: BLE001 - unreadable page: nothing can be pointed to
+            seen = None
+        page = ""
+        if isinstance(seen, dict):
+            names = [
+                f"{r.get('name', '')} {r.get('value', '')}" for r in seen.get("elements") or []
+            ]
+            page = "\n".join([str(seen.get("text", "")), *names])
+        missing = values_sourced(plan, page)
         if missing is not None:
             return _ops.refusal(
                 "bad_value",
                 f"the value {missing[:60]!r} is not in the goal, the facts or the page; "
                 "reflex only types values it can point to",
             )
-    image = plan.see and armed.image
-    return await _Loop(ctx, plan, session_key, image).run()
+    caps = _decide.capabilities()
+    loop = Loop(ctx, plan, session_key, plan.see and armed.image, caps)
+    if plan.see and not loop.image:
+        loop.notes.append("screenshots are off (not granted or not supported); state only")
+    mode, why = _pace(plan, caps)
+    if why:
+        loop.notes.append(f"realtime ran as virtual_time: {why}")
+    loop.plan = dataclasses.replace(plan, mode=mode)
+    loop.report(None)
+    if mode == "step":
+        result = await loop.run_step()
+    else:
+        timed = importlib.import_module("kiro_crew.browser_harness.reflex_realtime")
+        result = await timed.run(loop)
+    if "stop" not in result:
+        # Ended before any verdict (``not_available``): the loop line still ends.
+        loop.report(STOP_DECISION)
+    return result  # type: ignore[no-any-return]

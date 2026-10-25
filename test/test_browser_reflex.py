@@ -56,6 +56,20 @@ class Game:
         self.href = "https://game.example/"
         self.over = False
         self.password_boxes = 0
+        self.frames = 0
+
+    def elements(self) -> list[dict[str, Any]]:
+        return [
+            {"ref": "e1", "role": "button", "name": "Pay now", "ops": ["click"], "g": "g1"},
+            {
+                "ref": "e2",
+                "role": "textbox",
+                "name": "City",
+                "value": "".join(self.typed),
+                "ops": ["click", "type"],
+                "g": "g2",
+            },
+        ]
 
     def _left(self) -> None:
         # Every ArrowLeft scores: the first cell grows, so the state always changes.
@@ -118,6 +132,33 @@ class Game:
             return {"readyState": "complete", "stale": "", "href": self.href, "title": "Game"}
         if method == "textPresent":
             return self.over and args[0] == "Game over"
+        if method == "observe":
+            opts = args[0]
+            out: dict[str, Any] = {
+                "ok": True,
+                "url": self.href,
+                "title": "Game",
+                "mut": len(self.pressed),
+                "frames": self.frames,
+                "fp": "|".join(self.row) + "|" + "".join(self.typed),
+            }
+            if opts.get("table"):
+                out["elements"] = self.elements()
+            if opts.get("text"):
+                out["text"] = " ".join(t or "." for t in self.row) + " City " + "".join(self.typed)
+            if opts.get("until"):
+                out["until"] = self.over and opts["until"] == "Game over"
+            return out
+        if method == "check":
+            ref, kind = args[0], args[1]
+            if ref not in ("e1", "e2") or (kind == "type" and ref != "e2"):
+                return {"ok": False, "code": "gone"}
+            return {"ok": True, "x": 5.0, "y": 5.0}
+        if method == "ticks":
+            self.frames += 2
+            return {"m": 0, "f": self.frames}
+        if method == "selectText":
+            return {"ok": True}
         if method == "resolve":
             return {"ok": True, "x": 5.0, "y": 5.0, "tag": "button"}
         if method == "focus":
@@ -149,7 +190,7 @@ Judge = Callable[[list, dict], dict[str, Answer]]
 
 
 def judge(
-    pick: str = "press_ArrowLeft",
+    pick: str = "PRESS_ARROWLEFT",
     *,
     done_after: int | None = None,
     stuck: float = 0.02,
@@ -274,7 +315,7 @@ def test_the_loop_plays_until_the_model_says_done(seam, tmp_path):
     assert first["state"]["grid"] == [["2", "", "2", ""]] and "page" not in first["state"]
     assert result["state"] == [["12", "", "2", ""]]
     choice = first["questions"][0]
-    assert choice.options == ["press_ArrowRight", "press_ArrowLeft"]
+    assert choice.options == ["PRESS_ARROWRIGHT", "PRESS_ARROWLEFT"]
 
 
 def test_risk_is_asked_once_per_action(seam, tmp_path):
@@ -291,7 +332,7 @@ def test_risk_is_asked_once_per_action(seam, tmp_path):
     first = seam.provider.calls[0]["questions"]
     assert [q.prompt.split("'")[1] for q in first if q.id.startswith("risk_")] == [
         "Press Enter",
-        "Click e2",
+        'Click textbox "City"',
     ]
     assert not any(q.id.startswith("risk_") for q in seam.provider.calls[1]["questions"])
 
@@ -305,16 +346,16 @@ def test_the_model_s_stuck_or_off_path_stops_it_before_acting(seam, tmp_path, wh
 
 
 def test_a_no_op_action_is_withdrawn_until_the_state_changes(seam, tmp_path):
-    seam.provider = Provider(judge(pick="press_ArrowRight", done_after=4))
+    seam.provider = Provider(judge(pick="PRESS_ARROWRIGHT", done_after=4))
     game = Game()
     result = _run(GAME, _ctx(game, tmp_path)[0])
     # Right changes nothing, so it is dropped and Left is the only option left;
     # once Left changes the grid, Right is offered again.
     assert game.pressed[:2] == ["ArrowRight", "ArrowLeft"]
     offered = [call["questions"][0].options for call in seam.provider.calls]
-    assert offered[1] == ["press_ArrowLeft"] and offered[2] == [
-        "press_ArrowRight",
-        "press_ArrowLeft",
+    assert offered[1] == ["PRESS_ARROWLEFT"] and offered[2] == [
+        "PRESS_ARROWRIGHT",
+        "PRESS_ARROWLEFT",
     ]
     assert result["stop"] == "done"
 
@@ -333,8 +374,8 @@ def test_the_step_budget_stops_it(seam, tmp_path):
 def test_the_time_budget_stops_it(seam, tmp_path, monkeypatch):
     clock = iter(float(i) for i in range(10_000))
     monkeypatch.setattr(reflex.time, "monotonic", lambda: next(clock))
-    result = _run({**GAME, "max_seconds": 5}, _ctx(Game(), tmp_path)[0])
-    assert result["stop"] == "budget" and 0 < result["steps"] < 5
+    result = _run({**GAME, "max_seconds": 30, "max_steps": 300}, _ctx(Game(), tmp_path)[0])
+    assert result["stop"] == "budget" and 0 < result["steps"] < 30
 
 
 def test_a_code_terminal_stops_it(seam, tmp_path):
@@ -358,7 +399,7 @@ def test_a_takeover_stops_it_at_the_next_step(seam, tmp_path):
 
 def test_an_action_judged_hard_to_undo_is_handed_to_the_person(seam, tmp_path):
     seam.provider = Provider(
-        judge(pick="click_e1", risk=lambda prompt: 0.9 if "Click e1" in prompt else 0.02)
+        judge(pick="CLICK", risk=lambda prompt: 0.9 if "Pay now" in prompt else 0.02)
     )
     game = Game()
     result = _run({"goal": "Buy it", "click": ["e1"]}, _ctx(game, tmp_path)[0])
@@ -368,7 +409,7 @@ def test_an_action_judged_hard_to_undo_is_handed_to_the_person(seam, tmp_path):
 
 def test_a_risky_action_is_not_offered_while_others_remain(seam, tmp_path):
     seam.provider = Provider(
-        judge(pick="click_e1", done_after=2, risk=lambda p: 0.9 if "Click e1" in p else 0.02)
+        judge(pick="CLICK", done_after=2, risk=lambda p: 0.9 if "Pay now" in p else 0.02)
     )
     game = Game()
     result = _run({**GAME, "click": ["e1"]}, _ctx(game, tmp_path)[0])
@@ -394,21 +435,41 @@ def test_a_refused_page_is_never_read_or_sent_to_the_provider(seam, tmp_path):
     assert seam.provider.calls == [], "the URL gate runs before the page text leaves"
 
 
-def test_an_action_nobody_has_judged_is_never_offered(seam, tmp_path):
-    seam.provider = Provider(judge(pick="click_e12", done_after=1))
+def test_an_action_nobody_has_judged_never_runs_before_it_is_judged(seam, tmp_path, monkeypatch):
+    # One risk question per request: the first judges e1, while the model picks e2.
+    monkeypatch.setattr(reflex, "RISK_PER_REQUEST", 1)
+    base = judge(done_after=2)
     game = Game()
-    refs = [f"e{i}" for i in range(1, 13)]
-    result = _run({"goal": "Press them", "click": refs}, _ctx(game, tmp_path)[0])
-    first = next(q for q in seam.provider.calls[0]["questions"] if isinstance(q, Choice))
-    assert len(first.options) == reflex.RISK_PER_REQUEST and "click_e12" not in first.options
-    assert result["ok"] and (5.0, 5.0) in game.clicked  # it clicked what was judged
+    clicks_at_call: list[int] = []
+
+    def _answers(questions: list, state: dict) -> dict[str, Answer]:
+        clicks_at_call.append(len(game.clicked))
+        out = base(questions, state)
+        for q in questions:
+            if isinstance(q, Choice) and q.id == "operation":
+                out[q.id] = Answer(id=q.id, value="CLICK", p=0.9)
+            elif isinstance(q, Choice) and "e2" in q.options:
+                out[q.id] = Answer(id=q.id, value="e2", p=0.9)
+        return out
+
+    seam.provider = Provider(_answers)
+    result = _run({"goal": "Press it", "click": ["e1", "e2"]}, _ctx(game, tmp_path)[0])
+    risk = [
+        [q.prompt for q in call["questions"] if q.id.startswith("risk_")]
+        for call in seam.provider.calls
+    ]
+    assert len(risk[0]) == 1 and "City" not in risk[0][0]  # e2 is not judged yet
+    assert any("City" in p for p in risk[1])  # the next request judges the pick
+    # No click before the request that judged it: the first two calls saw none.
+    assert clicks_at_call[:2] == [0, 0]
+    assert result["ok"] and game.clicked == [(5.0, 5.0)]
 
 
 def test_type_only_sends_a_value_it_can_point_to(seam, tmp_path):
     game = Game()
     refused = _run({"goal": "Fill the city", "type": ["e2=Portland"]}, _ctx(game, tmp_path)[0])
     assert refused["code"] == "bad_value" and seam.provider.calls == []
-    seam.provider = Provider(judge(pick="type_e2", done_after=1))
+    seam.provider = Provider(judge(pick="TYPE_E2", done_after=1))
     ok = _run(
         {"goal": "Fill the city", "type": ["e2=Portland"], "facts": ["Ship to Portland"]},
         _ctx(game, tmp_path)[0],

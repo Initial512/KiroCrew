@@ -49,6 +49,7 @@ _ALLOWLIST: dict[str, tuple[str, tuple[str, ...]]] = {
     "close_tab": ("close_tab", ("target",)),
     "current_tab": ("current_tab", ()),
     "js": ("js", ("expression", "target_id")),
+    "page_clock": ("_local_page_clock", ("state",)),
 }
 
 #: Longest error text sent back; a Python traceback can be pages.
@@ -90,9 +91,51 @@ def _local_drag(helpers: Any, x: float, y: float, to_x: float, to_y: float) -> d
     return {"from": [x, y], "to": [to_x, to_y]}
 
 
+#: ``page_clock`` states: hold the page's timers and animation frames, let them run
+#: again, or let them run and stop holding the page at all.
+_CLOCK_STATES = ("hold", "run", "release")
+#: The page callbacks a hold stops at: each one pauses the page's script at its
+#: first statement, so nothing the page schedules runs until ``run``.
+_HELD_CALLBACKS = (
+    "requestAnimationFrame.callback",
+    "setTimeout.callback",
+    "setInterval.callback",
+)
+
+
+def _local_page_clock(helpers: Any, state: str) -> dict[str, str]:
+    """Hold or run the tab's timers and animation frames: ``reflex`` ``virtual_time``.
+
+    A break on the page's next timer or animation-frame callback, not CDP virtual
+    time: Chromium's virtual-time policy cannot be handed back (``advance`` then
+    fast-forwards an idle page and ``pause`` leaves it, navigation included,
+    frozen). And not a bare ``Debugger.pause``: on an idle page that lands in the
+    next script to run, which is the gateway's own walker call, and the call never
+    returns. While held, the walker still reads the page (its call is not a
+    callback); input is not delivered, so the loop runs before it acts.
+    """
+    if state not in _CLOCK_STATES:
+        raise ValueError(f"page_clock state must be one of {_CLOCK_STATES}")
+    if state == "hold":
+        helpers.cdp("Debugger.enable")
+        for name in _HELD_CALLBACKS:
+            helpers.cdp("EventBreakpoints.setInstrumentationBreakpoint", eventName=name)
+        return {"state": state}
+    for name in _HELD_CALLBACKS:
+        helpers.cdp("EventBreakpoints.removeInstrumentationBreakpoint", eventName=name)
+    try:
+        helpers.cdp("Debugger.resume")
+    except Exception:  # noqa: BLE001 - not paused (the page had no callback due): nothing to resume
+        pass
+    if state == "release":
+        helpers.cdp("Debugger.disable")
+    return {"state": state}
+
+
 _LOCAL: dict[str, Callable[..., Any]] = {
     "_local_mouse_move": _local_mouse_move,
     "_local_drag": _local_drag,
+    "_local_page_clock": _local_page_clock,
 }
 
 

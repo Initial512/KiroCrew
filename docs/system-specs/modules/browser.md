@@ -788,7 +788,7 @@ snapshot.
 | `press_key`, `select_option`, `wait_for` (text / textGone / time / load), `console` | as named |
 | `screenshot` | writes a PNG under the screenshot directory below and returns its absolute path |
 | `tabs` | lists and switches `relay.agent_targets()` only |
-| `reflex` | a loop of the ops above over a closed action set, judged by the decision seam; `not_available` when it is off ("The fast loop" below) |
+| `reflex` | a loop of the ops above over a closed move set, judged by the decision seam, in `step`, `realtime` or `virtual_time` mode; `not_available` when it is off ("The fast loop" below) |
 
 Every op calls `live_hub.step`; `run_op`'s own `in_control` check is the backstop
 under the route's fence (the route holds the op until the hand-back, see Takeover).
@@ -859,37 +859,85 @@ returns with the canvas boxes, so it lands in the CSS pixels `click` uses. Tests
 #### The fast loop (`reflex`)
 
 `reflex` is one op that runs many actions with no LLM turn between them
-(`browser_harness/reflex.py`, reached from `ops.py` by a call-time import). Its one request per step is built and sent by `decide.reflex_step`, so `decide.py` stays the only browser module that reaches the seam. The
-agent gives a `goal` and a CLOSED action set: `keys` (named keys or single
-characters), `click` (refs), `drag` (`"eA>eB"` ref pairs) and `type`
-(`"eN=value"`). Each step the gateway reads the state, asks the seam one request
-and runs the picked action through the ordinary op handler, so every action keeps
-that op's own refusals (a password field, a stale ref).
+(`browser_harness/reflex.py`, with `reflex_space.py` for the action space and
+`reflex_realtime.py` for the timed modes, reached from `ops.py` by a call-time
+import). Each decision is ONE request built and sent by `decide.reflex_step`, so
+`decide.py` stays the only browser module that reaches the seam, and it speaks
+only the seam's own question types. The agent gives a `goal` and a CLOSED move
+set: `keys` (named keys or single characters), `drag` (`"eA>eB"` or
+`"x,y>x,y"`), `scroll: true`, `type` (`"eN=value"`), and `targets` -- the
+operations (`click`, `hover`, `type`, `select`) whose target the model picks from
+the page's own element table, limited to `click` refs when those are named and,
+for `type`, filled only with `values`.
 
 | Part | What the code does | What the model answers |
 |---|---|---|
-| State | `grid` (+ `grid_items`): the walker's `cells(selector)` -- visible matches' short text and box centres, form fields skipped -- arranged into rows; an item goes to its nearest slot and a merge still animating keeps the higher number. Without `grid`, the outline (cut to 6,000 characters). `see: true` adds a masked frame under `browser_images` with the frame rules above | -- |
-| Request | one per step, `extra.kind = "reflex"`: Choice `next` over the live actions, Nouls `done`, `stuck`, `off_path`, and `risk_i` for at most 8 actions not yet judged (each action is judged once per call; arrows, Tab, Escape, Home, End and the page keys are judged safe by code and never asked about) | the four judgments |
-| Stop | `done`/`stuck`/`off_path` above 0.7; an action whose risk is at least 0.5 is not offered, and a pick of one stops with `risk` and a `handoff` text asking for the person; `until_text` (`textPresent`) or `until_url` (substring of the href); `max_steps` (default 60, at most 300) and `max_seconds` (default 20, at most 45); a takeover (`in_control`, checked before each observe and each action); every action withdrawn (`no_actions_left`) | -- |
-| No-op withdrawal | an action after which the state's fingerprint (the grid, else the outline) did not change is not offered again until the state changes; a refused action (stale ref, unfocusable) is withdrawn the same way | -- |
-| Values | a `type` value must appear verbatim in the goal, a fact or the page outline read once before the loop, else the call is refused `bad_value` before anything runs | never writes text |
+| Observation | ONE walker call, `observe(opts)`: the indexed element table (visible, enabled, in-viewport controls with role, name, current value, checked/selected/expanded state, select options, each with its ref and a guard -- a hash of the element and its row/form/dialog text), the visible text, declarative `read` probes (`name=css@text\|value\|checked\|box\|count\|attr:NAME`, at most 16, 4 KB, a password or secret-named field reads as null; no script), a mutation counter, an animation-frame counter and a fingerprint, all limited to `region` when given. `grid` (+ `grid_items`) adds the cells read by `cells(selector)`. `see: true` adds a masked frame under `browser_images` with the frame rules above | -- |
+| Request | one per decision, `extra.kind = "reflex"`: Choice `operation` over the moves offered (key presses, scrolls, drags, bound typing, WAIT, and one option per targeted operation); per targeted operation a speculative Choice `<op>_target` over the elements that operation fits (a select's options as `eN:i`); Choice `value` over `values` when there are several; Nouls `done`, `stuck`, `off_path`, the agent's `until_noul`, and `risk_i` for at most 8 moves not yet judged | the judgments |
+| Use | only the target head matching the picked operation is read; the others are discarded unread, so a target never meets an operation it does not fit | -- |
+| Executor | before input the walker's `check(ref, kind, guard)` re-reads the target: the same guard, enabled, visible, inside the viewport, not covered at its centre (`elementFromPoint`), editable and not secret for typing, the option still offered for a select. A failed check drops that answer (`stale`) and nothing is input. Typing replaces the field's text (`selectText`, then the `type` op). The model's answer is never a selector, a coordinate or script | -- |
+| Settle | after an action, two animation frames (at most 50 ms), or after typing into a combobox until its suggestions show (at most 200 ms); `settle_ms` overrides | -- |
+| Stop | `done`/`stuck`/`off_path`/`until` above 0.7; a move whose risk is at least 0.5 is not offered, and a pick of one stops with `risk` and a `handoff`; a picked move not yet judged is judged by the next request before it may run; `until_text` or `until_url`; `max_steps` (applied actions, default 60, at most 300), `max_seconds` (default 20, at most 45), `max_decisions` (requests, default 600, at most 2000); a takeover (`in_control`, before each read and each action); nothing left to offer (`no_actions_left`) | -- |
+| Risk by code | arrows, Tab, Escape, Home, End, the page keys, scrolls, hover and typing (a replaced value) are judged safe by code and never asked about | -- |
+| Values | every value to type must appear verbatim in the goal, a fact or the page (text and element names and values), read once before the loop, else `bad_value` before anything runs | never writes text |
 | Landing | after every action the href goes through `url_allowed`; a refused one moves the tab to `about:blank` and stops with `redirect_refused` | -- |
 
-The result is a summary: `stop`, `steps`, `moves`, `recent` (last 20), `actions`
-(count per label), `decisions`, `decision_ms_avg`, `seconds`, `rate` (moves per
-second), `see`, and the final `state` (the grid, or the outline cut to 1,500
-characters). Each action is one live-card step labelled `Reflex <n>: <the op's own
-label> (<rate>/s)`, and the loop ends with `Reflex <stop>: <moves> moves,
-<rate>/s`; no new field is added to the step payload.
+Three modes, one op:
+
+| `mode` | Loop | For |
+|---|---|---|
+| `step` (default) | observe, decide, act, settle; a move whose state did not change the fingerprint is withdrawn until the state changes; WAIT only with `wait: true` (100 ms) | forms, menus, grids |
+| `realtime` | a question every `tick_ms` (at least 50) without waiting, at most `max_in_flight` (default 6, never more than the provider declares) in flight. After an applied action every question asked before it is `superseded` (with `supersede: "change"`, also every one asked before the mutation counter moved); a WAIT supersedes nothing. With `lead` the state carries `lead_ms`, the recent p90 round trip, and an answer that lands sooner waits until then; a late one is used when it lands. After an applied action the loop settles (two frames) and asks again at once. Superseded answers are counted, never put on the card | pages that move on their own |
+| `virtual_time` | hold the page (`page_clock` `hold`: a break on its next timer or animation-frame callback), read it and decide, let it run (`run`), act, run `step_ms` (default 50); `release` in a `finally`, so a takeover's cancellation lets the page go | a moving page with a slow or one-at-a-time model |
+
+The loop reads the provider's capabilities (`decide.capabilities`, which is
+`gate.capabilities`), never its name: a provider that takes one request at a time
+runs `realtime` as `virtual_time`, one with no image support runs `see` on state
+only, and a slow one gets a per-call ceiling of three times its declared latency
+(still clamped by the gate). Each is said in `notes`. The timed modes open the
+provider's connection first (`decide.warm`, which is `gate.warm`).
+
+`virtual_time` is not CDP virtual time. Chromium's `Emulation.setVirtualTimePolicy`
+cannot be handed back: `advance` without a budget fast-forwards an idle page
+(measured: about 9,000 s of page time in 0.5 s), `pause` leaves the tab frozen with
+navigation hung, and detaching the session does not undo it; and it does not stop
+animation frames. A bare `Debugger.pause` is no better: on an idle page it lands in
+the next script, which is the walker's own call, and that call never returns. The
+callback breakpoints (`EventBreakpoints.setInstrumentationBreakpoint` for
+`requestAnimationFrame.callback`, `setTimeout.callback`, `setInterval.callback`)
+stop timers and frames, leave the walker able to read the page, and are undone by
+removing them and resuming. What a hold does not stop: CSS animations and
+transitions, network callbacks, and the page's wall clock (`performance.now`,
+`Date`, frame timestamps), so a page integrating unclamped elapsed time sees each
+hold as one long frame; most animation loops clamp their frame step. A held page
+drops input, so the page runs before the input and the target check happens after
+that. A tab whose browser refuses the hold runs the call as `step` and says so; the
+extension-attached user Chrome cannot open a CDP session at all, so
+`virtual_time` is measured on Kiro's Chromium only.
+
+The result is a summary: `stop`, `mode`, `steps`, `moves`, `recent` (last 20),
+`actions` (count per label), `decisions`, `decision_ms_avg`, `seconds`, `rate`
+(moves per second), `see`, `notes`, the final `state` (the grid, the reads, or the
+text cut to 1,500 characters) and, in `realtime`, `applied`, `waits`,
+`superseded`, `stale`, `unjudged`, `in_flight_max`, `in_flight_cap`,
+`rtt_p50_ms`, `lead_ms` and `held_ms_avg`. Each APPLIED action is one live-card
+step labelled `Reflex <n>: <label> (<rate>/s)`, and the loop ends with
+`Reflex <stop>: <moves> moves, <rate>/s`; no new field is added to the step
+payload.
 
 Off is free: with no hooks, a closed gate (the same probe as the hooks above), or a
-first decision that fails, the op answers `not_available` before it has touched the
-page and with no provider call when gated off; a later failure ends the loop with
-`decision_unavailable` and the summary. `reflex` is in `SLOW_OPS`, so its route
-budget (75 s plus the decision headroom) covers the 45 s ceiling and the loop
-always ends with its own summary. It holds the gateway op lock for its whole run,
-like any op, which is why the ceiling is below one slow op's lock wait. Tests:
-`test/test_browser_reflex.py`.
+first decision that fails (in `realtime`, three with none answered), the op answers
+`not_available` before it has touched the page and with no provider call when gated
+off; a later failure ends the loop with `decision_unavailable` (in `realtime`, ten
+in a row) and the summary. `reflex` is in `SLOW_OPS`, so its route budget (75 s
+plus the decision headroom) covers the 45 s ceiling and the loop always ends with
+its own summary. It holds the gateway op lock for its whole run, like any op.
+
+The element table, the guard, the occlusion re-check, the combobox settle and the
+operation-plus-target heads follow browser-use/jev-ultrafast (MIT); the pipelined
+clock, supersession and held early answers follow hosseintoussi/jev-flappy-bird
+(MIT). Neither is a dependency; see `NOTICE`. Tests:
+`test/test_browser_reflex.py`, `test/test_browser_reflex_realtime.py`.
 
 ### Capability model
 

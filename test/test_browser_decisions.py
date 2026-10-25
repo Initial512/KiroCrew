@@ -614,7 +614,7 @@ def test_the_image_header_is_sent_only_with_an_image_or_a_box(monkeypatch):
     sent: list[dict] = []
 
     class _Resp:
-        status = 200
+        status_code = 200
         headers: dict = {}
 
         async def __aenter__(self):
@@ -623,18 +623,11 @@ def test_the_image_header_is_sent_only_with_an_image_or_a_box(monkeypatch):
         async def __aexit__(self, *exc):
             return False
 
-        @property
-        def content(self):
-            body = json.dumps({"answers": {"n": {"type": "noul", "noul": 0.9}}}).encode()
-
-            class _C:
-                async def iter_chunked(self, _n):
-                    yield body
-
-            return _C()
+        async def aiter_bytes(self, _n):
+            yield json.dumps({"answers": {"n": {"type": "noul", "noul": 0.9}}}).encode()
 
     class _Session:
-        def post(self, url, **kwargs):
+        def stream(self, method, url, **kwargs):
             sent.append(kwargs["headers"])
             return _Resp()
 
