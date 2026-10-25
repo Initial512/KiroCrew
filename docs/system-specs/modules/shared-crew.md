@@ -388,8 +388,13 @@ and then stops each turn they started through `stop_slot_turn`: a turn running
 outside admitted work records its initiator per slot
 (`turn_gate.unadmitted_slots`; a chat send passes its sender with
 `initiated_by`), and `turn_gate.gate_turn` refuses a removed person's drained
-turn with an `access_removed` note. The audit detail reads
-`stopped: access removed`.
+turn with an `access_removed` note. A thread or side reply records its
+initiator under its session key the same way and is cancelled
+(`turn_gate.cancel_unadmitted`). The audit detail reads
+`stopped: access removed`. Removing an approval also marks that person's
+accepted-invite member record `removed`, so the set rebuilt after a restart
+leaves them out and `tailscale_invites.sync` re-admits them only through a new
+invite.
 
 Revoking an invite and `tailscale_invites.sync` commit one at a time
 (`_commit_lock`): `sync` reads the invite state again under the lock, and an

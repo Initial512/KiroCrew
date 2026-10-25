@@ -22,6 +22,7 @@ Unknown bucket: unattributed work is never charged to an unlimited account.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import contextvars
 import inspect
@@ -60,20 +61,21 @@ _ERROR_CLS = "msg msg-err"
 #: Turn outcomes (``metrics.turns.turn_outcome``) that settle the work ``failed``.
 _FAULT_OUTCOMES = frozenset({"error", "timeout", "stall_exhausted"})
 
-#: Slot key -> the principal whose turn runs there outside admitted work (fair
-#: admission off). Admitted work is stopped through the admission service; this
-#: is how a removed person's unadmitted turn is found. In memory.
-_UNADMITTED_RUNNING: dict[str, str] = {}
+#: Slot or session key -> (principal, task) of a turn running outside admitted
+#: work (fair admission off). Admitted work is stopped through the admission
+#: service; this is how a removed person's unadmitted turn is found. In memory.
+_UNADMITTED_RUNNING: dict[str, tuple[str, asyncio.Task[Any] | None]] = {}
 
 
 @contextlib.contextmanager
 def _running_unadmitted(slot_key: str, principal_id: str) -> Iterator[None]:
+    entry = (principal_id, asyncio.current_task())
     prior = _UNADMITTED_RUNNING.get(slot_key)
-    _UNADMITTED_RUNNING[slot_key] = principal_id
+    _UNADMITTED_RUNNING[slot_key] = entry
     try:
         yield
     finally:
-        if _UNADMITTED_RUNNING.get(slot_key) == principal_id:
+        if _UNADMITTED_RUNNING.get(slot_key) is entry:
             if prior is None:
                 _UNADMITTED_RUNNING.pop(slot_key, None)
             else:
@@ -81,9 +83,19 @@ def _running_unadmitted(slot_key: str, principal_id: str) -> Iterator[None]:
 
 
 def unadmitted_slots(principal_ids: Iterable[str]) -> list[str]:
-    """The slots running a turn charged to one of *principal_ids* outside admitted work."""
+    """The keys running a turn charged to one of *principal_ids* outside admitted work."""
     wanted = frozenset(principal_ids)
-    return [key for key, pid in list(_UNADMITTED_RUNNING.items()) if pid in wanted]
+    return [key for key, (pid, _t) in list(_UNADMITTED_RUNNING.items()) if pid in wanted]
+
+
+def cancel_unadmitted(key: str) -> bool:
+    """Cancel the turn under *key* that runs in no chat slot (a thread or side reply)."""
+    entry = _UNADMITTED_RUNNING.get(key)
+    task = entry[1] if entry else None
+    if task is None or task.done():
+        return False
+    task.cancel()
+    return True
 
 
 @contextlib.contextmanager
@@ -397,7 +409,8 @@ async def run_admitted(
         budget_key=budget, session_key=session_key, text=text, operation=operation
     )
     if admission is None:
-        return await work
+        with _running_unadmitted(session_key, budget):
+            return await work
 
     if admission.rejected:
         work.close()
@@ -529,5 +542,6 @@ __all__ = [
     "run_slack_message",
     "turn_budget",
     "turn_failure",
+    "cancel_unadmitted",
     "unadmitted_slots",
 ]

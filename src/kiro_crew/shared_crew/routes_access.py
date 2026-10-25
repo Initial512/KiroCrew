@@ -208,7 +208,7 @@ async def stop_slot_work(app: web.Application, principal_ids: frozenset[str]) ->
     messages go first, so a stopped turn's queue drain cannot start one.
     """
     from kiro_crew.dashboard.chat_handlers import stop_slot_turn
-    from kiro_crew.shared_crew.turn_gate import unadmitted_slots
+    from kiro_crew.shared_crew.turn_gate import cancel_unadmitted, unadmitted_slots
 
     state = app.get("state")
     slots = getattr(state, "_slots", None)
@@ -223,7 +223,10 @@ async def stop_slot_work(app: web.Application, principal_ids: frozenset[str]) ->
     running = 0
     for key in unadmitted_slots(principal_ids):
         slot = slots.get(key)
-        if slot is None or not slot.running:
+        if slot is None:
+            running += int(cancel_unadmitted(key))
+            continue
+        if not slot.running:
             continue
         try:
             await stop_slot_turn(state, slot, source="shared_crew_access_removed", escalate=False)

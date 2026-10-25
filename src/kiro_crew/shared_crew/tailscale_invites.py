@@ -385,7 +385,12 @@ def _new_accepts(
             row = {"id": invite.id, "email": invite.email, "alias": "", "avatar_id": ""}
         uid = invite.accepted_by.user_id
         known = state["members"].get(uid)
-        if known and known.get("login") == invite.accepted_by.login:
+        # A person the owner removed comes back only through a new invite.
+        if (
+            known
+            and known.get("login") == invite.accepted_by.login
+            and (not known.get("removed") or known.get("invite_id") == invite.id)
+        ):
             continue
         out.append((invite, row))
     return out

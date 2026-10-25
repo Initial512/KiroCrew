@@ -196,9 +196,11 @@ def _invite_logins() -> set[str]:
         members = store.load_state().get("members") or {}
     except Exception:  # noqa: BLE001 -- an unreadable invite file adds nobody
         return set()
-    return {_norm(str(m.get("login") or "")) for m in members.values() if isinstance(m, dict)} - {
-        ""
-    }
+    return {
+        _norm(str(m.get("login") or ""))
+        for m in members.values()
+        if isinstance(m, dict) and not m.get("removed")
+    } - {""}
 
 
 def install(
@@ -438,9 +440,20 @@ async def remove_approval(user_id: str, actor: str) -> dict[str, Any]:
             row = state["approvals"].pop(user_id, None)
             if not isinstance(row, dict):
                 raise AccessError(CODE_NOT_APPROVED)
+            login = _norm(str(row.get("login") or ""))
+
+            def _mark(s: dict[str, Any]) -> None:
+                # An invite they accepted would let them in again after a restart.
+                for m in s["members"].values():
+                    if m.get("user_id") == user_id or (
+                        login and _norm(str(m.get("login") or "")) == login
+                    ):
+                        m["removed"] = True
+
+            store.update_state(_mark)
             _save(state)
             tailnet_live_allowlist.revoke_user_id(user_id)
-            tailnet_live_allowlist.revoke(str(row.get("login") or ""))
+            tailnet_live_allowlist.revoke(login)
             rebuild()
             return row
 

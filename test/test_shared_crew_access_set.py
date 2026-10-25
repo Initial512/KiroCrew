@@ -491,6 +491,70 @@ async def test_removing_a_person_stops_their_turn_and_queue_with_admission_off(
 
 
 @pytest.mark.asyncio
+async def test_a_removed_person_with_an_accepted_invite_stays_out_after_restart() -> None:
+    from kiro_crew.shared_crew import tailscale_invites
+    from kiro_crew.shared_crew.tailscale_api import AcceptedBy, DeviceInvite
+
+    _install()
+    access_set.acknowledge_first_share("owner")
+    member = {"user_id": "31", "login": "mallory@example.com", "invite_id": "inv-1"}
+    store.update_state(lambda s: s["members"].update({"31": member}))
+    assert access_set.note_waiting(_peer("100.64.0.7"))
+    access_set.approve("31", "owner")
+    await access_set.remove_approval("31", "owner")
+
+    tailnet_live_allowlist.reset_for_tests()
+    _install()
+    assert tailnet.login_allowed("mallory@example.com", ()) is False
+
+    def accepted(invite_id: str) -> DeviceInvite:
+        by = AcceptedBy(user_id="31", login="mallory@example.com")
+        return DeviceInvite(invite_id, "d", "", "", False, True, by)
+
+    state = store.load_state()
+    # The invite they already accepted does not bring them back; a new one does.
+    assert tailscale_invites._new_accepts(state, [accepted("inv-1")]) == []
+    assert len(tailscale_invites._new_accepts(state, [accepted("inv-2")])) == 1
+
+
+@pytest.mark.asyncio
+async def test_removing_a_person_stops_their_thread_reply_with_admission_off() -> None:
+    from kiro_crew.shared_crew import turn_gate
+
+    _install()
+    access_set.acknowledge_first_share("owner")
+    assert access_set.note_waiting(_peer("100.64.0.7"))
+    access_set.approve("31", "owner")
+    mallory = tailnet_principal("mallory@example.com", "", Provenance.TAILSCALE_LISTENER)
+    ag.install_service(None)
+    state = SimpleNamespace(
+        _slots={},
+        _ws_clients=[],
+        broadcast_ws=lambda *_a, **_k: None,
+        push_slots_update=lambda: None,
+    )
+    app = web.Application()
+    app["state"] = state
+    await routes_access._install_closer(app)
+
+    started = asyncio.Event()
+
+    async def reply() -> None:
+        started.set()
+        await asyncio.Event().wait()
+
+    with turn_gate.initiated_by(mallory.id):
+        task = asyncio.ensure_future(turn_gate.run_admitted(reply(), session_key="thread:s1:m1"))
+    await asyncio.wait_for(started.wait(), 30)
+    result = await access_set.remove_approval("31", "owner")
+
+    assert result["stopped_running"] == 1
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert turn_gate.unadmitted_slots({mallory.id}) == []
+
+
+@pytest.mark.asyncio
 async def test_a_removed_persons_drained_turn_does_not_start_with_admission_off() -> None:
     from kiro_crew.dashboard.state import _ChatSlot
     from kiro_crew.shared_crew import turn_gate
