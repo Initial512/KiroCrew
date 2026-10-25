@@ -306,6 +306,7 @@ async def load_session(
         load_params["mcpServers"] = wire_servers
         kas_agents = self._remote_workspace_agents(kas_agents, wire_servers)
         attach_kas_custom_agents(load_params, kas_agents)
+        self._harness.attach_session_meta(load_params)
     budget = await self._session_start_budget()
     self._session_inits_in_flight += 1
     loaded_session_id = ""

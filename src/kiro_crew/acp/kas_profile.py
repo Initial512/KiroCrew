@@ -27,6 +27,7 @@ prompt that was running when its frame arrived.
 
 from __future__ import annotations
 
+import copy
 import math
 from typing import Any, Final
 
@@ -34,7 +35,10 @@ from kiro_crew.engine_context import (
     BREAKDOWN_SCHEMA,
     HISTORY_PARTS,
     KNOWN_CATEGORIES,
+    LIST_CATEGORIES,
     MAX_COUNT,
+    MEDIA_PARTS,
+    SUB_PARTS,
     count,
 )
 
@@ -44,6 +48,8 @@ __all__ = [
     "KNOWN_CATEGORIES",
     "MAX_COUNT",
     "PROMPT_META",
+    "SESSION_META",
+    "attach_session_profiling",
     "count",
     "parse_breakdown",
     "parse_ttft",
@@ -55,6 +61,17 @@ __all__ = [
 #: prompt and strips them before parsing the rest of the bag, so they never echo
 #: back on a chunk. ``perf`` is not asked for: it stamps every streamed chunk.
 PROMPT_META: Final[dict[str, Any]] = {"kiro": {"contextBreakdown": "summary", "ttft": True}}
+
+#: ``_meta.kiro`` declared on every KAS ``session/new`` and ``session/load``: the
+#: same two measurements for the turns the engine starts itself (a ``send_message``
+#: wake, a workflow's finish nudge, a workflow step), which no prompt carries flags for.
+#: The contract is the KAS performance metrics guide, section "Turns the agent starts":
+#: the fields are a prompt's own, the declaration belongs to the connection, and a
+#: later ``session/new`` or ``session/load`` on that connection replaces it (one
+#: without the field turns it off). Cloud create and load paths drop the field.
+SESSION_META: Final[dict[str, Any]] = {
+    "automaticTurnProfiling": {"contextBreakdown": "summary", "ttft": True}
+}
 
 #: Categories one breakdown keeps. Schema 1 has fourteen; the rest of the room is for
 #: a category a newer engine adds, which is kept by name rather than dropped.
@@ -74,6 +91,34 @@ def _stamp(value: Any) -> int | None:
     if isinstance(value, float) and not math.isfinite(value):
         return None
     return int(value) if value > 0 else None
+
+
+def _scaled(value: Any, factor: int) -> float | None:
+    """*value* times *factor*, rounded, when it is a usable number, else ``None``."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    return float(round(value * factor))
+
+
+def attach_session_profiling(params: dict[str, Any]) -> None:
+    """Declare :data:`SESSION_META` on a KAS ``session/new`` or ``session/load``.
+
+    Merged into ``_meta.kiro`` beside whatever else is there (the custom agents),
+    never replacing it. Each ``session/new`` or ``session/load`` on the connection
+    replaces the connection's declaration, and one without the field turns it off,
+    so every new and every load carries it.
+    """
+    meta = params.get("_meta")
+    if not isinstance(meta, dict):
+        meta = {}
+        params["_meta"] = meta
+    kiro = meta.get("kiro")
+    if not isinstance(kiro, dict):
+        kiro = {}
+        meta["kiro"] = kiro
+    kiro.update(copy.deepcopy(SESSION_META))
 
 
 def parse_breakdown(raw: Any) -> dict[str, Any] | None:
@@ -107,6 +152,52 @@ def parse_breakdown(raw: Any) -> dict[str, Any] | None:
             out[field] = value
     if raw.get("compacted") is True:
         out["compacted"] = True
+    # The engine's own share of each category, one decimal, kept in tenths of a
+    # percent: the bar is drawn from these, so it matches what the engine reports.
+    percent = {
+        name: tenths
+        for name, body in categories.items()
+        if name in kept
+        and isinstance(body, dict)
+        and (tenths := count(_scaled(body.get("percent"), 10))) is not None
+    }
+    if percent:
+        out["percent"] = percent
+    counts = {
+        name: n
+        for name in LIST_CATEGORIES
+        if isinstance(body := categories.get(name), dict)
+        and (n := count(body.get("count"))) is not None
+    }
+    if counts:
+        out["counts"] = counts
+    parts = {
+        f"{category}.{field}": n
+        for category, wire, field in SUB_PARTS
+        if isinstance(body := categories.get(category), dict)
+        and (n := count(body.get(wire))) is not None
+    }
+    if parts:
+        out["parts"] = parts
+    window = raw.get("window")
+    if isinstance(window, dict):
+        size = count(window.get("sizeTokens"))
+        # Thousandths of a percent: 5.8616% is kept as 5862.
+        usage = count(_scaled(window.get("usagePercentage"), 1000))
+        win = {
+            key: value
+            for key, value in (("size_tokens", size), ("usage_milli", usage))
+            if value is not None
+        }
+        if win:
+            out["window"] = win
+    media = raw.get("media")
+    if isinstance(media, dict):
+        kept_media = {
+            field: n for wire, field in MEDIA_PARTS if (n := count(media.get(wire))) is not None
+        }
+        if kept_media:
+            out["media"] = kept_media
     history = categories.get("history")
     if isinstance(history, dict):
         parts = {

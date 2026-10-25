@@ -22,6 +22,7 @@ from acp_runtime_helpers import (
     _stop_reader,
 )
 
+from kiro_crew.acp import kas_profile
 from kiro_crew.acp.runtime import AcpRuntimeError, AcpSessionHandle
 from kiro_crew.acp.types import (
     ACP_BACKEND_KAS,
@@ -518,12 +519,14 @@ class TestAcpRuntimeLoadSession:
         # hand-built copies of this nesting would be free to drift, and a resumed
         # session that got a subtly different shape would fail the same way the
         # missing injection did: mode absent, load refused.
-        assert (
-            load_params["_meta"]["kiro"]
-            == build_session_new_params(
+        # Plus the turn-profiling declaration the engine forgets on every load, which
+        # create_session adds to session/new the same way.
+        assert load_params["_meta"]["kiro"] == {
+            **build_session_new_params(
                 "/work", kas_custom_agents=[{"id": "kirocrew", "prompt": "p", "tools": []}]
-            )["_meta"]["kiro"]
-        )
+            )["_meta"]["kiro"],
+            **kas_profile.SESSION_META,
+        }
 
     @pytest.mark.asyncio
     async def test_the_kas_resume_report_reads_the_hoisted_array(self, monkeypatch):
@@ -651,6 +654,12 @@ class TestAcpRuntimeLoadSession:
         # A third-party server stays in the agent block, and never gets the token.
         (agent_block,) = params["_meta"]["kiro"]["customAgents"]
         assert STUB_SESSION_TOKEN_ENV not in json.dumps(agent_block)
+        # Both requests declare the per-turn profile for the turns the engine starts
+        # itself, beside the agents, so neither _meta writer drops the other.
+        assert (
+            params["_meta"]["kiro"]["automaticTurnProfiling"]
+            == kas_profile.SESSION_META["automaticTurnProfiling"]
+        )
 
     @pytest.mark.asyncio
     async def test_load_session_keeps_the_transcript_path_alongside_the_agents(self, monkeypatch):

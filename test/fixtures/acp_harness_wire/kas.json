@@ -6,6 +6,10 @@
       "params": {
         "_meta": {
           "kiro": {
+            "automaticTurnProfiling": {
+              "contextBreakdown": "summary",
+              "ttft": true
+            },
             "customAgents": [
               {
                 "name": "pinned-agent",
@@ -56,6 +60,10 @@
         "_meta": {
           "_kiro.dev/session_file": "/pinned/transcript.jsonl",
           "kiro": {
+            "automaticTurnProfiling": {
+              "contextBreakdown": "summary",
+              "ttft": true
+            },
             "customAgents": [
               {
                 "name": "pinned-agent",

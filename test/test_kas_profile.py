@@ -87,6 +87,58 @@ def test_the_summary_frame_parses_to_its_categories_and_history_split():
     assert "compacted" not in parsed
 
 
+def test_the_summary_frame_keeps_its_shares_counts_splits_window_and_media():
+    """The fields beside ``chars`` that a summary frame carries are kept as numbers:
+    each category's own percent (in tenths), the three lists' entry counts, the
+    toolIO / workspace / memory splits, the window, and the media outside the total."""
+    kiro = _update_of("turn_completion.summary.json")["_meta"]["kiro"]
+    parsed = kas_profile.parse_breakdown(kiro["contextBreakdown"])
+    assert parsed is not None
+    assert parsed["percent"]["steering"] == 305
+    assert parsed["percent"]["other"] == 1
+    assert sum(parsed["percent"].values()) == 1000
+    assert parsed["counts"] == {"agentsIndex": 0, "skillsIndex": 28, "powersIndex": 0}
+    assert parsed["parts"]["toolIO.input"] == 20
+    assert parsed["parts"]["toolIO.output"] == 82
+    assert parsed["parts"]["workspace.environment"] == 939
+    assert parsed["parts"]["memory.learnings"] == 0
+    assert parsed["window"] == {"size_tokens": 1_000_000, "usage_milli": 2867}
+    assert parsed["media"] == {"images": 0, "image_bytes": 0, "documents": 0, "document_bytes": 0}
+
+
+def test_session_profiling_merges_beside_the_custom_agents_in_either_order():
+    from kiro_crew.acp._dispatch import attach_kas_custom_agents
+
+    first: dict[str, Any] = {}
+    kas_profile.attach_session_profiling(first)
+    attach_kas_custom_agents(first, [{"id": "a", "prompt": "p"}])
+    second: dict[str, Any] = {}
+    attach_kas_custom_agents(second, [{"id": "a", "prompt": "p"}])
+    kas_profile.attach_session_profiling(second)
+    assert first["_meta"]["kiro"] == second["_meta"]["kiro"]
+    assert set(first["_meta"]["kiro"]) == {"customAgents", "automaticTurnProfiling"}
+    assert first["_meta"]["kiro"]["automaticTurnProfiling"] == {
+        "contextBreakdown": "summary",
+        "ttft": True,
+    }
+
+
+def test_only_the_kas_harness_declares_profiling_on_the_session_request():
+    """The shared session/new and session/load paths ask their harness; every other
+    harness adds nothing, so its request is unchanged."""
+    from kiro_crew.acp.harness import _HARNESSES, harness_for
+    from kiro_crew.acp.types import ACP_BACKEND_KAS
+
+    assert ACP_BACKEND_KAS in _HARNESSES
+    for backend in sorted(_HARNESSES):
+        params: dict[str, Any] = {"cwd": "/work", "mcpServers": []}
+        harness_for(backend).attach_session_meta(params)
+        if backend == ACP_BACKEND_KAS:
+            assert params["_meta"]["kiro"] == kas_profile.SESSION_META
+        else:
+            assert params == {"cwd": "/work", "mcpServers": []}, backend
+
+
 def test_the_agent_prompt_and_its_resources_land_in_their_own_categories():
     """On the captured frame the custom agent's 2,000-character prompt is inside
     ``kiroInstructions`` and its 3,000-character resource file is a steering item with

@@ -170,7 +170,11 @@ def attach_kas_custom_agents(
         )
         for a in agents
     ]
-    meta["kiro"] = {"customAgents": wire}
+    kiro = meta.get("kiro")
+    # Merged, so the turn-profiling declaration beside it survives either order.
+    meta["kiro"] = (
+        {**kiro, "customAgents": wire} if isinstance(kiro, dict) else {"customAgents": wire}
+    )
 
 
 def kas_crew_agent_id(agents: Any, mode_id: str) -> str:

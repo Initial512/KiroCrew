@@ -345,6 +345,7 @@ async def create_session(
         mcp_servers=wire_servers,
         kas_custom_agents=kas_agents,
     )
+    self._harness.attach_session_meta(params)
 
     projected_sources: dict[str, str] = {}
     if self._member_context:
@@ -977,6 +978,9 @@ async def probe_advertised_models(
         if not self._initialized or self._dead or self._process is None:
             return []
         params = build_session_new_params(await self._session_work_dir(), mcp_servers=[])
+        # Same connection as the real sessions: a session/new without the harness's
+        # declarations would replace them (on KAS, turn profiling would turn off).
+        self._harness.attach_session_meta(params)
         session_id = ""
         self._session_inits_in_flight += 1
         try:

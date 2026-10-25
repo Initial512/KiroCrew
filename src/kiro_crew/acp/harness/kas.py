@@ -31,6 +31,7 @@ from typing import Any
 # compared by identity, never substituted.
 from kiro_crew import agent as agent_mod
 from kiro_crew.acp import kas_agents as kas_agents_mod
+from kiro_crew.acp import kas_profile
 from kiro_crew.acp._dispatch import advertised_mode_origin
 from kiro_crew.acp.child_env_defaults import apply_child_env_defaults
 from kiro_crew.acp.harness._common import (
@@ -455,6 +456,16 @@ class KasHarness(MembershipHarness):
         return KAS_CLIENT_CAPABILITIES
 
     # ── Seam 3: session/new and session/load extras ──
+
+    def attach_session_meta(self, params: dict[str, Any]) -> None:
+        """Declare the turn profiling on the session (see ``kas_profile``).
+
+        The turns the engine starts itself carry no prompt to ask on, so the
+        breakdown and ttft for them are declared on the session. The declaration
+        belongs to the connection and each new or load replaces it, so a load
+        repeats it (KAS performance metrics guide, "Turns the agent starts").
+        """
+        kas_profile.attach_session_profiling(params)
 
     def record_session_projection(self, handle: Any, custom_agents: Any, active_agent: str) -> None:
         """Record what the batch this session registered auto-approves.

@@ -108,6 +108,28 @@ async def test_probe_returns_fresh_set_and_terminates_probe_session():
 
 
 @pytest.mark.asyncio
+async def test_a_kas_probe_carries_the_session_declaration_and_others_do_not():
+    """The probe is a session/new on the live connection, and on KAS each one replaces
+    the connection's automaticTurnProfiling declaration; one without it would turn the
+    profiling off for every real session. So it asks its harness, like create_session."""
+    from kiro_crew.acp import kas_profile
+    from kiro_crew.acp.harness import harness_for
+    from kiro_crew.acp.types import ACP_BACKEND_KAS, ACP_BACKEND_KIRO
+
+    for backend in (ACP_BACKEND_KAS, ACP_BACKEND_KIRO):
+        rt, _, _ = _make_runtime()
+        rt._acp_backend = backend
+        assert type(rt._harness) is type(harness_for(backend))
+        rt._send_and_await = AsyncMock(side_effect=[_PROBE_RESP, {}])  # type: ignore[method-assign]
+        await rt.probe_advertised_models()
+        params = rt._send_and_await.call_args_list[0].args[1]
+        if backend == ACP_BACKEND_KAS:
+            assert params["_meta"]["kiro"] == kas_profile.SESSION_META
+        else:
+            assert "_meta" not in params
+
+
+@pytest.mark.asyncio
 async def test_probe_failure_returns_empty_and_closes_init_scope():
     """A failed probe is not evidence: it returns [] (caller keeps its prior
     snapshot) and must not leave the init-notification scope open."""

@@ -536,6 +536,14 @@ class HarnessAdapter(LaunchAdapter):
         took its agent at spawn time.
         """
 
+    def attach_session_meta(self, params: dict[str, Any]) -> None:
+        """Add this host's own ``_meta`` declarations to a ``session/new`` or ``session/load``.
+
+        For a host that reads per-session options off the request envelope. A host
+        that takes none adds nothing, which is this default: its wire is unchanged.
+        """
+        return None
+
     def record_session_projection(self, handle: Any, custom_agents: Any, active_agent: str) -> None:
         """Record on a new or resumed session's *handle* what its agent batch grants.
 
