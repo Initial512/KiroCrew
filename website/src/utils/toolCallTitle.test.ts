@@ -267,5 +267,8 @@ describe('a session tool names its target by title (Crew Mode demo issue 2)', ()
     expect(deriveToolCallTitle(input).title).toBe('Send to session: chat-9-worker')
     store.dispatch(sseSlots([{ key: 'chat-9-worker', title: 'Fix the parser', messages: 0, running: false }] as never))
     expect(deriveToolCallTitle(input).title).toBe('Send to session: Fix the parser')
+    // The same call made through tool_search's deferred `tool_call`.
+    const wrapped = { ...input, rawInput: { tool_id: 'kirocrew-dashboard::session_send', arguments: { target: 'chat-9-worker', message: 'go' } } } as ToolCallTitleInput
+    expect(deriveToolCallTitle(wrapped).title).toBe('Send to session: Fix the parser')
   })
 })

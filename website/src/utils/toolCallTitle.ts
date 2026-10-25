@@ -397,8 +397,10 @@ function classifyMcp(inp: ToolCallTitleInput): ClassifiedToolCall | null {
   const tool = inp.toolName || fromTitle?.tool
   if (!tool) return null
   if (!inp.mcpServer && !fromTitle) return null
-  const args = parseToolArgs(inp.rawInput)
-  const arg = salientMcpArg(args)
+  const raw = parseToolArgs(inp.rawInput)
+  // A deferred tool run through tool_search's `tool_call` keeps its own arguments under `arguments`.
+  const inner = raw && typeof raw.tool_id === 'string' && raw.tool_id.endsWith(`::${tool}`) ? parseToolArgs(raw.arguments) : undefined
+  const arg = salientMcpArg(inner ?? raw)
   const title = declaredMcpToolTitle(inp.mcpServer || fromTitle?.server || '', tool)
   return {
     action: { type: 'mcp', tool, ...(title ? { title } : {}), ...(arg ? { arg } : {}) },
