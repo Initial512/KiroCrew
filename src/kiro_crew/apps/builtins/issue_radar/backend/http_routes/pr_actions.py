@@ -704,8 +704,9 @@ async def _handle_pull_review(request: web.Request) -> web.Response:
 
 async def _handle_pull_comment(request: web.Request) -> web.Response:
     """POST /pull/comment {"owner","repo","number","body"} — post a conversation
-    comment on a PR (or an issue: the same endpoint serves both on GitHub, and the
-    GitLab client is told which collection to use)."""
+    comment on a pull request or merge request only. ``number`` is read as a
+    change-request number (``add_pr_comment``); comment on an issue through
+    ``POST /issue/comment`` instead."""
     from .. import routes  # circular import: backend.routes imports this module
 
     body, key, early = await _pr_action_preamble(request, "pull_comment")
