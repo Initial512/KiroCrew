@@ -471,6 +471,37 @@ async def test_work_cancelled_while_its_start_runs_stops_the_started_execution(t
 
 
 @pytest.mark.asyncio
+async def test_a_failed_attach_write_stops_the_child_and_frees_the_slot(tmp_path, clock):
+    svc = _service(tmp_path, clock)
+    stopped: list[str] = []
+    svc.register_cancel(
+        OperationKind.WORKFLOW, lambda work: stopped.append(str(work.extra["execution_id"]))
+    )
+    admission = await svc.admit(
+        budget_key=ALICE.id,
+        session_key="workflow",
+        operation=OperationKind.WORKFLOW,
+        idempotency_key="wf-key-0002",
+        digest="d",
+        allow_queue=False,
+    )
+    assert admission.admitted and admission.work is not None
+    real = svc._store.advance
+
+    async def locked_on_running(work, state, *args, **kwargs):
+        if state is S.RUNNING:
+            raise RuntimeError("database is locked")
+        return await real(work, state, *args, **kwargs)
+
+    with patch.object(svc._store, "advance", side_effect=locked_on_running):
+        with pytest.raises(RuntimeError):
+            await admission.attach_child("run-2")
+    assert stopped == ["run-2"]
+    assert svc._store.get_sync(admission.work.work_id).state is S.FAILED
+    assert svc.capacity(ALICE.id).principal.active == 0
+
+
+@pytest.mark.asyncio
 async def test_a_failed_cancel_write_keeps_the_queued_ticket(tmp_path, clock):
     svc = _service(tmp_path, clock, principal_concurrency=1, crew_concurrency=1)
     running = await svc.admit(

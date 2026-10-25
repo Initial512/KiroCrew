@@ -126,15 +126,6 @@ def stop_late_start(service: AdmissionService, work_id: str, execution_id: str) 
         logger.warning("shared crew: stopping late start %s failed", work_id, exc_info=True)
 
 
-__all__ = [
-    "MERGED_INTO_KEY",
-    "PERSON_STOPS",
-    "cancelled_parked",
-    "settle_followers",
-    "stop_late_start",
-]
-
-
 async def end_unstarted(service: AdmissionService, live: _Live, exc: BaseException) -> None:
     """End work whose caller was cancelled before it started, so its slot is freed."""
     if not isinstance(exc, asyncio.CancelledError) or live.work.state in TERMINAL:
@@ -143,3 +134,23 @@ async def end_unstarted(service: AdmissionService, live: _Live, exc: BaseExcepti
         await service._end(live, S.CANCELLED, reason=ReasonCode.CANCELLED_BY_USER)
     except Exception:  # noqa: BLE001 -- the restart reconcile settles it
         logger.warning("shared crew: ending %s failed", live.work.work_id, exc_info=True)
+
+
+async def end_failed_attach(service: AdmissionService, live: _Live, execution_id: str) -> None:
+    """Stop an execution whose attach write failed and end its work, freeing the slot."""
+    try:
+        await service._end(live, S.FAILED, reason=ReasonCode.RUNTIME_ERROR)
+    except Exception:  # noqa: BLE001 -- the restart reconcile settles it
+        logger.warning("shared crew: ending %s failed", live.work.work_id, exc_info=True)
+    stop_late_start(service, live.work.work_id, execution_id)
+
+
+__all__ = [
+    "MERGED_INTO_KEY",
+    "PERSON_STOPS",
+    "cancelled_parked",
+    "end_failed_attach",
+    "end_unstarted",
+    "settle_followers",
+    "stop_late_start",
+]

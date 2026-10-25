@@ -128,7 +128,18 @@ describe('TailscaleAccess', () => {
     mount()
     expect(await screen.findByTestId('waiting-empty')).toBeInTheDocument()
     expect(screen.getByTestId('access-seeded')).toHaveTextContent('alice@example.com')
-    expect(screen.getByTestId('access-unreadable')).toBeInTheDocument()
+    const unreadable = screen.getByTestId('access-unreadable')
+    expect(within(unreadable).getByRole('button', { name: /Ask the agent/ })).toBeInTheDocument()
+  })
+
+  it('a failed first-share acknowledgement shows the refusal in the row', async () => {
+    read.mockResolvedValue(view({ waiting: [waiting()], first_share: share({ needs_ack: true }) }))
+    ack.mockRejectedValue(new ApiError(500, 'x', JSON.stringify({ code: 'error' })))
+    approve.mockRejectedValue(new ApiError(409, 'x', JSON.stringify({ code: 'first_share_ack_required' })))
+    mount()
+    fireEvent.click(await screen.findByTestId('waiting-approve'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Share it' }))
+    expect(await screen.findByRole('alert')).toBeInTheDocument()
   })
 
   it('a failed approve shows an error notice with a hand-off', async () => {

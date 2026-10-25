@@ -1176,7 +1176,7 @@ class AdmissionService:
             return
         live = self._live.get(work_id)
         if live is None or live.work.state in TERMINAL:
-            self._stop_late_start(work_id, execution_id)
+            _parked.stop_late_start(self, work_id, execution_id)
             return
         runtime = RuntimeOwnershipRef(
             execution_id=execution_id,
@@ -1190,14 +1190,13 @@ class AdmissionService:
             )
         except (StaleRevision, InvalidTransition):
             if live.work.state in TERMINAL or work_id not in self._live:
-                self._stop_late_start(work_id, execution_id)
+                _parked.stop_late_start(self, work_id, execution_id)
             return
+        except Exception:
+            await _parked.end_failed_attach(self, live, execution_id)
+            raise
         if session_key:
             self.bind_session(session_key, live.work.budget_key, live.root_work_id or work_id)
-
-    def _stop_late_start(self, work_id: str, execution_id: str) -> None:
-        """See :func:`admission_parked.stop_late_start`."""
-        _parked.stop_late_start(self, work_id, execution_id)
 
     async def abandon(self, work_id: str, *, reason: ReasonCode | None = None) -> None:
         live = self._live.get(work_id)

@@ -482,7 +482,8 @@ restart is needed once identity trust was already on; the first accept that turn
 on reports `restart_required`. The accepting login is used even when it differs from
 the invited email: Tailscale lets an invite be accepted from any account. An invite
 made in the admin console that Tailscale reports accepted is admitted the same way. An
-unaccepted invite Tailscale no longer lists is dropped. A reusable link stays due for a
+unaccepted invite Tailscale no longer lists is dropped. Live access is granted only
+after the membership write is durable, so a revoke always finds the person. A reusable link stays due for a
 sync after its first accept, so each later person who accepts it is admitted.
 
 **Display only.** Alias (printable, 64 characters) and avatar (PNG, JPEG, GIF or
@@ -818,7 +819,8 @@ the next tick expires it again. A finished run whose terminal write fails keeps 
 slot and its merged messages; the next tick writes the outcome again
 (`_Live.unsettled`), and the slot is freed once that write is durable. A caller
 cancelled before its work starts (a queued chat closed while it waits) ends that
-work `cancelled` (`admission_parked.end_unstarted`), so its ticket never holds a slot.
+work `cancelled` (`admission_parked.end_unstarted`), so its ticket never holds a slot. A child whose attach write fails is stopped through
+its cancel hook and its work ends `failed` (`admission_parked.end_failed_attach`).
 
 A background run admitted now can be cancelled while its start is still in flight.
 `_end` remembers the ended, not-yet-attached work with its operation's cancel hook,
@@ -1276,7 +1278,8 @@ People, owner only (`TailscaleAccess`, theme tokens, rows wrap at narrow widths)
 | nobody waiting | "Nobody is waiting." |
 | approved people | Approved: name, login, when; Remove behind a confirm that names the stopped turn |
 | entries carried over from config | one line listing them |
-| access set unreadable | an error line: only the owner can open the Crew |
+| access set unreadable | an inline `ErrorNotice` with the agent hand-off: only the owner can open the Crew |
+| the first-share acknowledgement fails | the action still runs; its row shows the server's `first_share_ack_required` refusal |
 | an Approve, Dismiss or Remove fails (`not_waiting`, `first_share_ack_required`, any error) | an inline `ErrorNotice` in the row with the agent hand-off (no draft sits beside it) |
 | the direct link's Copy is refused by the browser | an inline `ErrorNotice` with the agent hand-off; the link stays selectable in its field |
 | the access list read fails (not `owner_only`, not 404) | the card's title and an `ErrorNotice` with the agent hand-off |

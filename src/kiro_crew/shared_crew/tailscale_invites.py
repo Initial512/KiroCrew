@@ -447,10 +447,6 @@ async def _commit_accepts(
                 "accept", "error", actor, email=row.get("email", ""), detail=type(exc).__name__
             )
             continue
-        from kiro_crew.dashboard import tailnet_live_allowlist
-
-        tailnet_live_allowlist.grant(by.login)
-        await asyncio.to_thread(access_set.restore, by.login)
         admitted.append(
             {
                 "user_id": by.user_id,
@@ -489,6 +485,12 @@ async def _commit_accepts(
         s.update(backoff_secs=0.0, backoff_until=0.0, last_sync_at=store.now())
 
     await asyncio.to_thread(store.update_state, _mutate)
+    # Live access follows the durable membership write, so a revoke always finds it.
+    from kiro_crew.dashboard import tailnet_live_allowlist
+
+    for member in admitted:
+        tailnet_live_allowlist.grant(member["login"])
+        await asyncio.to_thread(access_set.restore, member["login"])
     if admitted:
         await asyncio.to_thread(access_set.rebuild)
     return {"admitted": [m["login"] for m in admitted], "restart_required": restart}

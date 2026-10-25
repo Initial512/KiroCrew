@@ -477,6 +477,26 @@ async def test_a_reusable_link_keeps_syncing_after_its_first_accept(
 
 
 @pytest.mark.asyncio
+async def test_a_failed_membership_write_grants_no_live_access(
+    fake, config_file, monkeypatch
+) -> None:
+    await invites.connect(KEY, "owner")
+    made = await invites.create_invites(
+        ["a@example.com"], multi_use=False, alias="", avatar_id="", actor="o"
+    )
+    fake.accept(made[0]["id"], "u-1", "a@example.com")
+
+    def _full(_mutate: Any) -> None:
+        raise OSError("disk full")
+
+    with monkeypatch.context() as mp:
+        mp.setattr(store, "update_state", _full)
+        with pytest.raises(OSError):
+            await invites.sync(force=True)
+    assert tailnet_live_allowlist.granted("a@example.com") is False
+
+
+@pytest.mark.asyncio
 async def test_revoking_a_reusable_link_removes_everyone_it_admitted(fake, config_file) -> None:
     await invites.connect(KEY, "owner")
     made = await invites.create_invites([], multi_use=True, alias="", avatar_id="", actor="o")

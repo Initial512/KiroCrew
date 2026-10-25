@@ -94,7 +94,12 @@ export function useFirstShareGate() {
       primary: true,
     })
     if (!ok) return
-    await api.sharedCrewAckFirstShare()
+    try {
+      await api.sharedCrewAckFirstShare()
+    } catch {
+      // The action still runs: the server refuses it unacknowledged, and the
+      // action's own error notice shows that refusal.
+    }
     await qc.invalidateQueries({ queryKey: sharedCrewAccessKey })
     action()
   }, [confirm, qc])
@@ -208,7 +213,7 @@ export function TailscaleAccess() {
         <div className="flex flex-col gap-3 min-w-0" data-testid="tailscale-access">
           <p className="text-[13px] text-muted">{i18nT('sharedCrew.waitlist_body')}</p>
           {!view.readable && (
-            <p role="alert" className="text-[12px] text-danger" data-testid="access-unreadable">{i18nT('sharedCrew.waitlist_unreadable')}</p>
+            <ErrorNotice variant="inline" message={i18nT('sharedCrew.waitlist_unreadable')} askAgent testId="access-unreadable" />
           )}
           <div className="flex flex-col gap-1 min-w-0">
             <h4 className="text-[13px] font-semibold text-text-strong m-0">{i18nT('sharedCrew.waitlist_waiting_title')}</h4>
