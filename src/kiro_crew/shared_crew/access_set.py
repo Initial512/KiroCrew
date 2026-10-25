@@ -151,8 +151,14 @@ def _load_strict() -> dict[str, Any]:
 
 
 def _save(state: dict[str, Any]) -> None:
-    store.ensure_root()
-    atomic_write(_path(), json.dumps(state, indent=2, sort_keys=True), restrict_to_owner=True)
+    """Write *state*; on a failed write the cache is dropped, so the disk stays the truth."""
+    global _STATE
+    try:
+        store.ensure_root()
+        atomic_write(_path(), json.dumps(state, indent=2, sort_keys=True), restrict_to_owner=True)
+    except BaseException:
+        _STATE = None
+        raise
 
 
 _STATE_HOME = ""

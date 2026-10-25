@@ -435,7 +435,8 @@ releases it when that stops. Nothing is installed.
 
 **Storage.** `<data_home>/.vault/shared-crew-tailscale/access.json` (0600), beside
 the invite records, masked from every sandbox mode. A file that cannot be parsed
-leaves the set unreadable: only the owner is admitted, and the access card says so.
+leaves the set unreadable: only the owner is admitted, and the access card says so. A
+failed write drops the in-memory copy, so the next read is the file again.
 
 ### Tailscale invites
 
@@ -481,7 +482,8 @@ restart is needed once identity trust was already on; the first accept that turn
 on reports `restart_required`. The accepting login is used even when it differs from
 the invited email: Tailscale lets an invite be accepted from any account. An invite
 made in the admin console that Tailscale reports accepted is admitted the same way. An
-unaccepted invite Tailscale no longer lists is dropped.
+unaccepted invite Tailscale no longer lists is dropped. A reusable link stays due for a
+sync after its first accept, so each later person who accepts it is admitted.
 
 **Display only.** Alias (printable, 64 characters) and avatar (PNG, JPEG, GIF or
 WebP by magic bytes, at most 256 KiB, named by digest, served same-origin with
@@ -811,7 +813,9 @@ A queued ticket leaves the scheduler only when its terminal write is durable. Wh
 the write of a cancel or an expiry fails (the task store is locked past its
 timeout), `AdmissionService._end` puts the ticket back in its own place
 (`FairScheduler.restore_queued`): the work stays `queued`, the cancel raises, and
-the next tick expires it again.
+the next tick expires it again. A finished run whose terminal write fails keeps its
+slot and its merged messages; the next tick writes the outcome again
+(`_Live.unsettled`), and the slot is freed once that write is durable.
 
 A background run admitted now can be cancelled while its start is still in flight.
 `_end` remembers the ended, not-yet-attached work with its operation's cancel hook,

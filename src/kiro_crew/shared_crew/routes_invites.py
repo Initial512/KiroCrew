@@ -122,7 +122,11 @@ async def api_status(request: web.Request) -> web.Response:
     view = await invites.status_view()
     sync: dict[str, Any] = {}
     due = store.now() - float(view.get("last_sync_at") or 0.0) >= invites.SYNC_MIN_INTERVAL_SECS
-    if view["connected"] and due and any(r["status"] == "pending" for r in view["invites"]):
+    if (
+        view["connected"]
+        and due
+        and any(r["status"] == "pending" or r["multi_use"] for r in view["invites"])
+    ):
         try:
             sync = await invites.sync(actor=_actor(request))
         except (invites.InviteError, TailscaleApiError) as exc:

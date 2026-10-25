@@ -163,6 +163,8 @@ class _Live:
     awaiting_proof: bool = False
     #: Set by :meth:`AdmissionService.note_failure`: the work returned, but failed.
     failure: str = ""
+    #: The outcome whose terminal write failed; the next tick writes it again.
+    unsettled: OperationState | None = None
     #: Queued messages a session drain merged into this work's turn.
     followers: list[str] = field(default_factory=list)
     #: This work is a queued message merged into another work's turn.
@@ -1079,7 +1081,9 @@ class AdmissionService:
                 live.work = current
         except Exception:
             logger.warning("shared crew: settling %s failed", live.work.work_id, exc_info=True)
-        await self._settle_followers(live)
+            live.unsettled = outcome
+        if live.unsettled is None:
+            await self._settle_followers(live)
         live.ended.set()
         self._maybe_release(live)
 
@@ -1265,6 +1269,9 @@ class AdmissionService:
         at = self._clock() if now is None else now
         counts = {"expired": 0, "deadline": 0, "children": 0, "proven": 0, "parked": 0}
         counts["parked"] = await self._sweep_parked(at)
+        for unsettled, outcome in [(v, o) for v in self._live.values() if (o := v.unsettled)]:
+            unsettled.unsettled = None
+            await self._settle(unsettled, outcome)
         for ticket in self._scheduler.expire(at):
             live = self._live.get(ticket.work_id)
             if live is not None:

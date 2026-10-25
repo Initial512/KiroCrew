@@ -461,6 +461,22 @@ async def test_sync_is_idempotent(fake, config_file) -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_reusable_link_keeps_syncing_after_its_first_accept(
+    fake, config_file, not_restricted, monkeypatch
+) -> None:
+    await invites.connect(KEY, "owner")
+    made = await invites.create_invites([], multi_use=True, alias="", avatar_id="", actor="o")
+    fake.accept(made[0]["id"], "u-1", "a@example.com")
+    await invites.sync(force=True)
+    assert invites.pending_count() == 1
+    fake.accept(made[0]["id"], "u-2", "b@example.com")
+    monkeypatch.setattr(invites, "SYNC_MIN_INTERVAL_SECS", 0.0)
+    async with TestClient(TestServer(_route_app(local_operator_principal("local-app")))) as client:
+        assert (await client.get(routes_invites.STATUS_PATH)).status == 200
+    assert "b@example.com" in _logins(config_file)
+
+
+@pytest.mark.asyncio
 async def test_rate_limit_backs_off_with_retry_after(fake, config_file) -> None:
     await invites.connect(KEY, "owner")
     fake.rate_limit = 1

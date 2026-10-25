@@ -231,6 +231,24 @@ async def test_approve_admits_by_stable_id_only() -> None:
     assert [a["user_id"] for a in access_set.view()["approved"]] == ["31"]
 
 
+def test_a_failed_save_leaves_the_cache_as_the_disk_is(monkeypatch) -> None:
+    _install()
+    assert access_set.note_waiting(_peer("100.64.0.7")) is True
+    access_set.acknowledge_first_share("owner")
+
+    def _full(*_a: Any, **_k: Any) -> None:
+        raise OSError("disk full")
+
+    with monkeypatch.context() as mp:
+        mp.setattr(access_set, "atomic_write", _full)
+        with pytest.raises(OSError):
+            access_set.approve("31", "owner")
+        assert "31" not in access_set.rebuild().approved_user_ids
+    assert [w["user_id"] for w in access_set.view()["waiting"]] == ["31"]
+    access_set.approve("31", "owner")
+    assert [a["user_id"] for a in access_set.view()["approved"]] == ["31"]
+
+
 def test_dismiss_drops_the_row_and_does_not_relist_for_a_day() -> None:
     _install()
     clock = [1000.0]

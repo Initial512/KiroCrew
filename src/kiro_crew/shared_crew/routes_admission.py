@@ -129,7 +129,7 @@ async def api_work_cancel(request: web.Request) -> web.Response:
         )
     target = await service.current_work(work_id)
     if target is not None and target.operation in _OWNER_ONLY_CANCEL:
-        from kiro_crew.dashboard.handlers._shared_access import (
+        from kiro_crew.dashboard.handlers._shared import (
             require_owner_for_dashboard_caller,
         )
 

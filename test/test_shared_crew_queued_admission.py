@@ -505,6 +505,34 @@ async def test_a_failed_cancel_write_keeps_the_queued_ticket(tmp_path, clock):
 
 
 @pytest.mark.asyncio
+async def test_a_failed_completion_write_is_written_again_by_the_next_tick(tmp_path, clock):
+    svc = _service(tmp_path, clock, principal_concurrency=1, crew_concurrency=1)
+    adm = await svc.admit(
+        budget_key=ALICE.id,
+        session_key="dashboard:a",
+        operation=OperationKind.CHAT_TURN,
+        idempotency_key="run-key-0001",
+        digest="a",
+    )
+    assert adm.admitted and adm.work is not None
+    work_id = adm.work.work_id
+    real = svc._store.advance
+
+    async def full_on_completion(work, state, *args, **kwargs):
+        if state is S.COMPLETED:
+            raise RuntimeError("database is locked")
+        return await real(work, state, *args, **kwargs)
+
+    with patch.object(svc._store, "advance", side_effect=full_on_completion):
+        assert await adm.run(asyncio.sleep(0, result=7)) == 7
+    assert svc._store.get_sync(work_id).state is S.RUNNING
+    assert svc.holds_capacity(work_id)
+    await svc.tick()
+    assert svc._store.get_sync(work_id).state is S.COMPLETED
+    assert not svc.holds_capacity(work_id)
+
+
+@pytest.mark.asyncio
 async def test_a_failed_expiry_write_requeues_and_the_next_tick_expires(tmp_path, clock):
     svc = _service(
         tmp_path, clock, principal_concurrency=1, crew_concurrency=1, queue_expiry_seconds=60

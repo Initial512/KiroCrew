@@ -495,8 +495,10 @@ async def _commit_accepts(
 
 
 def pending_count() -> int:
+    """Invites still worth a sync: unaccepted ones, and every reusable link."""
     state = store.load_state()
-    return sum(1 for r in (state.get("invites") or {}).values() if not r.get("accepted_user_id"))
+    rows = (state.get("invites") or {}).values()
+    return sum(1 for r in rows if r.get("multi_use") or not r.get("accepted_user_id"))
 
 
 # ── revoke ──
