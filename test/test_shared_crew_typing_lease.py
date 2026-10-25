@@ -44,6 +44,7 @@ from kiro_crew.shared_crew.typing_lease import (
     END_SENT,
     TypingLeaseRegistry,
 )
+from kiro_crew.testing.wait import await_until
 
 BOUND = 30.0
 
@@ -312,7 +313,7 @@ async def test_the_idle_timer_unlocks_without_another_report():
     state.broadcast_ws = broadcast  # type: ignore[method-assign]
     real.typed("s1", "ws:a", ALICE)
     typing_lease.arm_idle_timer(state, real)
-    await asyncio.wait_for(idle_ended.wait(), timeout=10)
+    await await_until(idle_ended, what="the idle timer ending the lease")
     assert real.holder("s1") is None
     assert state.lease_frames()[-1]["ended"] == END_IDLE
 
