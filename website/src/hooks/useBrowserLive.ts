@@ -31,13 +31,47 @@
 import { useSyncExternalStore } from 'react'
 
 import { api } from '../api/client'
+import { BROWSER_HANDBACK_CHAT_EVENT, type BrowserHandbackSaid } from '../api/client/browserLive'
 import type { BrowserInputEvent } from './useBrowserLive.input'
 import { FrameRing, decodeBrowserFrame, type DecodedBrowserFrame } from './useBrowserLive.frame'
 
 export type BrowserLiveState = 'waiting_allow' | 'live' | 'in_control' | 'done' | 'login_needed' | 'error'
 export type BrowserKind = 'user_chrome' | 'edge' | 'kiro_chromium'
 
-export interface BrowserLiveStep { label: string; status: 'done' | 'active' | 'pending' }
+export interface BrowserLiveStep {
+  label: string
+  status: 'done' | 'active' | 'pending'
+  /** Reported while a loop op (`reflex`) ran: the strip may fold a run of these. */
+  loop?: boolean
+}
+
+/**
+ * A loop op's counters (the `browser_live` event's `loop`): `stop` is null while
+ * it runs, else the loop's own short reason token. Any counter may be null.
+ */
+export interface BrowserLiveLoop {
+  moves: number | null
+  rate: number | null
+  steps: number | null
+  maxSteps: number | null
+  seconds: number | null
+  maxSeconds: number | null
+  stop: string | null
+}
+
+/** The hand-back note's cap, in characters (the gateway's `HANDBACK_NOTE_MAX`). */
+export const HANDBACK_NOTE_MAX = 500
+
+/**
+ * What the card saw happen, with the wall-clock ms it saw it: a new step label
+ * or a new page URL. The replay timeline falls back to this when the gateway
+ * kept no recording (an older gateway, a 404), so its markers still land where
+ * the agent acted.
+ */
+export interface BrowserLiveLogEntry { ts: number; op: 'navigate' | 'other'; label: string; url: string }
+
+/** Entries a turn's log keeps; a long turn drops its oldest. */
+export const LIVE_LOG_MAX = 500
 
 /** The `browser_live` websocket event, as the wire contract spells it. */
 export interface BrowserLiveEvent {
@@ -58,6 +92,9 @@ export interface BrowserLiveEvent {
   turn_over?: boolean
   /** The tab the card showed: still `open` (Open live works), `closed`, or none. */
   tab?: BrowserLiveTab
+  loop?: BrowserLiveLoop | null
+  /** The hand-back choices the agent's waiting op offered; empty: the card's own. */
+  handback_options?: string[]
 }
 
 export type BrowserLiveTab = '' | 'open' | 'closed'
@@ -93,6 +130,12 @@ export interface BrowserLiveTurn {
   turnOver: boolean
   /** Whether the tab the card showed is still there for "Open live". */
   tab: BrowserLiveTab
+  /** Step and URL changes as they arrived (see `BrowserLiveLogEntry`). */
+  log: BrowserLiveLogEntry[]
+  /** The loop op's counters while one runs or just stopped, else null. */
+  loop: BrowserLiveLoop | null
+  /** The hand-back choices the agent offered (empty: the card shows its own). */
+  handbackOptions: string[]
 }
 
 interface SessionRecord {
@@ -157,9 +200,33 @@ function readSteps(raw: unknown): BrowserLiveStep[] {
     if (!s || typeof s !== 'object') continue
     const { label, status } = s as Record<string, unknown>
     if (typeof label !== 'string') continue
-    out.push({ label, status: status === 'done' || status === 'active' ? status : 'pending' })
+    const step: BrowserLiveStep = { label, status: status === 'done' || status === 'active' ? status : 'pending' }
+    if ((s as Record<string, unknown>).loop === true) step.loop = true
+    out.push(step)
   }
   return out
+}
+
+const count = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null)
+
+/** The event's `loop`, field by field; null for anything that is not one. */
+export function readLoop(raw: unknown): BrowserLiveLoop | null {
+  if (!raw || typeof raw !== 'object') return null
+  const d = raw as Record<string, unknown>
+  return {
+    moves: count(d.moves),
+    rate: count(d.rate),
+    steps: count(d.steps),
+    maxSteps: count(d.max_steps),
+    seconds: count(d.seconds),
+    maxSeconds: count(d.max_seconds),
+    stop: typeof d.stop === 'string' && d.stop ? d.stop : null,
+  }
+}
+
+function readOptions(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  return raw.filter((o): o is string => typeof o === 'string' && !!o.trim()).map(o => o.trim().slice(0, 40)).slice(0, 4)
 }
 
 /** Check a wire event field by field; `null` for one the card must not act on. */
@@ -187,8 +254,12 @@ export function readBrowserLiveEvent(raw: unknown): BrowserLiveEvent | null {
     detail: typeof d.detail === 'string' ? d.detail : undefined,
     turn_over: typeof d.turn_over === 'boolean' ? d.turn_over : undefined,
     tab: d.tab === 'open' || d.tab === 'closed' || d.tab === '' ? d.tab : undefined,
+    loop: d.loop === undefined ? undefined : readLoop(d.loop),
+    handback_options: d.handback_options === undefined ? undefined : readOptions(d.handback_options),
   }
 }
+
+const EMPTY_TURNS: readonly BrowserLiveTurn[] = []
 
 const isEnded = (s: BrowserLiveState) => s === 'done' || s === 'error'
 
@@ -224,7 +295,7 @@ class BrowserLiveStore {
     ack: (k: string, seq: number, stream: string) => api.browserLiveAck(k, seq, stream) as Promise<unknown>,
     visibility: (k: string, v: boolean) => api.browserLiveVisibility(k, v) as Promise<unknown>,
     claim: (k: string) => api.browserInputClaim(k) as Promise<unknown>,
-    release: (k: string) => api.browserInputRelease(k) as Promise<unknown>,
+    release: (k: string, said?: BrowserHandbackSaid) => api.browserInputRelease(k, said) as Promise<unknown>,
     input: (k: string, e: BrowserInputEvent) => api.browserInputEvent(k, e) as Promise<unknown>,
     open: (k: string) => api.browserLiveOpenInBrowser(k) as Promise<unknown>,
     reopen: (k: string, turnId: string) => api.browserLiveReopen(k, turnId) as Promise<unknown>,
@@ -248,7 +319,30 @@ class BrowserLiveStore {
     }
   }
 
-  private notify(): void { for (const l of this.listeners) l() }
+  private notify(): void {
+    this.turnLists.clear()
+    for (const l of this.listeners) l()
+  }
+
+  /** Cached per notify, so `useSyncExternalStore` sees a stable snapshot. */
+  private turnLists = new Map<string, readonly BrowserLiveTurn[]>()
+
+  /** Every turn the page has seen for a session, oldest first. */
+  sessionTurns(sessionKey: string | null): readonly BrowserLiveTurn[] {
+    if (!sessionKey) return EMPTY_TURNS
+    const cached = this.turnLists.get(sessionKey)
+    if (cached) return cached
+    const s = this.sessions.get(sessionKey)
+    const list = s ? [...s.turns.values()] : EMPTY_TURNS
+    this.turnLists.set(sessionKey, list)
+    return list
+  }
+
+  /** One turn's record by id. */
+  turn(sessionKey: string | null, turnId: string | null): BrowserLiveTurn | null {
+    if (!sessionKey || !turnId) return null
+    return this.sessions.get(sessionKey)?.turns.get(turnId) ?? null
+  }
 
   subscribe = (l: Listener): (() => void) => {
     this.listeners.add(l)
@@ -269,11 +363,18 @@ class BrowserLiveStore {
       s.turns.set(closed.turnId, closed)
     }
     const turnOver = ev.turn_over ?? (isEnded(ev.state) || (prev?.turnOver ?? false))
+    const url = ev.url ?? prev?.url ?? ''
+    let log = prev?.log ?? []
+    if (url && url !== (prev?.url ?? '')) log = [...log, { ts: now, op: 'navigate' as const, label: url, url }]
+    if (ev.step && (ev.step.label !== prev?.step?.label || ev.step.index !== prev?.step?.index)) {
+      log = [...log, { ts: now, op: 'other' as const, label: ev.step.label, url }]
+    }
+    if (log.length > LIVE_LOG_MAX) log = log.slice(log.length - LIVE_LOG_MAX)
     const next: BrowserLiveTurn = {
       sessionKey: ev.session_key,
       turnId: ev.turn_id,
       state: ev.state,
-      url: ev.url ?? prev?.url ?? '',
+      url,
       title: ev.title ?? prev?.title ?? '',
       browser: ev.browser ?? prev?.browser ?? null,
       headless: ev.headless ?? prev?.headless ?? false,
@@ -295,6 +396,9 @@ class BrowserLiveStore {
       controlError: prev && ev.state === prev.state && !isEnded(ev.state) ? prev.controlError : '',
       turnOver,
       tab: ev.tab ?? prev?.tab ?? '',
+      log,
+      loop: ev.loop !== undefined ? ev.loop : prev?.loop ?? null,
+      handbackOptions: ev.handback_options ?? prev?.handbackOptions ?? [],
     }
     s.turns.set(next.turnId, next)
     s.current = next
@@ -498,13 +602,22 @@ class BrowserLiveStore {
    * every op the server refuses. The failure text goes on the record for the
    * card's ErrorNotice.
    */
-  async release(sessionKey: string): Promise<boolean> {
+  async release(sessionKey: string, said?: BrowserHandbackSaid): Promise<boolean> {
     const s = this.session(sessionKey)
     const before = s.current
     if (before?.state !== 'in_control') return false
     this.setState(sessionKey, 'live', '')
+    const note = said?.note?.trim().slice(0, HANDBACK_NOTE_MAX) || undefined
+    const choice = said?.choice?.trim().slice(0, 40) || undefined
+    const body = note || choice ? { ...(note ? { note } : {}), ...(choice ? { choice } : {}) } : undefined
     try {
-      await this.writes.release(sessionKey)
+      const answer = await (body ? this.writes.release(sessionKey, body) : this.writes.release(sessionKey))
+      if (body && (answer as { delivered?: unknown } | null)?.delivered === 'chat') {
+        // No agent op is waiting to read it (the turn is over): it becomes the
+        // person's next chat message, exactly as if typed in the composer.
+        const text = [choice, note].filter(Boolean).join(': ')
+        window.dispatchEvent(new CustomEvent(BROWSER_HANDBACK_CHAT_EVENT, { detail: { slotKey: sessionKey, text } }))
+      }
       return true
     } catch (e) {
       if (s.current?.turnId === before.turnId) this.setState(sessionKey, 'in_control', errorText(e))
@@ -616,5 +729,32 @@ export function useBrowserLiveIsCurrent(sessionKey: string | null, turnId: strin
     browserLiveStore.subscribe,
     () => Boolean(sessionKey && turnId) && browserLiveStore.isCurrentTurn(sessionKey as string, turnId),
     () => false,
+  )
+}
+
+/** Every turn this page has seen for a session (the replay's turn picker). */
+export function useBrowserLiveSessionTurns(sessionKey: string | null): readonly BrowserLiveTurn[] {
+  return useSyncExternalStore(
+    browserLiveStore.subscribe,
+    () => browserLiveStore.sessionTurns(sessionKey),
+    () => EMPTY_TURNS,
+  )
+}
+
+/** The session's current turn record (the stage follows it when not pinned). */
+export function useBrowserLiveCurrent(sessionKey: string | null): BrowserLiveTurn | null {
+  return useSyncExternalStore(
+    browserLiveStore.subscribe,
+    () => browserLiveStore.current(sessionKey),
+    () => null,
+  )
+}
+
+/** One turn's record by id. */
+export function useBrowserLiveTurnById(sessionKey: string | null, turnId: string | null): BrowserLiveTurn | null {
+  return useSyncExternalStore(
+    browserLiveStore.subscribe,
+    () => browserLiveStore.turn(sessionKey, turnId),
+    () => null,
   )
 }

@@ -382,6 +382,25 @@
       return n;
     },
 
+    // Visible elements matching a CSS selector, as {t, x, y} (short text and the
+    // box centre in CSS pixels): the `reflex` op's game/grid state. Read-only;
+    // form fields are skipped so a typed value is never read back. A selector the
+    // page rejects answers {ok:false}.
+    cells: function (selector) {
+      var found;
+      try { found = document.querySelectorAll(String(selector)); } catch (e) { return { ok: false, code: "bad_selector" }; }
+      var out = [];
+      for (var i = 0; i < found.length && out.length < 400; i++) {
+        var el = found[i];
+        var tag = (el.tagName || "").toLowerCase();
+        if (tag === "input" || tag === "textarea" || tag === "select") continue;
+        if (!visible(el)) continue;
+        var b = el.getBoundingClientRect();
+        out.push({ t: (el.textContent || "").trim().slice(0, 40), x: b.left + b.width / 2, y: b.top + b.height / 2 });
+      }
+      return { ok: true, cells: out };
+    },
+
     // Boxes of visible <canvas> elements in the viewport, CSS pixels
     // [left, top, width, height]: the only targets the screenshot locator may
     // click, because the outline cannot see inside them.

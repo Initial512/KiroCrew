@@ -4746,6 +4746,11 @@
         "credentials": {
           "enabled": null,
           "domains": []
+        },
+        "recording": {
+          "enabled": true,
+          "max_session_mb": 200,
+          "max_total_mb": 1024
         }
       }
     },
@@ -4911,6 +4916,66 @@
       "hasChildren": false,
       "enumValues": null,
       "defaultValue": null
+    },
+    {
+      "path": "browser.recording",
+      "kind": "core",
+      "type": "object",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "label": "Turn replay",
+      "help": "The per-turn replay of the agent's browsing, and how much of it is kept.",
+      "hasChildren": true,
+      "enumValues": null,
+      "defaultValue": {
+        "enabled": true,
+        "max_session_mb": 200,
+        "max_total_mb": 1024
+      }
+    },
+    {
+      "path": "browser.recording.enabled",
+      "kind": "core",
+      "type": "boolean",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "label": "Record browser turns for replay",
+      "help": "Keep a replay of each turn the agent browses: masked pictures of the page and the clicks, typing and scrolls, so you can play the turn back later. Password fields are covered before a picture is kept, and typed secrets are kept as a length only. Kept only on this machine, and removed with the chat.",
+      "hasChildren": false,
+      "enumValues": null,
+      "defaultValue": true
+    },
+    {
+      "path": "browser.recording.max_session_mb",
+      "kind": "core",
+      "type": "integer",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "label": "Replay space per chat (MB)",
+      "help": "The most replay one chat keeps. Past it the chat's oldest turns are removed first.",
+      "hasChildren": false,
+      "enumValues": null,
+      "defaultValue": 200
+    },
+    {
+      "path": "browser.recording.max_total_mb",
+      "kind": "core",
+      "type": "integer",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "label": "Replay space in total (MB)",
+      "help": "The most replay all chats keep together. Past it the oldest turns are removed first, whichever chat they belong to.",
+      "hasChildren": false,
+      "enumValues": null,
+      "defaultValue": 1024
     },
     {
       "path": "decisions",

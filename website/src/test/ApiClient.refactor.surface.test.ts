@@ -196,6 +196,7 @@ const API_KEY_ORDER = [
   'publishArtifactToCoreProvider', 'publishToProvider', 'deploySites', 'tipsNext', 'tipsStatus',
   'tipsFeedback', 'browserLiveVisibility', 'browserLiveAck', 'browserInputClaim', 'browserInputRelease',
   'browserInputEvent', 'browserLiveOpenInBrowser', 'browserLiveReopen', 'browserLiveClose',
+  'browserLiveRecordings', 'browserLiveRecording',
 ]
 
 const NESTED_KEY_ORDER: Record<string, string[]> = {

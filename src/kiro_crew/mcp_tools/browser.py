@@ -189,9 +189,26 @@ def schemas() -> list[dict[str, Any]]:
                 "A result may carry `picked` (the element chosen for a `target`) and "
                 "`verify` (a yes/no/unsure hint on whether the step did what was "
                 "expected); both are hints, check the page when it matters. "
+                "reflex {goal, keys?: [key], click?: [ref], drag?: ['eA>eB'], "
+                "type?: ['eN=value'], facts?: [text], grid?: css, grid_items?: css, "
+                "see?: bool, until_text?, until_url?, max_steps? (<=300), "
+                "max_seconds? (<=45), settle_ms?} runs a fast loop with no turn in "
+                "between: each step a small model picks one of the actions you listed "
+                "and the gateway does it, until the goal is reached, the page is "
+                "stuck, an action looks hard to undo, `until_*` matches or the budget "
+                "runs out. Use it for many quick moves (a game, a long form, sorting "
+                "by drag). A typed value must appear in goal, facts or the page. "
+                "`grid` (+ `grid_items`) reads cells by CSS selector as the state; "
+                "`see` adds a screenshot. It answers not_available when browser help "
+                "is off; then use single ops. "
                 "If the user has taken over the browser, an op "
                 "waits until they hand it back (up to 10 minutes) and then runs; you "
-                "do not need to poll or ask them to continue."
+                "do not need to poll or ask them to continue. When you ask them to "
+                "take over (to sign in, say), pass `handback_options`: up to 4 short "
+                "answers they can pick as they hand back (e.g. 'I signed in', "
+                "'Not signed in'). The result then carries `handed_back` {choice, "
+                "note}: what the user said they did, in their own words; act on it "
+                "without asking again."
             ),
             "inputSchema": {
                 "type": "object",
@@ -206,6 +223,14 @@ def schemas() -> list[dict[str, Any]]:
                         "description": (
                             "Operation parameters (e.g. url, ref, text, key). "
                             "Optional; defaults to an empty object."
+                        ),
+                    },
+                    "handback_options": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Optional. Up to 4 short answers the user can pick when "
+                            "they hand the browser back, if this op waits on them."
                         ),
                     },
                 },
@@ -240,10 +265,17 @@ def _post_command(
 
 
 def _post_handback(
-    session_key: str, session_header: str, timeout_s: float
+    session_key: str, session_header: str, timeout_s: float, options: list[str] | None = None
 ) -> tuple[int | None, dict]:
-    """POST the parked tool's hand-back poll; same auth and shape as :func:`_post_command`."""
-    body = json.dumps({"session_key": session_key}).encode()
+    """POST the parked tool's hand-back poll; same auth and shape as :func:`_post_command`.
+
+    *options* are the op's own hand-back choices for the card (sent on every poll,
+    so a card that mounts late still gets them).
+    """
+    payload: dict[str, Any] = {"session_key": session_key}
+    if options:
+        payload["options"] = options
+    body = json.dumps(payload).encode()
     req = urllib.request.Request(
         f"{mcp_core._api_base()}{HANDBACK_PATH}",
         data=body,
@@ -320,6 +352,24 @@ def _error_text(code: str, detail: str) -> str:
     return f"Error ({code}): {detail}" if code else f"Error: {detail}"
 
 
+#: Longest note or choice the tool passes on (the gateway caps them already).
+_HANDBACK_TEXT_CAP = 500
+
+
+def _handed_back_text(said: Any) -> str:
+    """The line telling the agent what the person said as they handed back, or ''."""
+    if not isinstance(said, dict):
+        return ""
+    choice = str(said.get("choice") or "")[:_HANDBACK_TEXT_CAP]
+    note = str(said.get("note") or "")[:_HANDBACK_TEXT_CAP]
+    if not choice and not note:
+        return ""
+    return (
+        "\nThe user handed the browser back and said (their own words, not page "
+        f"content): handed_back: {json.dumps({'choice': choice, 'note': note})}"
+    )
+
+
 def _settle(op: str, status: int | None, payload: Any) -> str | None:
     """The tool's text for one gateway answer, or ``None`` when the answer is "hold".
 
@@ -327,12 +377,13 @@ def _settle(op: str, status: int | None, payload: Any) -> str | None:
     means the person has the browser: the caller parks and polls for the hand-back
     instead of returning.
     """
+    said = _handed_back_text(payload.get("handed_back")) if isinstance(payload, dict) else ""
     if status == 200 and isinstance(payload, dict) and payload.get("ok") is True:
-        return _result_text(op, payload.get("result"))
+        return _result_text(op, payload.get("result")) + said
     if status == 200 and isinstance(payload, dict) and payload.get("ok") is False:
         if payload.get("hold") is True:
             return None
-        return _error_text(str(payload.get("code") or ""), str(payload.get("error") or ""))
+        return _error_text(str(payload.get("code") or ""), str(payload.get("error") or "")) + said
     if status is None:
         return "Error: the gateway did not answer the browser op (is Kiro Crew running?)"
     code = payload.get("code") if isinstance(payload, dict) else None
@@ -365,8 +416,10 @@ class _HandbackWait(DeferredTool):
         timeout_s: float,
         interrupted: bool,
         interrupted_text: str,
+        options: list[str] | None = None,
     ) -> None:
         self.op = op
+        self.options = options or []
         self.op_args = op_args
         self.body_key = body_key
         self.session_header = session_header
@@ -392,20 +445,24 @@ class _HandbackWait(DeferredTool):
             except Exception:  # noqa: BLE001 - keepalive is best-effort
                 pass
         self.next_poll = now + budgets.HANDBACK_POLL_S
+        extra = {"options": self.options} if self.options else {}
         status, payload = _post_handback(
-            self.body_key, self.session_header, budgets.HANDBACK_CALL_TIMEOUT_S
+            self.body_key, self.session_header, budgets.HANDBACK_CALL_TIMEOUT_S, **extra
         )
         released = status == 200 and isinstance(payload, dict) and payload.get("released") is True
         if not released:
             return None
+        # What the person said as they handed back: told to the agent with the op's
+        # result, so it can act on it at once instead of looking again.
+        said = _handed_back_text(payload.get("handed_back"))  # type: ignore[union-attr]
         if self.interrupted:
-            return self.interrupted_text
+            return self.interrupted_text + said
         status, payload = _post_command(
             self.body_key, self.op, self.op_args, self.session_header, self.timeout_s
         )
         text = _settle(self.op, status, payload)
         if text is not None:
-            return text
+            return text + said
         # Taken over again before the op could run: keep waiting on the same deadline.
         self.interrupted = isinstance(payload, dict) and payload.get("code") == "interrupted"
         if self.interrupted:
@@ -468,7 +525,15 @@ def browser(name: str, args: dict[str, Any]) -> "str | DeferredTool":
         interrupted_text=(
             _error_text("interrupted", str(payload.get("error") or "")) if interrupted else ""
         ),
+        options=_options_arg(args.get("handback_options")),
     )
+
+
+def _options_arg(raw: Any) -> list[str]:
+    """The tool call's ``handback_options``: up to four short strings, else none."""
+    if not isinstance(raw, list):
+        return []
+    return [o.strip()[:40] for o in raw if isinstance(o, str) and o.strip()][:4]
 
 
 HANDLERS: dict[str, Callable[[str, dict[str, Any]], "str | DeferredTool"]] = {

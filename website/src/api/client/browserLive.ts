@@ -14,7 +14,27 @@ export type { BrowserInputEvent }
 
 export interface BrowserLiveOk { ok: boolean }
 
-export function createBrowserLiveEndpoints({ post, j }: ClientTransport) {
+/**
+ * The window event a hand-back note becomes when no agent op is waiting to read
+ * it: `{ slotKey, text }`. The chat page sends `text` as the person's message.
+ */
+export const BROWSER_HANDBACK_CHAT_EVENT = 'mc:browser-handback-chat'
+
+/** What the person says as they hand back; either part may be left out. */
+export interface BrowserHandbackSaid { note?: string; choice?: string }
+export interface BrowserLiveRelease extends BrowserLiveOk { delivered?: '' | 'agent' | 'chat' }
+
+/** The recordings routes' prefix for one session (the session key is a path segment). */
+export function browserLiveRecordingsPath(sessionKey: string): string {
+  return `/api/browser/live/${encodeURIComponent(sessionKey)}/recordings`
+}
+
+/** One recorded frame's JPEG, as an `<img>` / `Image()` source (same-origin, cookie auth). */
+export function browserLiveFrameUrl(sessionKey: string, turnId: string, index: number): string {
+  return `${browserLiveRecordingsPath(sessionKey)}/${encodeURIComponent(turnId)}/frames/${index}.jpg`
+}
+
+export function createBrowserLiveEndpoints({ get, post, j }: ClientTransport) {
   return {
     browserLive: {
       /** The card is (or is not) on screen: an off-screen card stops the screencast. */
@@ -30,8 +50,12 @@ export function createBrowserLiveEndpoints({ post, j }: ClientTransport) {
       /** Hand mouse and keyboard to the person; an agent op waits until they hand back. */
       browserInputClaim: (sessionKey: string) =>
         post('/api/browser/input/claim', { session_key: sessionKey }).then(j) as Promise<BrowserLiveOk>,
-      browserInputRelease: (sessionKey: string) =>
-        post('/api/browser/input/release', { session_key: sessionKey }).then(j) as Promise<BrowserLiveOk>,
+      /** Hand back, optionally with what the person did (`note`, their own words, at
+       *  most 500 characters; `choice`, one hand-back option). `delivered` says
+       *  where it went: `agent` (its waiting op takes it), `chat` (no turn is left
+       *  to: the card sends it as the person's next message), or `''`. */
+      browserInputRelease: (sessionKey: string, said?: BrowserHandbackSaid) =>
+        post('/api/browser/input/release', { session_key: sessionKey, ...(said ?? {}) }).then(j) as Promise<BrowserLiveRelease>,
       /** One mouse, wheel or key event, in frame pixels. Never logged on either side. */
       browserInputEvent: (sessionKey: string, event: BrowserInputEvent) =>
         post('/api/browser/input/event', { session_key: sessionKey, event }).then(j) as Promise<BrowserLiveOk>,
@@ -45,6 +69,17 @@ export function createBrowserLiveEndpoints({ post, j }: ClientTransport) {
       /** Fold a reopened view back to its done line. */
       browserLiveClose: (sessionKey: string) =>
         post('/api/browser/live/close', { session_key: sessionKey }).then(j) as Promise<BrowserLiveOk>,
+      /** The session's recorded turns (the replay's turn picker), parsed loosely by
+       *  `readRecordingList`. Resolves `null` on a 404: a gateway that keeps no
+       *  recordings is a designed answer (the card replays its own frames), not a
+       *  failure worth an error report. */
+      browserLiveRecordings: (sessionKey: string, signal?: AbortSignal) =>
+        get(browserLiveRecordingsPath(sessionKey), undefined, signal)
+          .then(r => (r.status === 404 ? null : j(r))) as Promise<unknown>,
+      /** One turn's frame index and action events (parsed by `readRecording`); `null` on a 404. */
+      browserLiveRecording: (sessionKey: string, turnId: string, signal?: AbortSignal) =>
+        get(`${browserLiveRecordingsPath(sessionKey)}/${encodeURIComponent(turnId)}`, undefined, signal)
+          .then(r => (r.status === 404 ? null : j(r))) as Promise<unknown>,
     },
   }
 }

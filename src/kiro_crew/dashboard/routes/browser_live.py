@@ -44,3 +44,15 @@ def register(app: web.Application) -> None:
     app.router.add_post("/api/browser/input/claim", handlers.api_browser_input_claim)
     app.router.add_post("/api/browser/input/release", handlers.api_browser_input_release)
     app.router.add_post("/api/browser/input/event", handlers.api_browser_input_event)
+    # The turn replay (owner-only GETs, ``handlers/browser_recordings.py``). Every
+    # path segment is matched against a strict pattern inside the handler.
+    app.router.add_get(
+        "/api/browser/live/{session}/recordings", handlers.api_browser_recordings_list
+    )
+    app.router.add_get(
+        "/api/browser/live/{session}/recordings/{turn_id}", handlers.api_browser_recording_get
+    )
+    app.router.add_get(
+        "/api/browser/live/{session}/recordings/{turn_id}/frames/{frame}",
+        handlers.api_browser_recording_frame,
+    )

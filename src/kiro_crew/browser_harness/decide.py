@@ -13,6 +13,8 @@ consent stands), three things may happen, each one request through
   outlines (or screenshots, with the ``browser_images`` scope) are compared and the
   answer rides on the op result as a ``verify`` hint. The op's own result is never
   changed.
+* **reflex** -- one request per step of the ``reflex`` op's loop
+  (:func:`reflex_step`); the loop itself lives in ``browser_harness.reflex``.
 * **box** -- a ``click``/``hover`` whose target is not in the outline, on a page
   with a visible ``<canvas>``, may be located on a screenshot. Used only when the
   box's centre is inside a canvas.
@@ -466,3 +468,101 @@ async def _snapshot(ctx: _ops.OpContext) -> tuple[str, str, list[Any]] | None:
         return None
     outline = _ops.format_outline(data["nodes"])[: _ops.TEXT_CAP]
     return outline, str(data.get("title", "")), data["nodes"]
+
+
+async def reflex_step(
+    session_key: str,
+    state: dict[str, Any],
+    options: dict[str, str],
+    risk_labels: list[str],
+    *,
+    subject: str,
+    frame: bytes | None,
+    step: int,
+) -> dict[str, Any] | None:
+    """One step of the ``reflex`` loop (``browser_harness.reflex``): one request.
+
+    A Choice ``next`` over *options* (option name -> label), the ``done``,
+    ``stuck`` and ``off_path`` Nouls, and a ``risk_<i>`` Noul per label in
+    *risk_labels*. With *frame* the masked screenshot goes along under the image
+    scope and the questions name it. Answers ``{pick, done, stuck, off_path,
+    risk: [p per label]}`` or ``None`` for every refusal; the loop decides.
+    """
+    from kiro_crew.decisions import gate
+    from kiro_crew.decisions.types import Choice, ImageAsset, Noul, Question
+
+    images = None
+    scopes: tuple[str, ...] = ()
+    named = f"`{subject}`"
+    if frame is not None:
+        screen = str(uuid.uuid4())
+        state = {**state, "screen": screen}
+        images = {screen: ImageAsset(frame)}
+        scopes = (IMAGE_SCOPE,)
+        named = "`screen`"
+    questions: list[Question] = [
+        Choice(
+            id="next",
+            prompt=f"Which action moves {named} closest to `goal`?",
+            options=list(options),
+            criteria=dict(options),
+        ),
+        Noul(
+            id="done",
+            prompt=f"Does {named} show that `goal` has been reached?",
+            true_means="The goal is fully reached in what is shown.",
+            false_means="Something the goal asks for is still left to do.",
+        ),
+        Noul(
+            id="stuck",
+            prompt=f"Does {named} show that no further progress toward `goal` is possible?",
+            true_means=(
+                "The page shows the task can no longer continue, such as a game over "
+                "or a blocking error."
+            ),
+            false_means="There is still a way to keep going.",
+        ),
+        Noul(
+            id="off_path",
+            prompt=f"Is {named} about something unrelated to `goal`?",
+            true_means=(
+                "The page shown is not where the goal can be done, such as a sign-in "
+                "wall or another site."
+            ),
+            false_means="The page shown is where the goal is being done.",
+        ),
+    ]
+    for i, label in enumerate(risk_labels):
+        questions.append(
+            Noul(
+                id=f"risk_{i}",
+                prompt=(
+                    f"Would doing '{label}' on this page be hard to undo, such as "
+                    "paying, deleting, sending or publishing?"
+                ),
+                true_means="It commits something that cannot simply be taken back.",
+                false_means=(
+                    "It only moves, selects, plays or fills in, and can be undone or redone."
+                ),
+            )
+        )
+    answers = await gate.decide(
+        POINT,
+        state,
+        questions,
+        session_key=session_key,
+        extra={"kind": "reflex", "step": step},
+        scopes=scopes,
+        images=images,
+        max_wait_s=IMAGE_WAIT_S if images else TEXT_WAIT_S,
+    )
+    if answers is None:
+        return None
+    choice = answers.get("next")
+    return {
+        "pick": str(choice.value) if choice is not None else None,
+        "done": _noul_value(answers, "done"),
+        "stuck": _noul_value(answers, "stuck"),
+        "off_path": _noul_value(answers, "off_path"),
+        "risk": [_noul_value(answers, f"risk_{i}") for i in range(len(risk_labels))],
+    }

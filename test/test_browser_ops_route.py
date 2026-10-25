@@ -329,7 +329,11 @@ async def test_the_handback_poll_waits_briefly_on_the_release_signal() -> None:
     hub = hub_mod.get_live_hub()
     hub.turn_started("k", "t1")
     resp = await mod.api_browser_handback(_request({"session_key": "k"}))
-    assert json.loads(resp.body) == {"released": True, "hold_timeout_s": mod.HOLD_TIMEOUT_S}
+    assert json.loads(resp.body) == {
+        "released": True,
+        "hold_timeout_s": mod.HOLD_TIMEOUT_S,
+        "handed_back": None,
+    }
     await hub.claim("k")
     poll = asyncio.ensure_future(mod.api_browser_handback(_request({"session_key": "k"})))
     for _ in range(5):

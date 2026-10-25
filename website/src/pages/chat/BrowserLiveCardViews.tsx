@@ -1,8 +1,8 @@
 import { useRef, useState, type RefObject } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
 import {
-  Check, ExternalLink, Globe, Hand, Lock, LogIn, Maximize2, Minimize2,
-  Monitor, MoreHorizontal, MousePointer2, Pause, Play, ShieldCheck, X,
+  Check, ExternalLink, Globe, Hand, History, Lock, LogIn, Maximize2,
+  Monitor, MoreHorizontal, MousePointer2, PanelRight, Play, ShieldCheck, Undo2, X,
 } from 'lucide-react'
 
 import { Btn } from '../../components/ui'
@@ -11,10 +11,13 @@ import ErrorNotice from '../../components/ErrorNotice'
 import { i18nT } from '../../i18n/t'
 import { fmtDuration } from '../../i18n/format'
 import { sanitizeLlmOutput } from '../../utils/sanitize'
-import type { BrowserKind, BrowserLiveTurn } from '../../hooks/useBrowserLive'
+import type { BrowserKind, BrowserLiveStep, BrowserLiveTurn } from '../../hooks/useBrowserLive'
+import type { BrowserHandbackSaid } from '../../api/client/browserLive'
 import type { FrameSize } from '../../hooks/useBrowserLive.input'
 import BrowserLiveCardCanvas, { type BrowserLiveCanvasHandle } from './BrowserLiveCardCanvas'
 import { frameBoxStyle, useFrameMaxHeight } from './browserLiveFit'
+import { BrowserLiveHandbackBar } from './BrowserLiveHandback'
+import { BrowserLiveLoopLine, FoldedSteps, foldLoopRuns, useOpenRuns } from './BrowserLiveLoop'
 
 /**
  * The three faces of BrowserLiveCard. Each is the INSIDE of the card's one
@@ -105,15 +108,16 @@ export function BrowserLiveAllowView({ turn, onSwitchToBrowser, onUseKiroBrowser
 
 // ---- Live and In control -----------------------------------------------------
 
-export function BrowserLiveLiveView({ turn, grown, onScreen, canvasRef, onClaim, onRelease, onOpenInBrowser, onToggleExpand, onCloseLive }: {
+export function BrowserLiveLiveView({ turn, onScreen, canvasRef, onClaim, onRelease, onOpenInBrowser, onExpand, onCloseLive }: {
   turn: BrowserLiveTurn
-  grown: boolean
   onScreen: boolean
   canvasRef: RefObject<BrowserLiveCanvasHandle>
   onClaim: () => void
-  onRelease: () => void
+  /** Hand back; with what the person said on the hand-back bar, when they said it. */
+  onRelease: (said?: BrowserHandbackSaid) => void
   onOpenInBrowser: () => void
-  onToggleExpand: () => void
+  /** Show the picture big: the side panel's Preview tab, or a full-screen sheet. */
+  onExpand: () => void
   /** A reopened view (the turn is over): fold it back to the done line. */
   onCloseLive?: () => void
 }) {
@@ -128,6 +132,7 @@ export function BrowserLiveLiveView({ turn, grown, onScreen, canvasRef, onClaim,
   const boxRef = useRef<HTMLDivElement>(null)
   const [frameSize, setFrameSize] = useState<FrameSize | null>(null)
   const maxHeight = useFrameMaxHeight(rootRef, boxRef)
+  const [openRuns, toggleRun] = useOpenRuns()
 
   // Narrow-first: one column at every width. The header's address pill is the
   // only flexible item (min-w-0 + truncate), the browser chip leaves below `sm`,
@@ -150,7 +155,7 @@ export function BrowserLiveLiveView({ turn, grown, onScreen, canvasRef, onClaim,
                 {i18nT('pages.chat.browserLiveCard.open_in', { browser: target })}
               </Btn>
             )}
-            <Btn primary onClick={onRelease} className="whitespace-nowrap shrink-0">
+            <Btn primary onClick={() => onRelease()} className="whitespace-nowrap shrink-0">
               {i18nT('pages.chat.browserLiveCard.hand_back')}
               <kbd className="ml-0.5 rounded border border-accent-fg/40 px-1 py-px font-sans text-[10px] leading-4">Esc</kbd>
             </Btn>
@@ -191,16 +196,16 @@ export function BrowserLiveLiveView({ turn, grown, onScreen, canvasRef, onClaim,
                 </Btn>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="min-w-[190px]">
+                <DropdownMenuItem onSelect={onExpand} data-testid="browser-live-expand">
+                  <Maximize2 size={14} aria-hidden="true" />
+                  {i18nT('pages.chat.browserLiveCard.expand')}
+                </DropdownMenuItem>
                 {target && (
                   <DropdownMenuItem onSelect={onOpenInBrowser}>
                     <ExternalLink size={14} aria-hidden="true" />
                     {i18nT('pages.chat.browserLiveCard.open_in', { browser: target })}
                   </DropdownMenuItem>
                 )}
-                <DropdownMenuItem onSelect={onToggleExpand}>
-                  {grown ? <Minimize2 size={14} aria-hidden="true" /> : <Maximize2 size={14} aria-hidden="true" />}
-                  {grown ? i18nT('pages.chat.browserLiveCard.shrink') : i18nT('pages.chat.browserLiveCard.expand')}
-                </DropdownMenuItem>
                 {turn.turnOver && onCloseLive && (
                   <DropdownMenuItem onSelect={onCloseLive} data-testid="browser-live-close-live">
                     <X size={14} aria-hidden="true" />
@@ -240,7 +245,7 @@ export function BrowserLiveLiveView({ turn, grown, onScreen, canvasRef, onClaim,
             turnId={turn.turnId}
             visible={onScreen}
             interactive={inControl}
-            onHandBack={onRelease}
+            onHandBack={() => onRelease()}
             onClaim={inControl ? undefined : onClaim}
             onFrameSize={setFrameSize}
             aria-label={inControl ? i18nT('pages.chat.browserLiveCard.frame_label_in_control', { host: hostOf(turn.url) }) : frameLabel}
@@ -270,27 +275,36 @@ export function BrowserLiveLiveView({ turn, grown, onScreen, canvasRef, onClaim,
         )}
       </div>
 
+      {inControl && <BrowserLiveHandbackBar offered={turn.handbackOptions} onHandBack={onRelease} />}
+
+      {!inControl && turn.loop && <BrowserLiveLoopLine loop={turn.loop} className="px-3 py-2 border-t border-border" />}
+
       {/* Step strip */}
       {!inControl && turn.steps.length > 0 && (
         <ol className="flex flex-wrap items-center gap-1.5 px-3 py-2 border-t border-border" aria-label={i18nT('pages.chat.browserLiveCard.steps')}>
-          {turn.steps.map((s, i) => (
-            <li
-              key={`${i}-${s.label}`}
-              aria-current={s.status === 'active' ? 'step' : undefined}
-              className={`flex items-center gap-1 rounded-full border px-2 py-0.5 text-[12px] leading-4 ${
-                s.status === 'done' ? 'border-border text-text'
-                : s.status === 'active' ? 'border-accent text-accent bg-accent-subtle'
-                : 'border-border text-muted'
-              }`}
-            >
-              {s.status === 'done' && <Check size={11} aria-hidden="true" className="text-ok" />}
-              {s.status === 'active' && <span aria-hidden="true" className="inline-block size-1.5 rounded-full bg-accent" />}
-              <span className="truncate max-w-[180px]">{sanitizeLlmOutput(s.label).slice(0, 60)}</span>
-            </li>
-          ))}
+          {foldLoopRuns(turn.steps, st => !!st.loop, openRuns).map(entry => entry.kind === 'folded'
+            ? <li key={`f${entry.run}`}><FoldedSteps count={entry.count} onOpen={() => toggleRun(entry.run)} /></li>
+            : <StepChip key={`${entry.index}-${entry.item.label}`} step={entry.item} />)}
         </ol>
       )}
     </div>
+  )
+}
+
+function StepChip({ step: s }: { step: BrowserLiveStep }) {
+  return (
+    <li
+      aria-current={s.status === 'active' ? 'step' : undefined}
+      className={`flex items-center gap-1 rounded-full border px-2 py-0.5 text-[12px] leading-4 ${
+        s.status === 'done' ? 'border-border text-text'
+        : s.status === 'active' ? 'border-accent text-accent bg-accent-subtle'
+        : 'border-border text-muted'
+      }`}
+    >
+      {s.status === 'done' && <Check size={11} aria-hidden="true" className="text-ok" />}
+      {s.status === 'active' && <span aria-hidden="true" className="inline-block size-1.5 rounded-full bg-accent" />}
+      <span className="truncate max-w-[180px]">{sanitizeLlmOutput(s.label).slice(0, 60)}</span>
+    </li>
   )
 }
 
@@ -303,11 +317,11 @@ function durationLabel(turn: BrowserLiveTurn): string {
   return fmtDuration([[Math.floor(s / 60), 'minute'], [s % 60, 'second']], { dropZero: true })
 }
 
-export function BrowserLiveDoneRow({ turn, onScreen, canvasRef, replaying, onReplay, onOpenInBrowser, canOpenLive, onOpenLive }: {
+export function BrowserLiveDoneRow({ turn, onScreen, canvasRef, onReplay, onOpenInBrowser, canOpenLive, onOpenLive }: {
   turn: BrowserLiveTurn
   onScreen: boolean
   canvasRef: RefObject<BrowserLiveCanvasHandle>
-  replaying: boolean
+  /** Open the big view on this turn's replay, from its first step. */
   onReplay: () => void
   onOpenInBrowser: () => void
   /** The tab is still open and this is the session's newest card: "Open live" works. */
@@ -384,9 +398,9 @@ export function BrowserLiveDoneRow({ turn, onScreen, canvasRef, replaying, onRep
             </Btn>
           )}
           {turn.hasFrame && (
-            <Btn onClick={onReplay} aria-pressed={replaying}>
-              {replaying ? <Pause size={13} aria-hidden="true" /> : <Play size={13} aria-hidden="true" />}
-              {replaying ? i18nT('pages.chat.browserLiveCard.stop_replay') : i18nT('pages.chat.browserLiveCard.replay_steps', { count })}
+            <Btn onClick={onReplay} data-testid="browser-live-replay">
+              <Play size={13} aria-hidden="true" />
+              {i18nT('pages.chat.browserLiveCard.replay_steps', { count })}
             </Btn>
           )}
           {target && !canOpenLive && (
@@ -397,6 +411,55 @@ export function BrowserLiveDoneRow({ turn, onScreen, canvasRef, replaying, onRep
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+// ---- Shown big elsewhere ------------------------------------------------------
+
+/**
+ * The card while its picture is in the big view: one line saying what it shows
+ * and where, with Bring back. Same motion element as every other face, so the
+ * fold reads as the card shrinking, not as a swap.
+ */
+export function BrowserLiveStagedRow({ turn, replaying, surface, onBringBack }: {
+  turn: BrowserLiveTurn
+  replaying: boolean
+  surface: 'panel' | 'sheet'
+  onBringBack: () => void
+}) {
+  const reduce = useReducedMotion()
+  const inControl = turn.state === 'in_control'
+  const live = !replaying && (turn.state === 'live' || inControl || turn.state === 'login_needed')
+  const where = surface === 'panel'
+    ? i18nT('pages.chat.browserLiveCard.showing_in_side_panel')
+    : i18nT('pages.chat.browserLiveCard.showing_full_screen')
+  return (
+    <div className="flex items-center gap-2 px-3 py-2 min-h-[44px]" data-testid="browser-live-staged">
+      {live ? (
+        <span className="flex items-center gap-1.5 text-[12px] font-semibold text-ok whitespace-nowrap" role="status">
+          <motion.span
+            aria-hidden="true"
+            className="inline-block size-2 rounded-full bg-ok"
+            animate={reduce ? undefined : { opacity: [1, 0.35, 1] }}
+            transition={reduce ? undefined : { duration: 1.6, repeat: Infinity, ease: 'easeInOut' }}
+          />
+          {inControl ? i18nT('pages.chat.browserLiveCard.you_are_in_control') : i18nT('pages.chat.browserLiveCard.live')}
+        </span>
+      ) : (
+        <span className="flex items-center gap-1.5 text-[12px] font-semibold text-text whitespace-nowrap">
+          <History size={13} aria-hidden="true" className="text-muted" />
+          {i18nT('pages.chat.browserLiveCard.replaying')}
+        </span>
+      )}
+      <span className="min-w-0 flex-1 flex items-center gap-1.5 text-[13px] text-muted">
+        <PanelRight size={13} aria-hidden="true" className="shrink-0" />
+        <span className="truncate">{hostOf(turn.url) ? `${hostOf(turn.url)} · ${where}` : where}</span>
+      </span>
+      <Btn onClick={onBringBack} className="shrink-0" data-testid="browser-live-bring-back">
+        <Undo2 size={13} aria-hidden="true" />
+        {i18nT('pages.chat.browserLiveStage.bring_back')}
+      </Btn>
     </div>
   )
 }

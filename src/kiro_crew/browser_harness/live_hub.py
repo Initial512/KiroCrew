@@ -18,10 +18,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
+import re
 import time
 from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from kiro_crew.browser_harness.budgets import TAKEOVER_IDLE_S
 from kiro_crew.browser_harness.screencast import (
@@ -30,7 +32,15 @@ from kiro_crew.browser_harness.screencast import (
     Relay,
     TickStats,
 )
-from kiro_crew.browser_harness.takeover import USER, InputLock, dispatch_input
+from kiro_crew.browser_harness.takeover import (
+    USER,
+    InputLock,
+    dispatch_input,
+    parse_input_event,
+)
+
+if TYPE_CHECKING:
+    from kiro_crew.browser_harness.recording import LiveRecorder
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +84,8 @@ def _set_event() -> asyncio.Event:
 class Step:
     label: str
     status: str = "active"  # done | active | pending
+    #: Reported while a loop op (``reflex``) ran: the card may fold a run of these.
+    loop: bool = False
 
 
 @dataclass
@@ -129,6 +141,22 @@ class LiveSession:
     #: again by a release or the turn's end. :meth:`LiveHub.wait_for_release` awaits
     #: it, which is how an agent op holds until the hand-back instead of failing.
     released: asyncio.Event = field(default_factory=_set_event)
+    #: Steps reported so far (never reset) and the latest label: an op's replay
+    #: event takes the label of the step it reported (:meth:`LiveHub.record_op`).
+    step_seq: int = 0
+    last_step: str = ""
+    #: The loop op's counters for the card's loop line (:meth:`LiveHub.loop`), or
+    #: ``None``. Kept after the loop stops, so the card says why, until the next op.
+    loop: dict[str, Any] | None = None
+    #: Actions a loop op recorded for the replay itself (never reset): its own
+    #: outer op then records no summary event of its own (:meth:`LiveHub.record_op`).
+    inner_seq: int = 0
+    #: What the person said when they handed back (:meth:`LiveHub.release`), until
+    #: the agent's parked op or its next op takes it (:meth:`LiveHub.take_handback`).
+    handback: dict[str, str] | None = None
+    #: The hand-back choices the agent's parked op offered, or ``[]``: the card then
+    #: shows its own defaults (:meth:`LiveHub.set_handback_options`).
+    handback_options: list[str] = field(default_factory=list)
 
     @property
     def relay(self) -> Relay | None:
@@ -207,16 +235,104 @@ def live_event(sess: LiveSession) -> dict[str, Any]:
         "browser": sess.browser,
         "headless": bool(sess.headless),
         "step": step,
-        "steps": [{"label": s.label, "status": s.status} for s in sess.steps],
+        "steps": [_step_wire(s) for s in sess.steps],
         "rung": int(sess.rung),
         "fps": float(sess.fps),
         "turn_over": bool(sess.turn_over),
         "tab": sess.tab,
+        "loop": dict(sess.loop) if sess.loop is not None else None,
+        "handback_options": list(sess.handback_options),
     }
 
 
+#: The person's hand-back note: their own words, at most this many characters.
+HANDBACK_NOTE_MAX = 500
+#: A hand-back choice (an agent option or the card's default id), and how many
+#: options an agent may offer.
+HANDBACK_CHOICE_MAX = 40
+HANDBACK_OPTIONS_MAX = 4
+#: :meth:`LiveHub.release` outcomes for a note or choice: the agent's op takes it,
+#: or (no turn left to take it) the card sends it as the person's next message.
+DELIVERED_AGENT = "agent"
+DELIVERED_CHAT = "chat"
+_CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+
+
+def handback_text(value: Any, limit: int) -> str | None:
+    """A note or choice as it may be kept: a string within *limit*, control
+    characters dropped, ends trimmed; ``None`` for anything else or too long."""
+    if not isinstance(value, str):
+        return None
+    text = _CONTROL_RE.sub("", value).strip()
+    if len(text) > limit:
+        return None
+    return text
+
+
+def handback_options(raw: Any) -> list[str]:
+    """The agent's offered choices: up to four short distinct strings, else ``[]``."""
+    if not isinstance(raw, list):
+        return []
+    out: list[str] = []
+    for item in raw[: HANDBACK_OPTIONS_MAX * 2]:
+        text = handback_text(item, HANDBACK_CHOICE_MAX)
+        if text and text not in out:
+            out.append(text)
+        if len(out) == HANDBACK_OPTIONS_MAX:
+            break
+    return out
+
+
+def _step_wire(step: Step) -> dict[str, Any]:
+    out: dict[str, Any] = {"label": step.label, "status": step.status}
+    if step.loop:
+        out["loop"] = True
+    return out
+
+
+_LOOP_STOP_RE = re.compile(r"[a-z_]{1,32}")
+_LOOP_INTS = ("moves", "steps", "max_steps")
+_LOOP_FLOATS = ("rate", "seconds", "max_seconds")
+
+
+def _count(value: Any) -> float | None:
+    """A finite, non-negative number, else ``None`` (a bool is not a count)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) and number >= 0 else None
+
+
+def loop_info(raw: Any) -> dict[str, Any] | None:
+    """The ``loop`` wire field from what a loop op reported, or ``None`` for junk.
+
+    ``stop`` is one of the loop op's own short tokens (``browser_harness.reflex``:
+    ``done``, ``until``, ``stuck``, ``risk``, ``budget``, ``user_in_control``, and
+    the rarer ones it names); the card has a sentence for each it knows. Every key
+    is present; a counter the op did not send (or sent malformed) is ``null``.
+    ``stop`` is ``null`` while the loop runs.
+    """
+    if not isinstance(raw, Mapping):
+        return None
+    out: dict[str, Any] = {}
+    for key in _LOOP_INTS:
+        n = _count(raw.get(key))
+        out[key] = int(n) if n is not None else None
+    for key in _LOOP_FLOATS:
+        n = _count(raw.get(key))
+        out[key] = round(n, 2) if n is not None else None
+    stop = raw.get("stop")
+    out["stop"] = stop if isinstance(stop, str) and _LOOP_STOP_RE.fullmatch(stop) else None
+    return out
+
+
 class _StreamSink:
-    """The stream's :class:`FrameSink`, bound to one session of the hub."""
+    """The stream's :class:`FrameSink`, bound to one session of the hub.
+
+    Also the stream's recorder seam (``records`` / ``record``): with the hub's
+    replay recorder attached and on, every frame is offered to it with its own
+    password boxes and mask status (``browser_harness.recording``).
+    """
 
     def __init__(self, hub: "LiveHub", sess: LiveSession) -> None:
         self._hub = hub
@@ -224,6 +340,38 @@ class _StreamSink:
 
     async def frame(self, header: Mapping[str, Any], blob: bytes) -> None:
         await self._hub._send_frame_blob(self._sess, blob)
+
+    @property
+    def records(self) -> bool:
+        rec = self._hub.recorder
+        return rec is not None and rec.enabled
+
+    def wants_frame(self) -> bool:
+        rec = self._hub.recorder
+        return rec is not None and rec.wants_frame(self._sess.session_key)
+
+    def record(
+        self,
+        jpeg: bytes,
+        width: int,
+        height: int,
+        boxes: list[list[int]],
+        mask_ok: bool,
+        age_s: float = 0.0,
+    ) -> None:
+        rec = self._hub.recorder
+        if rec is not None:
+            rec.frame(self._sess.session_key, jpeg, width, height, boxes, mask_ok, age_s=age_s)
+
+
+@dataclass(frozen=True)
+class OpMark:
+    """Where an op began, for its replay event: when, the step count, the page."""
+
+    ts_ms: int
+    step_seq: int
+    url: str
+    inner_seq: int = 0
 
 
 class LiveHub:
@@ -244,6 +392,9 @@ class LiveHub:
         #: at once, or never).
         self._sleep = sleep
         self._tasks: set[asyncio.Task[Any]] = set()
+        #: The turn-replay recorder (``browser_harness.recording``); ``None`` records
+        #: nothing. The dashboard attaches the gateway's one at startup.
+        self.recorder: LiveRecorder | None = None
 
     # ── wiring ─────────────────────────────────────────────────────────────
 
@@ -252,9 +403,17 @@ class LiveHub:
         self._publish = publish
         self._send_frame = send_frame
 
+    def attach_recorder(self, recorder: LiveRecorder | None) -> None:
+        self.recorder = recorder
+
     def configure(self, cfg: Any) -> None:
-        """Read ``browser.live.*`` from a loaded config; applies to streams started after."""
+        """Read ``browser.live.*`` (and ``browser.recording.*``) from a loaded config.
+
+        Applies to streams started after; the recorder's caps apply at its next write.
+        """
         self._config = LiveConfig.from_config(cfg)
+        if self.recorder is not None:
+            self.recorder.configure(cfg)
 
     @property
     def config(self) -> LiveConfig:
@@ -278,6 +437,9 @@ class LiveHub:
         self._expire_stale_claim(sess)
         sess.turn_id = str(turn_id)
         sess.steps = []
+        sess.loop = None
+        sess.handback = None
+        sess.handback_options = []
         sess.started_at = self._clock()
         sess.ended_at = 0.0
         sess.ended = False
@@ -286,6 +448,8 @@ class LiveHub:
         sess.fold_on_release = False
         if sess.state in ("", STATE_DONE):
             sess.state = ""
+        if self.recorder is not None:
+            self.recorder.turn_started(session_key, sess.turn_id, sess.url)
         self._emit(sess)
 
     def step(self, session_key: str, label: str) -> None:
@@ -295,7 +459,10 @@ class LiveHub:
         for s in sess.steps:
             if s.status == "active":
                 s.status = "done"
-        sess.steps.append(Step(label=text))
+        running = sess.loop is not None and sess.loop.get("stop") is None
+        sess.steps.append(Step(label=text, loop=running))
+        sess.step_seq += 1
+        sess.last_step = text
         if len(sess.steps) > MAX_STEPS:
             del sess.steps[: len(sess.steps) - MAX_STEPS]
         self._emit(sess)
@@ -335,7 +502,78 @@ class LiveHub:
         stream, sess.stream = sess.stream, None
         if stream is not None:
             self._spawn(stream.stop())
+        if self.recorder is not None:
+            self.recorder.turn_ended(sess.session_key)
         self._emit(sess)
+
+    # ── the replay recorder's events ───────────────────────────────────────
+
+    def op_mark(self, session_key: str) -> OpMark:
+        """Note where an op begins; :meth:`record_op` turns it into its replay event."""
+        sess = self._session(session_key)
+        if sess.loop is not None:
+            # The loop line belongs to the op that ran it; the next op is a new step.
+            sess.loop = None
+            self._emit(sess)
+        return self.inner_mark(session_key)
+
+    def inner_mark(self, session_key: str) -> OpMark:
+        """:meth:`op_mark` for an action a loop op runs inside itself."""
+        from kiro_crew.browser_harness.recording import now_ms
+
+        sess = self._session(session_key)
+        return OpMark(
+            ts_ms=now_ms(), step_seq=sess.step_seq, url=sess.url, inner_seq=sess.inner_seq
+        )
+
+    def loop(self, session_key: str, raw: Any) -> None:
+        """A loop op's counters (``reflex``): the card's loop line and progress bar."""
+        info = loop_info(raw)
+        if info is None:
+            return
+        sess = self._session(session_key)
+        sess.loop = info
+        self._emit(sess)
+
+    def record_op(
+        self,
+        session_key: str,
+        op: str,
+        args: Mapping[str, Any] | None,
+        result: Mapping[str, Any] | None,
+        mark: OpMark,
+        *,
+        loop: bool = False,
+    ) -> None:
+        """Record one agent op, generically, from the step it reported and its result.
+
+        *loop* marks an action a loop op ran inside itself (``reflex``): it is its
+        own replay event, tagged ``loop``. A loop op that recorded such actions
+        records nothing for itself, since its steps already are the timeline.
+        """
+        rec = self.recorder
+        sess = self._sessions.get(session_key)
+        if rec is None or sess is None:
+            return
+        if loop:
+            sess.inner_seq += 1
+        elif sess.inner_seq > mark.inner_seq:
+            return
+        from kiro_crew.browser_harness.recording import agent_event
+
+        label = sess.last_step if sess.step_seq > mark.step_seq else ""
+        stream = sess.stream
+        scale = float(getattr(stream, "scale", 1.0) or 1.0) if stream is not None else 1.0
+        try:
+            event = agent_event(
+                op, args, result, ts=mark.ts_ms, label=label, url=mark.url, scale=scale
+            )
+        except Exception:  # noqa: BLE001 - a replay event never fails the op
+            logger.debug("browser live: replay event not built", exc_info=True)
+            return
+        if loop:
+            event["loop"] = True
+        rec.event(session_key, event)
 
     def in_control(self, session_key: str) -> bool:
         """Whether the person holds the input lock; an agent op holds until they let go."""
@@ -465,6 +703,8 @@ class LiveHub:
     def page_changed(self, session_key: str, *, url: str = "", title: str = "") -> None:
         sess = self._session(session_key)
         self._update_page(sess, url=url, title=title)
+        if self.recorder is not None and url:
+            self.recorder.note_url(session_key, url)
         self._emit(sess)
 
     @staticmethod
@@ -504,6 +744,8 @@ class LiveHub:
         """
         sess = self._session(session_key)
         self._update_page(sess, url=url, title=title, browser=browser, headless=headless)
+        if self.recorder is not None and url:
+            self.recorder.note_url(session_key, url)
         if not self._config.enabled:
             # Live view off: no stream, no state, no event -- a card that could
             # only ever wait for a frame is not announced (see ``_emit_now``).
@@ -612,10 +854,22 @@ class LiveHub:
             await self._emit_now(sess)
         return True
 
-    async def release(self, session_key: str) -> None:
+    async def release(self, session_key: str, *, note: str = "", choice: str = "") -> str:
+        """Hand back, with what the person said (already checked by the route).
+
+        A *note* or *choice* goes to the agent's op waiting on this hand-back (the
+        parked tool's poll, or the agent's next op takes it): ``"agent"``. With no
+        turn left to take it (the card was reopened after its turn, or the turn
+        ended under the takeover), the card sends it as the person's next chat
+        message instead: ``"chat"``. Nothing said: ``""``. The note is recorded on
+        the replay as the person's event.
+        """
         sess = self._sessions.get(session_key)
         if sess is None:
-            return
+            return ""
+        said = bool(note or choice)
+        if said:
+            self._record_handback(sess, note, choice)
         was_held = sess.lock.held()
         if was_held and sess.fold_on_release:
             # The agent's turn ended while the person held the browser: this hand-back
@@ -623,7 +877,15 @@ class LiveHub:
             if sess.stream is not None:
                 await sess.stream.set_takeover(False)
             self._fold(sess)
-            return
+            return DELIVERED_CHAT if said else ""
+        if said and sess.turn_over:
+            delivered = DELIVERED_CHAT
+        elif said:
+            sess.handback = {"choice": choice, "note": note}
+            delivered = DELIVERED_AGENT
+        else:
+            delivered = ""
+        sess.handback_options = []
         sess.lock.release()
         sess.released.set()
         if sess.stream is not None:
@@ -632,6 +894,39 @@ class LiveHub:
             sess.state = STATE_LIVE
         if was_held:
             await self._emit_now(sess)
+        return delivered
+
+    def take_handback(self, session_key: str) -> dict[str, str] | None:
+        """What the person said at the hand-back, once: the agent's op takes it."""
+        sess = self._sessions.get(session_key)
+        if sess is None or sess.handback is None:
+            return None
+        said, sess.handback = sess.handback, None
+        return said
+
+    def set_handback_options(self, session_key: str, raw: Any) -> None:
+        """The choices the agent's parked op offers (see :func:`handback_options`)."""
+        sess = self._sessions.get(session_key)
+        options = handback_options(raw)
+        if sess is None or options == sess.handback_options:
+            return
+        sess.handback_options = options
+        self._emit(sess)
+
+    def _record_handback(self, sess: LiveSession, note: str, choice: str) -> None:
+        rec = self.recorder
+        if rec is None:
+            return
+        from kiro_crew.browser_harness.recording import now_ms, user_event
+
+        said = " - ".join(t for t in (choice, note) if t)
+        try:
+            rec.event(
+                sess.session_key,
+                user_event("other", now_ms(), sess.url, label=f"You handed back: {said}"),
+            )
+        except Exception:  # noqa: BLE001 - a replay event never fails the hand-back
+            logger.debug("browser live: hand-back event not recorded", exc_info=True)
 
     async def input_event(self, session_key: str, event: dict[str, Any]) -> int:
         """Dispatch one card event. Raises ``InputEventError`` or ``LookupError``."""
@@ -645,6 +940,10 @@ class LiveHub:
         scale = float(getattr(stream, "scale", 1.0) or 1.0)
         sent = await dispatch_input(stream.relay, stream.session_id, event, scale=scale)
         stream.note_input()
+        if self.recorder is not None:
+            # Validated already (dispatch_input raised otherwise). The recorder keeps
+            # no typed text: keystrokes count as characters, never as what was typed.
+            self.recorder.user_input(session_key, parse_input_event(event), sess.url)
         return sent
 
     async def reopen(
@@ -687,6 +986,10 @@ class LiveHub:
         async with sess.op_fence:
             if sess.stream is not None:
                 return REOPEN_LIVE
+            if self.recorder is not None:
+                # The reopened view is the same card: it records into the same turn,
+                # which :meth:`close_view` (through ``_fold``) ends again.
+                self.recorder.turn_started(session_key, sess.turn_id, sess.url)
             try:
                 stream = await self.start_stream(
                     session_key,
@@ -698,7 +1001,11 @@ class LiveHub:
                 )
             except Exception:  # noqa: BLE001 - the tab closed between the check and the attach
                 logger.debug("browser live: reopen could not attach", exc_info=True)
+                if self.recorder is not None:
+                    self.recorder.turn_ended(session_key)
                 return self._tab_gone(sess)
+            if stream is None and self.recorder is not None:
+                self.recorder.turn_ended(session_key)
         return REOPEN_LIVE if stream is not None else REOPEN_LIVE_OFF
 
     def _owned_elsewhere(self, session_key: str, target_id: str) -> bool:
@@ -829,6 +1136,7 @@ __all__ = [
     "LIVE_EVENT",
     "LiveHub",
     "LiveSession",
+    "OpMark",
     "STATES",
     "STATE_DONE",
     "STATE_ERROR",

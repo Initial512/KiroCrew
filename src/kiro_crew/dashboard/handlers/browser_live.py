@@ -38,10 +38,13 @@ from typing import Any
 from aiohttp import web
 
 from kiro_crew.browser_harness.live_hub import (
+    HANDBACK_CHOICE_MAX,
+    HANDBACK_NOTE_MAX,
     REOPEN_LIVE_OFF,
     REOPEN_TAB_GONE,
     LiveHub,
     get_live_hub,
+    handback_text,
 )
 from kiro_crew.browser_harness.takeover import InputEventError
 from kiro_crew.dashboard.handlers._shared import (
@@ -170,11 +173,32 @@ async def api_browser_input_claim(request: web.Request) -> web.Response:
 
 
 async def api_browser_input_release(request: web.Request) -> web.Response:
-    """POST /api/browser/input/release: Esc or "Hand back"."""
+    """POST /api/browser/input/release: Esc or "Hand back", optionally with what the person did.
+
+    Body ``{"session_key", "note"?, "choice"?}``. ``note`` is the person's own words
+    (at most ``HANDBACK_NOTE_MAX`` characters), ``choice`` one hand-back option (at
+    most ``HANDBACK_CHOICE_MAX``); either one too long, or not a string, is 400 and
+    nothing is handed back. The answer's ``delivered`` says where they went:
+    ``agent`` (its waiting op takes them), ``chat`` (no turn is left to: the card
+    sends them as the person's next message), or ``""``.
+    """
 
     async def act(hub: LiveHub, key: str, body: dict[str, Any]) -> dict[str, Any] | web.Response:
-        await hub.release(key)
-        return {"in_control": False}
+        said: dict[str, str] = {}
+        for field, limit in (("note", HANDBACK_NOTE_MAX), ("choice", HANDBACK_CHOICE_MAX)):
+            raw = body.get(field)
+            if raw is None:
+                continue
+            text = handback_text(raw, limit)
+            if text is None:
+                return _error(
+                    f"invalid_{field}",
+                    f"{field} must be a string of at most {limit} characters",
+                    400,
+                )
+            said[field] = text
+        delivered = await hub.release(key, note=said.get("note", ""), choice=said.get("choice", ""))
+        return {"in_control": False, "delivered": delivered}
 
     return await _run(request, "browser_input_release", act)
 
@@ -285,11 +309,14 @@ def refresh_live_config(hub: LiveHub) -> None:
 
 
 def bind_live_hub(state: Any) -> LiveHub:
-    """Wire the hub's two owner-only senders to the dashboard state. Called at startup."""
+    """Wire the hub's two owner-only senders and its replay recorder. Called at startup."""
+    from kiro_crew.browser_harness.recording import get_recorder
+
     hub = get_live_hub()
     publish = getattr(state, "deliver_ws_owners", None)
     send_frame = getattr(state, "deliver_ws_owners_bytes", None)
     hub.bind(publish, send_frame)
+    hub.attach_recorder(get_recorder())
     refresh_live_config(hub)
     return hub
 

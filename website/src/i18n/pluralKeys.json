@@ -294,5 +294,9 @@
   "pages.settings.chatPanel.follow_default_model_chats",
   "pages.settings.chatPanel.follow_default_more",
   "pages.membersPage.goals_heartbeat_per_day",
-  "pages.settings.browserPanel.credentials_applied"
+  "pages.settings.browserPanel.credentials_applied",
+  "pages.chat.browserLiveStage.steps_n",
+  "pages.chat.browserLiveLoop.moves",
+  "pages.chat.browserLiveLoop.folded",
+  "pages.chat.browserLiveStage.jump_to_steps"
 ]

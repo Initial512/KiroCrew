@@ -11,6 +11,15 @@ keyboard; the same card grows and says "You are in control". Press Esc, or
 prompt gets handled: the agent stops, you do the step, it carries on. While you
 hold the browser, the agent waits.
 
+As you hand back, a bar under the page lets you **tell the agent what you did**:
+pick one of a few answers (the agent's own, such as "I signed in", or Done,
+Didn't work, Wrong site, Stop) and add a line of your own, then press Enter. The
+agent reads it with its next step, so it can act on it straight away instead of
+taking another screenshot or asking you. Esc still hands back with nothing said.
+Nothing typed in that bar goes to the page. If the agent's turn is already over
+(you opened the view again from the finished card), your note is sent as your
+next chat message.
+
 ## Which browser
 
 | Where Kiro Crew runs | Browser the agent drives | First run |
@@ -78,8 +87,30 @@ Frames stream only to your own dashboard session, over the connection it already
 has, at up to 60 frames per second on a fast link. The stream adapts to the
 link: on a slow one it drops the frame rate and quality first, then the size,
 and climbs back when the link recovers. A page that is not changing costs
-nothing, and so does a card that has scrolled off screen. Nothing is written to
-disk unless the agent takes a screenshot you asked for.
+nothing, and so does a card that has scrolled off screen.
+
+**Watch it big.** Expand (in the live card's menu) moves the view into the side
+panel's **Preview** tab, with a Full screen button; on a phone it opens full
+screen. The chat card folds to one line with **Bring back to chat**.
+
+**Replay.** Each browsing turn is recorded so you can play it back: Replay on the
+finished card opens the same big view at the start, with a timeline of what was
+clicked, typed, scrolled and opened, and when. Click a marker or a step to jump
+there, step forward and back, play at 1x, 2x or 4x, and go back to Live while
+the turn is still running. Clicks, drags, scrolls and typing are drawn over the
+picture where they happened. Recordings stay on this machine, readable only from
+your own dashboard, under the data home in `browser-recordings/` (folders 0700,
+files 0600). Password fields are painted over in every recorded frame, and a
+frame whose password fields could not be located is not kept at all; what you
+type during a takeover is kept only as a character count. Deleting a chat
+deletes its recordings. `browser.recording.enabled`, `max_session_mb` and
+`max_total_mb` turn recording off or cap its size.
+
+**Fast mode.** When browser help is on (Settings → Decisions), the agent can run a
+quick loop of many small moves (a game, a long form). The live view then shows
+"Fast mode: N moves · rate", a bar for how much of its step or time budget it has
+used, and, when it stops, why. Take over stops it at the next move. Its many
+steps fold to the last few in the step list.
 
 **Settings → Browser → Live view in chat** turns the view off, caps the frame
 rate, picks a quality, and controls the password mask (on by default).
@@ -89,7 +120,10 @@ rate, picks a quality, and controls the password mask (on by default).
 The side panel keeps one browser surface of its own: the **Preview** tab, for a
 local dev server the agent started for you. It opens only the origins listed
 under **Local preview origins**, and the agent does not drive it; an outside URL
-there answers "Open this in your Chrome, or ask Kiro".
+there answers "Open this in your Chrome, or ask Kiro". Once the chat has browsed,
+the tab has two modes, **Agent browser** (the expanded live view and replay) and
+**Local preview**; switching to Local preview brings the live view back to the
+chat.
 
 ## Settings → Browser
 

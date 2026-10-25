@@ -40,7 +40,7 @@ import os
 import re
 import secrets
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -68,12 +68,13 @@ OPS: tuple[str, ...] = (
     "console",
     "screenshot",
     "tabs",
+    "reflex",
 )
 
 # Ops that legitimately take longer than one CDP round trip (a page load, an
 # explicit wait); the route gives them the long budget and everything else the
 # short one.
-SLOW_OPS: frozenset[str] = frozenset({"navigate", "back", "wait_for"})
+SLOW_OPS: frozenset[str] = frozenset({"navigate", "back", "wait_for", "reflex"})
 
 WALKER_PATH = Path(__file__).with_name("snapshot_walker.js")
 
@@ -181,6 +182,14 @@ class OpContext:
     #: The optional ``browser.step`` hooks (``browser_harness.decide.BrowserDecisions``)
     #: for this caller's session, or ``None``: then every op runs exactly as written.
     decisions: Any = None
+    #: Where a loop op (``reflex``) reports its counters, for the live card's loop
+    #: line (``LiveHub.loop``). No-ops by default; no single op calls them.
+    loop: Callable[[Mapping[str, Any]], Any] = lambda _info: None
+    #: The turn replay's seam for an action a loop op runs inside itself:
+    #: ``mark()`` before it, ``record(op, args, result, mark)`` after it
+    #: (``LiveHub.inner_mark`` / ``LiveHub.record_op``). No-ops by default.
+    mark: Callable[[], Any] = lambda: None
+    record: Callable[..., Any] = lambda *_args: None
 
 
 def screenshot_dir(home: Path) -> Path:
@@ -712,6 +721,13 @@ async def _tabs(ctx: OpContext, args: dict[str, Any]) -> dict[str, Any]:
     return refusal("bad_action", "tabs action must be one of: list, switch, new")
 
 
+async def _reflex(ctx: OpContext, args: dict[str, Any]) -> dict[str, Any]:
+    """The fast loop (``browser_harness.reflex``), resolved at call time: it imports
+    this module, and it is only ever needed when the agent asks for it."""
+    module = importlib.import_module("kiro_crew.browser_harness.reflex")
+    return await module.run(ctx, args)  # type: ignore[no-any-return]
+
+
 _HANDLERS: dict[str, Callable[[OpContext, dict[str, Any]], Awaitable[dict[str, Any]]]] = {
     "navigate": _navigate,
     "back": _back,
@@ -727,6 +743,7 @@ _HANDLERS: dict[str, Callable[[OpContext, dict[str, Any]], Awaitable[dict[str, A
     "console": _console,
     "screenshot": _screenshot,
     "tabs": _tabs,
+    "reflex": _reflex,
 }
 
 

@@ -359,7 +359,8 @@ periods or the link cannot carry the rung, as far as the measured rate needs;
 it steps up after 2 calm seconds to the best rung the link covers with 30%
 headroom. An fps change is free; a quality or size change restarts the
 screencast on the same session. An off-screen or collapsed card stops the
-screencast (the card reports visibility). Input sent with no frame for 3 s
+screencast (the card reports visibility), unless the turn replay records: then
+the cast keeps running for the recorder only (see Turn replay). Input sent with no frame for 3 s
 restarts it. While the person holds the browser the stream is pinned to the
 15 fps rung. `browser.live.*` holds the knobs: `enabled`, `quality`
 (`auto|high|medium|low`), `max_fps` (15|30|60), `mask_passwords`; `max_fps` and a
@@ -488,6 +489,40 @@ internal secret (403 `internal_secret_required`), require the dashboard owner
 (403 `owner_only`) and accept only a `session_key` naming a slot this dashboard
 owns (404 `unknown_session`).
 
+**The hand-back note.** While the person holds the browser, the card, the side
+panel's big view and the phone sheet show a hand-back bar
+(`pages/chat/BrowserLiveHandback.tsx`) under the picture: two to four choices
+and a one-line note. The choices are the ones the agent's parked op offered
+(the tool's optional `handback_options`, at most four strings of at most 40
+characters, sent on every `/api/browser/handback` poll and published as the
+event's `handback_options`, cleared by the hand-back and a new turn), else the
+card's own Done, Didn't work, Wrong site, Stop (`pages.chat.browserLiveHandback.*`).
+A choice is a single-choice toggle; Enter in the note (or its send button) hands
+back with the choice and the note; Esc in the note, Esc on the picture and the
+header's Hand back hand back with nothing said. The bar is outside the canvas,
+which forwards only keys that reach its own element, and the note field stops
+propagation, so nothing typed there reaches the page. `POST
+/api/browser/input/release` takes `{session_key, note?, choice?}`: the note is the
+person's own words, at most `HANDBACK_NOTE_MAX` (500) characters, the choice at
+most `HANDBACK_CHOICE_MAX` (40); anything longer or not a string is 400
+`invalid_note` / `invalid_choice` and nothing is handed back; control characters
+are dropped. The answer's `delivered` says where it went:
+
+* `agent`: the turn is still running. The hub keeps `{choice, note}` on the
+  session (`LiveHub.take_handback` takes it once). The parked tool's next poll
+  answers `released` with `handed_back`, and the tool appends one line to the
+  op's result (or to the `interrupted` text): `handed_back: {"choice", "note"}`,
+  marked as the user's own words, not page content. With no op parked, the
+  agent's next op answer carries `handed_back` instead.
+* `chat`: no turn is left to read it (a view reopened after its turn, or the turn
+  ended under the takeover). The card fires `mc:browser-handback-chat`
+  (`BROWSER_HANDBACK_CHAT_EVENT`), and the chat page sends `choice: note` as the
+  person's next message to that slot, as if typed in the composer.
+
+The note never carries page content, is never logged on the input path, and is
+recorded on the turn replay as the person's event (`actor: user`, label
+`You handed back: <choice> - <note>`), cleaned like every label.
+
 ### The live card
 
 One card per turn, attached to the turn's first `browser` call (anchor =
@@ -513,6 +548,49 @@ refused POST; so does a hand back (see Takeover); Esc releases and is never
 forwarded; nothing on the input path is logged. Replay plays the frames the
 stream already sent, kept in memory for the life of the page, original spacing
 capped at 500 ms per gap. Strings live at `pages.chat.browserLiveCard.*`.
+
+**The loop line.** While a loop op (`reflex`) runs, the event carries `loop`:
+`{moves, rate, steps, max_steps, seconds, max_seconds, stop}` (every key present,
+a counter the op did not send is `null`, `stop` is `null` while it runs and then
+the loop's own short token: `done`, `until`, `stuck`, `risk`, `budget`,
+`user_in_control`, or a rarer one it names), otherwise `loop: null`. The reflex
+loop reports once as it starts, after every move and once with its stop
+(`OpContext.loop` -> `LiveHub.loop`); the line belongs to the op that ran the
+loop, so the next op and a new turn clear it. The card and the big view show
+"Fast mode: 37 moves · 6.2/s", a thin bar for the larger of `steps/max_steps`
+and `seconds/max_seconds`, and once stopped one short sentence per token
+(`pages.chat.browserLiveLoop.stop_*`, `stop_other` for any other). Stopping it
+early is Take over (the loop checks for the person at every step). A step
+reported while a loop runs carries `loop: true`; a run of them in the step strip
+and the big view's step list shows its newest three behind one "N earlier steps
+folded" control that opens the run, and a run never folds the step the replay is
+on. The card renders these fields only: no loop-specific copy or op name lives in
+the card.
+
+**The big view.** Expand (the live card's menu, first item) and the done card's
+Replay open `useBrowserLive.stage`: on a desktop chat page the side panel's
+Preview tab switches to **Agent browser** (`components/PreviewTabBody.tsx`), the
+chat card folds to one line ("Live/Replaying · host · Showing in side panel" and
+Bring back to chat), and the stage (`pages/chat/BrowserLiveStage.tsx`) shows the
+picture big; on a phone, or a page with no side panel, it is a full-screen sheet
+(`BrowserLiveSheet.tsx`). Local preview on the Preview tab's mode row, the Bring
+back button on that row, the panel closing or leaving the tab all bring the
+picture back to the chat; the local preview stays mounted (hidden) throughout, so
+its page and annotation survive. The stage has a Full screen toggle
+(Fullscreen API, hidden where it is unsupported), Take over and Hand back as on
+the card, and the replay timeline (`BrowserLiveTimeline.tsx`): a scrubber with one
+marker per action, play/pause, previous/next step, 1x/2x/4x, Live while the turn
+runs, and the step list. Replay from the done card starts at 0:00; clicking a
+marker or a step pauses there; scrubbing a running turn leaves Live and Live
+returns. Markers that would cover each other (centres under 20 px apart) share one
+marker with a count, placed at the group's first action and seeking to exactly
+that action. Overlays draw the action at the play head for 1.2 s: a ripple at a
+click, the drag path, a scroll arrow, a type/key chip, the URL on a navigation,
+in the pixels of the frame that is showing; while an action with a point is drawn,
+the first frame recorded at most 1 s after it is shown (its point belongs to the
+page after the target was scrolled into view). Recordings come from the routes in
+[Turn replay](#turn-replay); with none (an older gateway's 404) the stage plays
+the card's in-memory frames and step log.
 
 | State | Shows |
 |---|---|
@@ -556,9 +634,114 @@ person holds the reopened tab is held for the hand-back like any other. The done
 line keeps two actions: Open live and Replay when the tab is open (Open in Chrome
 moves into the live view's menu), else Replay and Open in Chrome.
 
+### Turn replay
+
+`browser_harness/recording.py` keeps one recording per (session, turn) so the
+card can play a finished turn back: what the page looked like, and what the agent
+(or the person, during a takeover) clicked, typed, dragged and scrolled, and when.
+
+**Capture.** The hub attaches the gateway's one `LiveRecorder` at startup
+(`bind_live_hub`). `turn_started` opens the turn's recording (a reopened view
+reopens the same turn), `_fold` ends it. Frames come from the stream through the
+sink's recorder seam (`_StreamSink.records` / `wants_frame` / `record`). When the
+recorder's 5 fps gate is open (`wants_frame`), the stream runs a box query FOR
+THAT FRAME, bypassing the card's 250 ms cache and even with
+`browser.live.mask_passwords` off (the card's header then still carries no mask),
+and hands the recorder the JPEG with those boxes and `mask_ok`. `mask_ok` is true
+only when the query ran for the frame, answered `{boxes, frames, partial}` (or a
+bare box list), was not `partial` (nesting past the walker's depth cap), and
+reported at most `MASK_BOX_LIMIT` (32) boxes, and, when Chrome stamped the
+frame with its scroll offset (`scrollOffsetX/Y`), read the page at that same
+offset (`sx`/`sy` in the reply, within `MASK_SCROLL_TOLERANCE_PX`, 1 CSS px): a
+wheel scroll between the capture and the query would otherwise put every box
+in the wrong place or off the frame; a throw, another shape or a page
+exception is unknown. A secret field is `input[type=password]`, an input whose
+`autocomplete` names `current-password`, `new-password` or `one-time-code` (a
+"show password" toggle usually keeps it), or one styled with
+`-webkit-text-security`. The query walks open shadow roots and same-origin iframes
+(offset by the iframe's content box: border plus padding); every visible embedded
+document it cannot read or place exactly (cross-origin, a scaled or transformed
+iframe, any `object`/`embed`/`fencedframe`/`portal`) is reported in `frames`,
+which the recorder paints over and the card ignores. A frame that arrives while
+the gate is shut is held; the stream's once-a-second tick offers it (`flush_held`)
+only when no newer frame replaced it, it is under 1.5 s old, its size matches, and
+a fresh query finds exactly the boxes the query before it found, so the password
+fields provably stood still across its window; otherwise it is dropped. A held
+frame from before the turn began is dropped by the recorder. The stream also keeps casting while the card is hidden, sending nothing to
+the card and acking Chrome at most every 200 ms (`HIDDEN_RECORD_PERIOD_S`), so a
+turn nobody watched is still recorded. A box query that answers with something
+other than the expected shape keeps the last boxes for the card, like a query that
+throws.
+Agent actions come from the op route generically: `LiveHub.op_mark` before the op,
+`LiveHub.record_op` after it, which takes the label of the step the op reported
+and the point from the op's own result (`x`/`y`, or `from`/`to` for a drag),
+multiplied by the stream's `scale` onto frame pixels. An action a loop op runs
+inside itself (each `reflex` move) is its own event, through `OpContext.mark` /
+`OpContext.record` (`LiveHub.inner_mark` / `record_op(..., loop=True)`), tagged
+`loop: true`; the loop op then records no summary event of its own. The person's
+takeover input is recorded from the validated `InputEvent` after it was
+dispatched, and a hand-back note as their event.
+
+**Hard rules.** A frame is kept only with `mask_ok`, and its boxes, grown by
+`MASK_PAD_PX` (4) on every side for a field that moved between capture and query,
+are painted into the JPEG itself (Pillow) before it is written; an unknown mask, a box that
+does not fit the frame, a JPEG that does not decode at its header size, or no
+Pillow drops the frame, and an unknown mask also drops a frame held for the rate
+gate. Frames are kept only when they differ from the last kept one, at most 5 fps
+(`MIN_FRAME_INTERVAL_MS`): a burst collapses onto its latest frame, kept at the
+next frame past the interval, the next action or the turn's end. Event args pass
+an allowlist (refs, coordinates, buttons, keys, bounded strings); every URL, in
+args, `url`, `start_url` and inside labels, keeps scheme, host, port and path only
+(no userinfo, query, fragment or `;` path parameters, where sign-in codes and
+tokens ride), and a scheme other than http(s), ws(s), file, about or chrome keeps
+only `scheme:` (`javascript:` and `data:` carry their payload in the URL); a label
+is cut from its first URL to that URL cleaned, and at any `?` or `#`; a `type`
+whose args say `secret`, or that did not succeed (a password-field refusal, a
+stale ref, an interruption), keeps `chars` and `secret: true` only, and a
+`press_key` that did not succeed keeps no single-character key; the person's typed characters are only
+ever counted (one `type` event of `chars` when the typing stops), named keys are
+`key` events, a press-move-release is a `click` (under 4 px) or a `drag` with its
+path (at most 64 points). Ops fold onto `click|type|key|drag|scroll|navigate|other`
+by a generic name table; an unknown op is `other`.
+
+**Storage.** `<data home>/browser-recordings/<sha256(slot key)[:32]>/<turn_id>/`
+with `meta.json` (atomic rewrite), `frames.jsonl`, `events.jsonl` and
+`frames/<i>.jpg`; directories 0700, files 0600, every file opened `O_NOFOLLOW`.
+`browser.recording.max_session_mb` (200) and `max_total_mb` (1024) cap the bytes;
+before each frame the oldest finished turns go first (the session's, then any
+session's); a running turn that alone cannot fit stops keeping frames and is
+marked `truncated`, its action log continues (at most 5000 events). The index is
+read back from the `meta.json` files on first use; a turn that was running when
+the gateway went away reads as ended at its last frame or event. Deleting a chat
+(`slot_teardown._remove_browser_recordings`) removes the recordings of every
+spelling of its slot key that no live slot still holds; the writer queue of that
+session is drained first so a late frame cannot recreate it. `browser.recording.enabled`
+off records nothing.
+
+**Routes.** Owner-only GETs in `dashboard/handlers/browser_recordings.py`, same
+trust class as the card's POSTs: the internal secret is 403
+`internal_secret_required`, a non-owner is 403 `owner_only` before the path is
+parsed (so a refusal never says whether a session or turn exists), and any miss
+is 404 `not_found`. The session must be a slot this dashboard owns; every segment
+is matched against a strict pattern (`TURN_ID_RE`, `<digits>.jpg`) and the files
+are looked up through the store, never by joining the parameter onto a path.
+Every answer is `Cache-Control: no-store`, `nosniff`, `Cross-Origin-Resource-Policy:
+same-origin`.
+
+* `GET /api/browser/live/{session}/recordings` ->
+  `{"turns":[{turn_id, started_ts, ended_ts|null, live, frame_count, event_count,
+  bytes, start_url, truncated}]}`, oldest first.
+* `GET /api/browser/live/{session}/recordings/{turn_id}` -> `{turn_id, started_ts,
+  ended_ts, live, width, height, start_url, truncated, frames:[{i, ts, w, h}],
+  events:[{id, ts, op, label, args, point:{x,y}|null, path:[{x,y}]|null,
+  url|null, status: ok|error, actor: agent|user, loop?: true}]}`. Times are epoch ms,
+  coordinates frame pixels; `args.name` is the tool's op name.
+* `GET /api/browser/live/{session}/recordings/{turn_id}/frames/{i}.jpg` -> the
+  masked JPEG.
+
 ### The tool
 
-`browser` is one MCP tool in the `kirocrew-core` shim with fourteen ops
+`browser` is one MCP tool in the `kirocrew-core` shim with fifteen ops
 (`browser_harness.ops.OPS`), not a tool namespace. The shim runs two gates before
 anything leaves the process: `capabilities.browse` governance (a denial refuses
 outright; there is no other browser) and the navigate gate (public http(s) only,
@@ -586,6 +769,7 @@ snapshot.
 | `press_key`, `select_option`, `wait_for` (text / textGone / time / load), `console` | as named |
 | `screenshot` | writes a PNG under the screenshot directory below and returns its absolute path |
 | `tabs` | lists and switches `relay.agent_targets()` only |
+| `reflex` | a loop of the ops above over a closed action set, judged by the decision seam; `not_available` when it is off ("The fast loop" below) |
 
 Every op calls `live_hub.step`; `run_op`'s own `in_control` check is the backstop
 under the route's fence (the route holds the op until the hand-back, see Takeover).
@@ -652,6 +836,41 @@ input renders as bullets there too. When a frame cannot be taken the step check
 falls back to the outlines. The box is scaled by the viewport size `canvasRects`
 returns with the canvas boxes, so it lands in the CSS pixels `click` uses. Tests:
 `test/test_browser_decisions.py`.
+
+#### The fast loop (`reflex`)
+
+`reflex` is one op that runs many actions with no LLM turn between them
+(`browser_harness/reflex.py`, reached from `ops.py` by a call-time import). Its one request per step is built and sent by `decide.reflex_step`, so `decide.py` stays the only browser module that reaches the seam. The
+agent gives a `goal` and a CLOSED action set: `keys` (named keys or single
+characters), `click` (refs), `drag` (`"eA>eB"` ref pairs) and `type`
+(`"eN=value"`). Each step the gateway reads the state, asks the seam one request
+and runs the picked action through the ordinary op handler, so every action keeps
+that op's own refusals (a password field, a stale ref).
+
+| Part | What the code does | What the model answers |
+|---|---|---|
+| State | `grid` (+ `grid_items`): the walker's `cells(selector)` -- visible matches' short text and box centres, form fields skipped -- arranged into rows; an item goes to its nearest slot and a merge still animating keeps the higher number. Without `grid`, the outline (cut to 6,000 characters). `see: true` adds a masked frame under `browser_images` with the frame rules above | -- |
+| Request | one per step, `extra.kind = "reflex"`: Choice `next` over the live actions, Nouls `done`, `stuck`, `off_path`, and `risk_i` for at most 8 actions not yet judged (each action is judged once per call) | the four judgments |
+| Stop | `done`/`stuck`/`off_path` above 0.7; an action whose risk is at least 0.5 is not offered, and a pick of one stops with `risk` and a `handoff` text asking for the person; `until_text` (`textPresent`) or `until_url` (substring of the href); `max_steps` (default 60, at most 300) and `max_seconds` (default 20, at most 45); a takeover (`in_control`, checked before each observe and each action); every action withdrawn (`no_actions_left`) | -- |
+| No-op withdrawal | an action after which the state's fingerprint (the grid, else the outline) did not change is not offered again until the state changes; a refused action (stale ref, unfocusable) is withdrawn the same way | -- |
+| Values | a `type` value must appear verbatim in the goal, a fact or the page outline read once before the loop, else the call is refused `bad_value` before anything runs | never writes text |
+| Landing | after every action the href goes through `url_allowed`; a refused one moves the tab to `about:blank` and stops with `redirect_refused` | -- |
+
+The result is a summary: `stop`, `steps`, `moves`, `recent` (last 20), `actions`
+(count per label), `decisions`, `decision_ms_avg`, `seconds`, `rate` (moves per
+second), `see`, and the final `state` (the grid, or the outline cut to 1,500
+characters). Each action is one live-card step labelled `Reflex <n>: <the op's own
+label> (<rate>/s)`, and the loop ends with `Reflex <stop>: <moves> moves,
+<rate>/s`; no new field is added to the step payload.
+
+Off is free: with no hooks, a closed gate (the same probe as the hooks above), or a
+first decision that fails, the op answers `not_available` before it has touched the
+page and with no provider call when gated off; a later failure ends the loop with
+`decision_unavailable` and the summary. `reflex` is in `SLOW_OPS`, so its route
+budget (75 s plus the decision headroom) covers the 45 s ceiling and the loop
+always ends with its own summary. It holds the gateway op lock for its whole run,
+like any op, which is why the ceiling is below one slow op's lock wait. Tests:
+`test/test_browser_reflex.py`.
 
 ### Capability model
 

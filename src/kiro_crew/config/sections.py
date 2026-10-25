@@ -191,6 +191,7 @@ from kiro_crew.config.sections_browser import (  # noqa: F401
     BrowserConfig,
     BrowserCredentialsConfig,
     BrowserLiveConfig,
+    BrowserRecordingConfig,
     browser_choice_resolution,
     coerce_credential_domains,
     live_max_fps_resolution,

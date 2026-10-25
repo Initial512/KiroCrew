@@ -4,6 +4,7 @@ import { type QueryClient, useQueries } from '@tanstack/react-query'
 import type { useDeleteTerminalSession } from '../../../components/CliPanel'
 import { normalizeUrl, setSessionPreviewPending } from '../../../components/WebPreviewPanel'
 import { addTab as addDockTerminal } from '../../../hooks/useBottomTerminal'
+import { registerBrowserStageHost } from '../../../hooks/useBrowserLive.stage'
 import type { usePanelTabs } from '../../../hooks/usePanelTabs'
 import { useRunInTerminalBridge } from '../../../hooks/useRunInTerminalBridge'
 import { i18nT } from '../../../i18n/t'
@@ -110,6 +111,13 @@ export function useChatEventBridges({
       setSessionPreviewPending(slot, norm)      // heuristic offer: card only, no open, no load
     }
   }, [messages, activeSlot, dispatch, tabsCtlRef])
+  // The live-browser card's Expand and Replay: this page can show the agent's
+  // browser big in its side panel's Preview tab, so it registers as the stage's
+  // host. Without a host (the app-sdk embed) the card opens a full-screen sheet.
+  useEffect(() => registerBrowserStageHost(() => {
+    dispatch(openActivityPanel())
+    tabsCtlRef.current.openView('browser')
+  }), [dispatch, tabsCtlRef])
   // "Run in terminal" from this page's code blocks (useRunInTerminalBridge).
   // The page also answers unscoped requests, as it always has.
   const runInTerminalScope = useRunInTerminalBridge({

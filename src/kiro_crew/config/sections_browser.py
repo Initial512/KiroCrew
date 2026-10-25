@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
-from kiro_crew.config.fields import _meta, _safe_bool
+from kiro_crew.config.fields import _meta, _safe_bool, _safe_int
 from kiro_crew.config.sections_defaults import SectionReader
 
 logger = logging.getLogger("kiro_crew.config.loader")
@@ -183,6 +183,59 @@ class BrowserLiveConfig:
         )
 
 
+#: ``browser.recording`` byte caps, in MB. The defaults hold minutes of steady
+#: change per chat; the bounds keep a hand-edited value from meaning "no cap".
+RECORDING_SESSION_MB_DEFAULT = 200
+RECORDING_TOTAL_MB_DEFAULT = 1024
+RECORDING_MB_MIN = 1
+RECORDING_MB_MAX = 100_000
+
+
+@dataclass
+class BrowserRecordingConfig:
+    """``browser.recording``: the per-turn replay of what the agent did in the browser."""
+
+    enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Record browser turns for replay",
+            "Keep a replay of each turn the agent browses: masked pictures of the page "
+            "and the clicks, typing and scrolls, so you can play the turn back later. "
+            "Password fields are covered before a picture is kept, and typed secrets "
+            "are kept as a length only. Kept only on this machine, and removed with "
+            "the chat.",
+        ),
+    )
+    max_session_mb: int = field(
+        default=RECORDING_SESSION_MB_DEFAULT,
+        metadata=_meta(
+            "Replay space per chat (MB)",
+            "The most replay one chat keeps. Past it the chat's oldest turns are removed first.",
+        ),
+    )
+    max_total_mb: int = field(
+        default=RECORDING_TOTAL_MB_DEFAULT,
+        metadata=_meta(
+            "Replay space in total (MB)",
+            "The most replay all chats keep together. Past it the oldest turns are "
+            "removed first, whichever chat they belong to.",
+        ),
+    )
+
+    @classmethod
+    def from_raw(cls, section: object) -> "BrowserRecordingConfig":
+        if not isinstance(section, dict):
+            return cls()
+        reader = SectionReader(cls, section)
+        return cls(
+            enabled=reader.read("enabled", _safe_bool),
+            max_session_mb=reader.read(
+                "max_session_mb", _safe_int, RECORDING_MB_MIN, RECORDING_MB_MAX
+            ),
+            max_total_mb=reader.read("max_total_mb", _safe_int, RECORDING_MB_MIN, RECORDING_MB_MAX),
+        )
+
+
 #: Most ``browser.credentials.domains`` entries kept; an allowlist is a handful of
 #: company domains, and the rest of a longer list is dropped with one warning.
 CREDENTIAL_DOMAINS_CAP = 64
@@ -285,6 +338,13 @@ class BrowserConfig:
             "which domains.",
         ),
     )
+    recording: BrowserRecordingConfig = field(
+        default_factory=BrowserRecordingConfig,
+        metadata=_meta(
+            "Turn replay",
+            "The per-turn replay of the agent's browsing, and how much of it is kept.",
+        ),
+    )
 
     @classmethod
     def from_raw(cls, section: object) -> "BrowserConfig":
@@ -304,4 +364,5 @@ class BrowserConfig:
             choice=_validated_choice(reader.get("choice")),
             live=BrowserLiveConfig.from_raw(section.get("live")),
             credentials=BrowserCredentialsConfig.from_raw(section.get("credentials")),
+            recording=BrowserRecordingConfig.from_raw(section.get("recording")),
         )

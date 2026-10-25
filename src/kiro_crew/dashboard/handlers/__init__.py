@@ -1003,6 +1003,13 @@ from kiro_crew.dashboard.handlers.browser_ops import (  # noqa: E402, F401
     api_browser_op,
 )
 
+# The turn replay's owner-only read legs (list, one turn, one masked frame).
+from kiro_crew.dashboard.handlers.browser_recordings import (  # noqa: E402, F401
+    api_browser_recording_frame,
+    api_browser_recording_get,
+    api_browser_recordings_list,
+)
+
 # Computer use — the Settings config pair (browser, cookie-authed) plus the two
 # loopback legs: ``invoke`` (the ``kirocrew-computer`` MCP shim's forward) and
 # ``frame`` (the live-view PiP mirror of an already-captured screenshot).

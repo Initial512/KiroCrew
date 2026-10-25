@@ -164,6 +164,17 @@ def build_context(
         mine = hub.targets_of(session_key)
         return [t for t in _ledgered_targets(supervisor) if t in mine]
 
+    def _loop(info: Any) -> Any:
+        return hub.loop(session_key, info)
+
+    def _mark() -> Any:
+        return hub.inner_mark(session_key)
+
+    def _record(op: str, args: Any, result: Any, mark: Any) -> Any:
+        if mark is None:
+            return None
+        return hub.record_op(session_key, op, args, result, mark, loop=True)
+
     return harness_ops.OpContext(
         helper=supervisor.call,
         step=_step,
@@ -172,6 +183,9 @@ def build_context(
         screenshot_dir=harness_ops.screenshot_dir(config_dir()),
         sleep=asyncio.sleep,
         url_allowed=committed_url_allowed,
+        loop=_loop,
+        mark=_mark,
+        record=_record,
     )
 
 
@@ -415,16 +429,28 @@ async def api_browser_op(request: web.Request) -> web.Response:
         # running), so a takeover never lands inside an op, and the in_control check
         # inside is then the whole story.
         async with hub.op_fence(key):
+            mark = hub.op_mark(key)
             result = await _fenced_op(request, hub, key, supervisor, ctx, op, args, budget)
     finally:
         _OP_LOCK.release()
     if result is _HELD:
         return _held(request, op, interrupted=False)
     if result is _INTERRUPTED:
+        hub.record_op(key, op, args, {"ok": False, "code": "interrupted"}, mark)
         return _held(request, op, interrupted=True)
     assert isinstance(result, dict)
+    # The turn replay's event for this op: generic, from the step it reported and
+    # the result it answered (``browser_harness.recording.agent_event``).
+    hub.record_op(key, op, args, result, mark)
+    # A hand-back the person made with no op waiting on it reaches the next op.
+    said = hub.take_handback(key)
     if result.get("ok"):
-        return web.json_response({"ok": True, "result": result})
+        answer: dict[str, Any] = {"ok": True, "result": result}
+        if said is not None:
+            answer["handed_back"] = said
+        return web.json_response(answer)
+    if said is not None:
+        result = {**result, "handed_back": said}
     return web.json_response(result)
 
 
@@ -477,10 +503,13 @@ async def api_browser_handback(request: web.Request) -> web.Response:
 
     The parked ``browser`` tool's poll while the person is in control. Same trust
     class as ``/api/browser/op`` (internal secret, strict path). Body
-    ``{"session_key": str}``. Waits at most ``HANDBACK_WAIT_S`` on the hub's release
-    signal (a short long-poll, so a release lands within a second or two of the
-    Esc) and answers ``{"released": bool}``; it never answers more than that, so a
-    poll reveals nothing about the page.
+    ``{"session_key": str, "options"?: [str]}`` (``options``: up to four short
+    hand-back choices the parked op offers the person). Waits at most
+    ``HANDBACK_WAIT_S`` on the hub's release signal (a short long-poll, so a release
+    lands within a second or two of the Esc) and answers ``{"released": bool}``,
+    plus, once released, ``handed_back``: ``{"choice", "note"}`` the person gave as
+    they handed back, or ``null``. That is the person's own words from the card's
+    hand-back bar; a poll never carries anything read from the page.
     """
     if request.get("internal_auth") is not True:
         _audit(request, "denied", "internal-secret authentication required")
@@ -496,8 +525,15 @@ async def api_browser_handback(request: web.Request) -> web.Response:
         )
     hub = get_live_hub()
     key = live_session_key(session_key)
+    if "options" in body:
+        # The parked op's own hand-back choices, shown on the card's hand-back bar.
+        hub.set_handback_options(key, body.get("options"))
     released = await hub.wait_for_release(key, HANDBACK_WAIT_S)
-    return web.json_response({"released": released, "hold_timeout_s": HOLD_TIMEOUT_S})
+    answer: dict[str, Any] = {"released": released, "hold_timeout_s": HOLD_TIMEOUT_S}
+    if released:
+        # What the person said as they handed back: their own words, never page content.
+        answer["handed_back"] = hub.take_handback(key)
+    return web.json_response(answer)
 
 
 async def _fenced_op(

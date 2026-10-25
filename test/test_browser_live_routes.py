@@ -35,6 +35,11 @@ ROUTES = (
     "/api/browser/input/release",
     "/api/browser/input/event",
 )
+RECORDING_ROUTES = (
+    "/api/browser/live/{session}/recordings",
+    "/api/browser/live/{session}/recordings/{turn_id}",
+    "/api/browser/live/{session}/recordings/{turn_id}/frames/{frame}",
+)
 
 
 @pytest.fixture(autouse=True)
@@ -281,9 +286,12 @@ async def test_the_slice_binds_the_hub_to_the_owner_senders_and_registers_cleanu
     hub = lh.get_live_hub()
     assert hub._publish == wire.publish and hub._send_frame == wire.send_frame
     assert route_slice._close_live_hub in app.on_cleanup
-    paths = {r.resource.canonical for r in app.router.routes()}
-    assert paths == set(ROUTES)
-    assert all(r.method == "POST" for r in app.router.routes())
+    posts = {r.resource.canonical for r in app.router.routes() if r.method == "POST"}
+    assert posts == set(ROUTES)
+    # The turn replay's three reads (aiohttp adds a HEAD beside every GET).
+    gets = {r.resource.canonical for r in app.router.routes() if r.method == "GET"}
+    assert gets == set(RECORDING_ROUTES)
+    assert {r.method for r in app.router.routes()} == {"POST", "GET", "HEAD"}
 
 
 async def test_the_slice_is_in_the_route_table_after_system() -> None:

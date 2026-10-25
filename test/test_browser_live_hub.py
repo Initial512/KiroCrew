@@ -107,6 +107,8 @@ async def test_steps_build_the_strip_and_each_change_publishes_one_event(hub) ->
         "fps": 0.0,
         "turn_over": False,
         "tab": "",
+        "loop": None,
+        "handback_options": [],
     }
 
 

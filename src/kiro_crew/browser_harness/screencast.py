@@ -365,9 +365,21 @@ class AdaptiveController:
 
 
 class FrameSink(Protocol):
-    """Where a finished frame goes: the hub, which sends it to owner websockets."""
+    """Where a finished frame goes: the hub, which sends it to owner websockets.
+
+    A sink MAY also record (the hub's replay recorder): it then has a ``records``
+    attribute that reads true, and a ``record(jpeg, width, height, boxes, mask_ok)``
+    method the stream calls, synchronously and before the card's frame, with the
+    password boxes of THAT frame in frame pixels and whether the box query that
+    produced them succeeded. A sink without them is a plain card sink.
+    """
 
     async def frame(self, header: Mapping[str, Any], blob: bytes) -> None: ...
+
+
+#: Shortest interval between two Chrome acks while the card is hidden and the stream
+#: casts only for the recorder: the recorder's own frame-rate ceiling (5 fps).
+HIDDEN_RECORD_PERIOD_S = 0.2
 
 
 class Relay(Protocol):
@@ -389,15 +401,86 @@ class Relay(Protocol):
 #: shadow roots are walked too (a web-component login form keeps its password
 #: input inside one, where ``document.querySelectorAll`` does not look), to the
 #: same depth the snapshot walker descends; a closed root cannot be entered.
+#:
+#: A secret field is ``input[type=password]``, an input whose ``autocomplete``
+#: names a password or a one-time code (a "show password" toggle turns the type
+#: to ``text`` and usually keeps that), or one styled with ``-webkit-text-security``.
+#: The reply is ``{"boxes": [...], "frames": [...], "partial": bool}``.
+#: Same-origin iframes are walked too, their boxes offset by the iframe's content
+#: box; ``frames`` holds the boxes of visible embedded documents that cannot be
+#: read or placed exactly (cross-origin, a scaled or transformed iframe, any
+#: ``object``/``embed``/``fencedframe``/``portal``), which the card leaves alone and
+#: the turn replay paints over. ``partial`` is set when nesting runs past the depth
+#: cap, and the replay treats that mask as unknown. ``sx``/``sy`` are the page's
+#: scroll offset when the boxes were read: the replay keeps a frame only when they
+#: match the offset Chrome stamped on the frame (a scroll between the capture and
+#: the query would put every box in the wrong place, or off the frame).
 _MASK_JS = (
-    "(()=>{const r=[];const walk=(root,d)=>{"
-    "for(const e of root.querySelectorAll('input[type=password]'))"
-    "{const b=e.getBoundingClientRect();if(b.width>0&&b.height>0)"
-    "r.push([b.left,b.top,b.width,b.height]);}"
-    "if(d>=8)return;for(const h of root.querySelectorAll('*'))"
-    "{if(h.shadowRoot)walk(h.shadowRoot,d+1);}};"
-    "walk(document,0);return r;})()"
+    "(()=>{const r=[],f=[];let partial=false;"
+    "const SEL='input[type=password],input[autocomplete~=current-password],"
+    "input[autocomplete~=new-password],input[autocomplete~=one-time-code]';"
+    "const OPAQUE={OBJECT:1,EMBED:1,FENCEDFRAME:1,PORTAL:1};"
+    "const vis=b=>b.width>0&&b.height>0;"
+    "const box=(b,ox,oy)=>[b.left+ox,b.top+oy,b.width,b.height];"
+    "const walk=(root,d,ox,oy)=>{"
+    "for(const e of root.querySelectorAll('input')){let s=e.matches(SEL);"
+    "if(!s){const t=getComputedStyle(e).webkitTextSecurity;s=!!t&&t!=='none';}"
+    "if(s){const b=e.getBoundingClientRect();if(vis(b))r.push(box(b,ox,oy));}}"
+    "for(const h of root.querySelectorAll('*')){const tag=h.tagName;"
+    "const isF=tag==='IFRAME'||tag==='FRAME';"
+    "if(!h.shadowRoot&&!isF&&!OPAQUE[tag])continue;"
+    "if(d>=8){partial=true;continue;}"
+    "if(h.shadowRoot)walk(h.shadowRoot,d+1,ox,oy);"
+    "if(!isF&&!OPAQUE[tag])continue;const b=h.getBoundingClientRect();"
+    "if(!vis(b))continue;let doc=null;"
+    "if(isF){try{doc=h.contentDocument;}catch(_){doc=null;}}"
+    "const scaled=Math.abs(b.width-h.offsetWidth)>1||Math.abs(b.height-h.offsetHeight)>1;"
+    "if(doc&&!scaled){const cs=getComputedStyle(h);"
+    "walk(doc,d+1,ox+b.left+h.clientLeft+(parseFloat(cs.paddingLeft)||0),"
+    "oy+b.top+h.clientTop+(parseFloat(cs.paddingTop)||0));}"
+    "else{f.push(box(b,ox,oy));}}};"
+    "walk(document,0,0,0);return {boxes:r,frames:f,partial:partial,sx:scrollX,sy:scrollY};})()"
 )
+
+#: Most boxes one query may report; more than this and the mask is unknown.
+MASK_BOX_LIMIT = 32
+#: How far, in CSS pixels, the page's scroll at the box query may sit from the
+#: scroll Chrome stamped on the frame and still describe that frame.
+MASK_SCROLL_TOLERANCE_PX = 1.0
+
+
+def frame_scroll(meta: Mapping[str, Any]) -> tuple[float, float] | None:
+    """The page's scroll offset (CSS px) when Chrome captured the frame, or ``None``."""
+    try:
+        x, y = meta.get("scrollOffsetX"), meta.get("scrollOffsetY")
+    except AttributeError:
+        return None
+    if isinstance(x, bool) or isinstance(y, bool):
+        return None
+    if not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
+        return None
+    return float(x), float(y)
+
+
+def _same_scroll(value: Any, scroll: tuple[float, float] | None) -> bool:
+    """The box query read the page at the frame's scroll (no stamp: nothing to check)."""
+    if scroll is None:
+        return True
+    got = (
+        frame_scroll({"scrollOffsetX": value.get("sx"), "scrollOffsetY": value.get("sy")})
+        if isinstance(value, dict)
+        else None
+    )
+    if got is None:
+        return False
+    return (
+        abs(got[0] - scroll[0]) <= MASK_SCROLL_TOLERANCE_PX
+        and abs(got[1] - scroll[1]) <= MASK_SCROLL_TOLERANCE_PX
+    )
+
+
+#: Oldest a held frame may be when the tick offers it to the recorder.
+HELD_FRAME_MAX_AGE_S = 1.5
 
 
 @dataclass
@@ -458,7 +541,30 @@ class LiveStream:
         self._input_pending = False
         self._mask_at = -1.0
         self._mask: list[list[int]] = []
+        #: The recorder's mask for the frame in hand (see :meth:`_mask_rects`): a
+        #: frame whose boxes did not come from its own answered query is never kept.
+        self._mask_ok = False
+        self._rec_boxes: list[list[int]] = []
+        #: The latest frame the recorder's 5 fps gate turned away: (jpeg, w, h, at).
+        self._held: tuple[bytes, int, int, float, tuple[float, float] | None] | None = None
+        #: The recorder's last answered query (boxes, frame size); ``None`` after a
+        #: query that did not answer. :meth:`flush_held` compares against it.
+        self._rec_last: list[list[int]] | None = None
+        self._rec_last_size: tuple[int, int] = (0, 0)
         self._control_task: asyncio.Task[None] | None = None
+
+    @property
+    def records(self) -> bool:
+        """The sink records frames for replay (read live, so a config change applies)."""
+        try:
+            return bool(getattr(self.sink, "records", False))
+        except Exception:  # noqa: BLE001 - an unreadable flag records nothing
+            return False
+
+    @property
+    def _casts_hidden(self) -> bool:
+        """Keep casting while the card is hidden, for the recorder alone."""
+        return not self.visible and self.records
 
     # ── lifecycle ──────────────────────────────────────────────────────────
 
@@ -473,7 +579,7 @@ class LiveStream:
         self.session_id = await self.relay.attach(self.target_id, self._on_event)
         self.running = True
         await self.relay.send("Page.enable", {}, self.session_id)
-        if self.visible:
+        if self.visible or self._casts_hidden:
             await self._start_cast()
         if self._auto_control:
             self._control_task = asyncio.ensure_future(self._control_loop())
@@ -533,7 +639,11 @@ class LiveStream:
     # ── card-side signals ──────────────────────────────────────────────────
 
     async def set_visible(self, visible: bool) -> None:
-        """Off screen, off: stop the screencast while the card is hidden."""
+        """Off screen, off: stop the screencast while the card is hidden.
+
+        Unless the sink records: then the cast keeps running, frames go to the
+        recorder only, and Chrome is acked at :data:`HIDDEN_RECORD_PERIOD_S`.
+        """
         visible = bool(visible)
         if visible == self.visible:
             return
@@ -541,8 +651,9 @@ class LiveStream:
         if not self.running:
             return
         if visible:
-            await self._start_cast()
-        elif self.casting:
+            if not self.casting:
+                await self._start_cast()
+        elif self.casting and not self._casts_hidden:
             await self._stop_cast()
 
     def ack(self, seq: int) -> bool:
@@ -599,7 +710,23 @@ class LiveStream:
             size = (int(meta.get("deviceWidth") or 0), int(meta.get("deviceHeight") or 0))
         width, height = size
         self._note_scale(meta, width)
-        mask = await self._mask_rects(width, height)
+        records = self.records
+        want = records and self._recorder_wants()
+        scroll = frame_scroll(meta)
+        boxes = await self._mask_rects(width, height, force=want, scroll=scroll)
+        mask = boxes if self.config.mask_passwords else []
+        if want:
+            self._held = None
+            self._record(jpeg, width, height, self._rec_boxes, self._mask_ok)
+        elif records:
+            # Inside the recorder's interval: held, so the last picture of a burst
+            # is kept by the next tick (with a query of its own) if nothing follows.
+            self._held = (jpeg, width, height, now, scroll)
+        if not self.visible:
+            # Cast only for the recorder: nothing goes to a card nobody sees, and the
+            # ladder learns nothing from a frame that never crossed the link.
+            await self._paced_ack(params.get("sessionId"), floor=HIDDEN_RECORD_PERIOD_S)
+            return
         self.metrics.seq += 1
         seq = self.metrics.seq
         header = frame_header(self.session_key, seq, width, height, mask, self.stream_id)
@@ -618,6 +745,68 @@ class LiveStream:
         self.metrics.bytes += len(jpeg)
         self.controller.observe(len(jpeg), took)
         await self._paced_ack(params.get("sessionId"))
+
+    def _recorder_wants(self) -> bool:
+        """The recorder would keep a frame now (its 5 fps gate is open)."""
+        wants = getattr(self.sink, "wants_frame", None)
+        if not callable(wants):
+            return True
+        try:
+            return bool(wants())
+        except Exception:  # noqa: BLE001 - an unreadable gate offers the frame
+            return True
+
+    def _record(
+        self,
+        jpeg: bytes,
+        width: int,
+        height: int,
+        boxes: list[list[int]],
+        mask_ok: bool,
+        age_s: float = 0.0,
+    ) -> None:
+        """Hand the frame to the recorder with ITS boxes; never fails the frame."""
+        record = getattr(self.sink, "record", None)
+        if not callable(record):
+            return
+        try:
+            if age_s > 0:
+                record(jpeg, width, height, list(boxes), mask_ok, age_s=age_s)
+            else:
+                record(jpeg, width, height, list(boxes), mask_ok)
+        except Exception:  # noqa: BLE001 - the recorder never costs the live view a frame
+            logger.debug("live frame record failed", exc_info=True)
+
+    async def flush_held(self) -> bool:
+        """Offer the frame held inside the recorder's interval, if its mask is provable.
+
+        Called from the once-a-second tick. The page may have changed since the frame
+        was captured (Chrome sends the next frame only after our ack), so a query run
+        now does not by itself describe the held frame. It is offered only when the
+        query BEFORE it (the last frame offered) and the query now both answered and
+        found the same boxes: the password fields stood still across the frame's
+        whole window. Otherwise it is dropped. Returns whether a frame was offered.
+        """
+        held = self._held
+        if held is None or not self.running or not self.records or not self._recorder_wants():
+            return False
+        async with self._frame_lock:
+            if self._held is not held:
+                return False
+            self._held = None
+            jpeg, width, height, at, scroll = held
+            before, before_size = self._rec_last, self._rec_last_size
+            await self._mask_rects(width, height, force=True, scroll=scroll)
+            if not (
+                self._mask_ok
+                and before is not None
+                and before_size == (width, height)
+                and before == self._rec_boxes
+                and self._clock() - at <= HELD_FRAME_MAX_AGE_S
+            ):
+                return False
+            self._record(jpeg, width, height, self._rec_boxes, True, max(0.0, self._clock() - at))
+        return True
 
     def _note_scale(self, meta: Mapping[str, Any], width: int) -> None:
         """Remember frame-pixels-per-CSS-pixel from the frame's metadata.
@@ -647,9 +836,12 @@ class LiveStream:
                     t.cancel()
         return waiter.is_set()
 
-    async def _paced_ack(self, chrome_session: Any) -> None:
-        """Ack Chrome at the next slot of a fixed grid: target-time pacing."""
-        period = LADDER[self.controller.rung].period
+    async def _paced_ack(self, chrome_session: Any, *, floor: float = 0.0) -> None:
+        """Ack Chrome at the next slot of a fixed grid: target-time pacing.
+
+        *floor* is the shortest period allowed (the hidden recorder-only cast).
+        """
+        period = max(LADDER[self.controller.rung].period, floor)
         now = self._clock()
         due = max(self._last_ack_due + period, now - period)
         if due > now:
@@ -666,12 +858,37 @@ class LiveStream:
             # gone; the next frame carries its own session id.
             logger.debug("late screencastFrameAck", exc_info=True)
 
-    async def _mask_rects(self, width: int, height: int) -> list[list[int]]:
-        """Password boxes in frame pixels, re-read at most every :data:`MASK_MIN_INTERVAL_S`."""
-        if not self.config.mask_passwords:
+    async def _mask_rects(
+        self,
+        width: int,
+        height: int,
+        *,
+        force: bool = False,
+        scroll: tuple[float, float] | None = None,
+    ) -> list[list[int]]:
+        """Password boxes in frame pixels, re-read at most every :data:`MASK_MIN_INTERVAL_S`.
+
+        Queried when ``mask_passwords`` is on or *force* is (a recorder is attached:
+        it burns the boxes in whatever the card does). *force* also re-reads on
+        EVERY frame: the recorder's boxes must belong to the frame they are burned
+        into, never to a cached query from before a field appeared, a scroll or a
+        ladder step changed the frame's size.
+
+        Sets the recorder's view of this frame: ``_mask_ok`` is true only when the
+        query ran for this frame, answered in the expected shape, and reported no
+        more than :data:`MASK_BOX_LIMIT` boxes, and, when the frame carries its
+        *scroll* offset, the query read the page at that same offset (within
+        :data:`MASK_SCROLL_TOLERANCE_PX`); ``_rec_boxes`` are the password boxes
+        plus every opaque (cross-origin) iframe's box, in frame pixels.
+        """
+        self._mask_ok = False
+        self._rec_boxes = []
+        if force:
+            self._rec_last = None
+        if not (self.config.mask_passwords or force):
             return []
         now = self._clock()
-        if self._mask_at >= 0 and now - self._mask_at < MASK_MIN_INTERVAL_S:
+        if not force and self._mask_at >= 0 and now - self._mask_at < MASK_MIN_INTERVAL_S:
             return list(self._mask)
         self._mask_at = now
         try:
@@ -683,9 +900,30 @@ class LiveStream:
         except Exception:
             # Keep the last boxes rather than unmask on a transient failure.
             return list(self._mask)
-        boxes = ((reply.get("result") or {}).get("value")) if isinstance(reply, dict) else None
-        rects = clip_mask_rects(boxes, self.scale, width, height)
+        value = ((reply.get("result") or {}).get("value")) if isinstance(reply, dict) else None
+        frames: Any = []
+        if isinstance(value, dict):
+            boxes, frames = value.get("boxes"), value.get("frames", [])
+        else:
+            boxes = value
+        if not isinstance(boxes, list) or not isinstance(frames, list):
+            # An exception inside the page, or a reply of another shape: the boxes
+            # are unknown, which is not the same as "no password field".
+            return list(self._mask)
+        rects = clip_mask_rects(boxes, self.scale, width, height, limit=MASK_BOX_LIMIT)
         self._mask = rects
+        partial = isinstance(value, dict) and bool(value.get("partial"))
+        if (
+            len(boxes) + len(frames) <= MASK_BOX_LIMIT
+            and not partial
+            and _same_scroll(value, scroll)
+        ):
+            opaque = clip_mask_rects(frames, self.scale, width, height, limit=MASK_BOX_LIMIT)
+            self._rec_boxes = rects + opaque
+            self._mask_ok = True
+            if force:
+                self._rec_last = list(self._rec_boxes)
+                self._rec_last_size = (width, height)
         return list(rects)
 
     # ── control ────────────────────────────────────────────────────────────
@@ -708,6 +946,10 @@ class LiveStream:
             stats.restarted = await self._apply_rung(before, stats.rung)
         if await self._watchdog():
             stats.restarted = True
+        try:
+            await self.flush_held()
+        except Exception:  # noqa: BLE001 - the recorder never costs the stream a tick
+            logger.debug("live stream held-frame flush failed", exc_info=True)
         if self._on_tick is not None:
             await self._on_tick(stats)
         return stats

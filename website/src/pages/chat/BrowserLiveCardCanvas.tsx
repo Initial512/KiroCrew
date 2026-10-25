@@ -64,7 +64,8 @@ interface Props {
 const REPLAY_MAX_GAP_MS = 500
 const REPLAY_MIN_GAP_MS = 16
 
-async function decode(frame: DecodedBrowserFrame): Promise<ImageBitmap | HTMLImageElement> {
+/** A frame's JPEG as something a 2D context can draw (also the replay's in-memory frames). */
+export async function decode(frame: DecodedBrowserFrame): Promise<ImageBitmap | HTMLImageElement> {
   const blob = new Blob([frame.jpeg as BlobPart], { type: 'image/jpeg' })
   if (typeof createImageBitmap === 'function') return createImageBitmap(blob)
   // A host without createImageBitmap (an old shim, the test DOM): the Image route.

@@ -3,10 +3,14 @@ import { motion, useReducedMotion } from 'framer-motion'
 import { useInRouterContext, useNavigate } from 'react-router-dom'
 
 import type { ChatMessage } from '../../types'
-import { browserLiveStore, useBrowserLiveIsCurrent, useBrowserLiveTurn, type BrowserLiveTurn } from '../../hooks/useBrowserLive'
+import type { BrowserHandbackSaid } from '../../api/client/browserLive'
+import { browserLiveStore, useBrowserLiveCurrent, useBrowserLiveIsCurrent, useBrowserLiveTurn, type BrowserLiveTurn } from '../../hooks/useBrowserLive'
+import { browserStageStore, stageTurnId, useBrowserStage } from '../../hooks/useBrowserLive.stage'
+import { useIsMobile } from '../../hooks/useIsMobile'
 import { useLanguageGeneration } from '../../i18n/useLanguageGeneration'
 import type { BrowserLiveCanvasHandle } from './BrowserLiveCardCanvas'
-import { BrowserLiveAllowView, BrowserLiveDoneRow, BrowserLiveLiveView, hostOf } from './BrowserLiveCardViews'
+import { BrowserLiveAllowView, BrowserLiveDoneRow, BrowserLiveLiveView, BrowserLiveStagedRow, hostOf } from './BrowserLiveCardViews'
+import BrowserLiveSheet from './BrowserLiveSheet'
 
 /**
  * BrowserLiveCard: the agent's browser, in the chat, while it browses.
@@ -25,6 +29,12 @@ import { BrowserLiveAllowView, BrowserLiveDoneRow, BrowserLiveLiveView, hostOf }
  * Frames are painted by `BrowserLiveCardCanvas` outside React. Visibility is
  * reported from here: an IntersectionObserver on the root plus the document's
  * own visibility, so an off-screen or background card stops the screencast.
+ *
+ * Big view. Expand and Replay do not grow the card: they move the picture to
+ * the stage (`useBrowserLive.stage`), the side panel's Preview tab or, on a
+ * phone or a page with no side panel, a full-screen sheet. While the stage shows
+ * this card's turn, the same motion element folds to one line that says where
+ * the picture went and offers Bring back. Takeover still grows the card in place.
  *
  * Trust: `title` and every step label are agent- or page-authored text and go
  * through `sanitizeLlmOutput` in the views; the URL shows as its host. Nothing
@@ -85,8 +95,9 @@ function BrowserLiveCard({ sessionKey, anchorKey, anchorTs, running, goTo }: Bro
   const rootRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<BrowserLiveCanvasHandle>(null)
   const [onScreen, setOnScreen] = useState(false)
-  const [expanded, setExpanded] = useState(false)
-  const [replaying, setReplaying] = useState(false)
+  const isMobile = useIsMobile()
+  const stage = useBrowserStage(sessionKey)
+  const current = useBrowserLiveCurrent(sessionKey)
 
   // On-screen tracking. An observer where the host has one; a host without
   // (an old shim) counts the card as visible so the stream is never stuck off.
@@ -119,29 +130,33 @@ function BrowserLiveCard({ sessionKey, anchorKey, anchorTs, running, goTo }: Bro
   useEffect(() => { if (inControl) canvasRef.current?.focus() }, [inControl])
 
   const claim = useCallback(() => { void browserLiveStore.claim(sessionKey) }, [sessionKey])
-  const release = useCallback(() => { void browserLiveStore.release(sessionKey) }, [sessionKey])
+  const release = useCallback((said?: BrowserHandbackSaid) => { void browserLiveStore.release(sessionKey, said) }, [sessionKey])
   const openInBrowser = useCallback(() => browserLiveStore.openInBrowser(sessionKey), [sessionKey])
   // "Open live" restarts the screencast on the tab this card showed; the server's
   // event turns the same card live again (same turn id), so Take over and Hand
   // back work exactly as during the turn. Close folds it back.
   const openLive = useCallback(() => {
-    canvasRef.current?.stop()
-    setReplaying(false)
     if (turnId) void browserLiveStore.reopen(sessionKey, turnId)
   }, [sessionKey, turnId])
   const closeLive = useCallback(() => browserLiveStore.closeLive(sessionKey), [sessionKey])
 
+  // A running turn's Expand follows "now" (null), so the big view moves on to the
+  // next turn with the agent; a reopened, finished turn pins its own id.
+  const turnOver = turn?.turnOver ?? false
+  const expand = useCallback(() => {
+    if (!turnId) return
+    browserStageStore.open(sessionKey, { turnId: turnOver ? turnId : null, mode: 'live', preferSheet: isMobile })
+  }, [sessionKey, turnId, turnOver, isMobile])
   const replay = useCallback(() => {
-    const c = canvasRef.current
-    if (!c || !turn) return
-    if (replaying) { c.stop(); setReplaying(false); return }
-    setReplaying(true)
-    void c.replay(turn.ring.all()).then(() => setReplaying(false))
-  }, [turn, replaying])
+    if (!turnId) return
+    browserStageStore.open(sessionKey, { turnId, mode: 'replay', preferSheet: isMobile })
+  }, [sessionKey, turnId, isMobile])
+  const bringBack = useCallback(() => browserStageStore.close(sessionKey), [sessionKey])
 
   if (!turn) return null
   const view = viewFor(turn)
-  const grown = inControl || (expanded && view === 'live')
+  const staged = !!stage && stageTurnId(stage, current?.turnId ?? null) === turn.turnId
+  const grown = inControl && !staged
   const transition = reduce ? { duration: 0 } : { type: 'spring' as const, stiffness: 420, damping: 38 }
 
   return (
@@ -161,32 +176,33 @@ function BrowserLiveCard({ sessionKey, anchorKey, anchorTs, running, goTo }: Bro
         }`}
         style={grown ? { marginInline: 'calc(-1 * clamp(0px, (100vw - var(--mc-content-width, 900px) - 160px) / 2, 56px))' } : undefined}
       >
-        {view === 'allow' && (
+        {staged && stage && (
+          <BrowserLiveStagedRow turn={turn} replaying={stage.mode === 'replay'} surface={stage.surface} onBringBack={bringBack} />
+        )}
+        {!staged && view === 'allow' && (
           <BrowserLiveAllowView
             turn={turn}
             onSwitchToBrowser={openInBrowser}
             onUseKiroBrowser={() => goTo('/settings/browser')}
           />
         )}
-        {view === 'live' && (
+        {!staged && view === 'live' && (
           <BrowserLiveLiveView
             turn={turn}
-            grown={grown}
             onScreen={onScreen}
             canvasRef={canvasRef}
             onClaim={claim}
             onRelease={release}
             onOpenInBrowser={openInBrowser}
-            onToggleExpand={() => setExpanded(v => !v)}
+            onExpand={expand}
             onCloseLive={closeLive}
           />
         )}
-        {view === 'done' && (
+        {!staged && view === 'done' && (
           <BrowserLiveDoneRow
             turn={turn}
             onScreen={onScreen}
             canvasRef={canvasRef}
-            replaying={replaying}
             onReplay={replay}
             onOpenInBrowser={openInBrowser}
             canOpenLive={turn.state === 'done' && turn.tab === 'open' && isCurrent}
@@ -194,6 +210,8 @@ function BrowserLiveCard({ sessionKey, anchorKey, anchorTs, running, goTo }: Bro
           />
         )}
       </motion.div>
+      {/* The sheet surface of the stage, for this card's turn. */}
+      {staged && stage?.surface === 'sheet' && <BrowserLiveSheet sessionKey={sessionKey} />}
     </div>
   )
 }
