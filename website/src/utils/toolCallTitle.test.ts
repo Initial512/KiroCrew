@@ -258,3 +258,14 @@ describe('backendShellDescription (R0.0, kiro-team/kiro-agent#2753)', () => {
     expect(d.rawTitle).toBe('ls -la src')
   })
 })
+
+describe('a session tool names its target by title (Crew Mode demo issue 2)', () => {
+  it('shows the worker title, not the raw session key, once the slot is known', async () => {
+    const { store } = await import('../store')
+    const { sseSlots } = await import('../store/dashboardSlice')
+    const input = { kind: 'other', title: 'Running: @kirocrew-dashboard/session_send', mcpServer: 'kirocrew-dashboard', toolName: 'session_send', rawInput: { target: 'chat-9-worker', message: 'go' } } as ToolCallTitleInput
+    expect(deriveToolCallTitle(input).title).toBe('Send to session: chat-9-worker')
+    store.dispatch(sseSlots([{ key: 'chat-9-worker', title: 'Fix the parser', messages: 0, running: false }] as never))
+    expect(deriveToolCallTitle(input).title).toBe('Send to session: Fix the parser')
+  })
+})

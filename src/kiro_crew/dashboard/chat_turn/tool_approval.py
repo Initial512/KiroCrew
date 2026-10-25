@@ -270,6 +270,34 @@ def _native_crew_should_auto_approve(native_tracker, state, slot) -> bool:
     )
 
 
+_CREW_ROOT_OWN_WORKER_VERBS = frozenset({"session_send", "session_status", "session_read_message"})
+
+
+def _crew_root_own_worker_call(state: Any, slot: Any, event: Any) -> bool:
+    """A Crew Mode conductor's OWN call to message or read one of ITS workers.
+
+    Keyed on the verified ``kirocrew-dashboard`` identity and the verified
+    ``target`` argument, which must be the exact key of a live worker stamped
+    under this conductor. Anything else (a subagent's call, a title-only or
+    unverified identity, another session, a target by title) keeps asking.
+    """
+    if event.sub_session_id or not (event.mcp_identity_trusted and event.raw_params_trusted):
+        return False
+    if event.mcp_server_name != "kirocrew-dashboard":
+        return False
+    if event.tool_name not in _CREW_ROOT_OWN_WORKER_VERBS:
+        return False
+    target = (event.raw_tool_params or {}).get("target")
+    slots = getattr(state, "_slots", {}) or {}
+    if not isinstance(target, str) or target == slot.key or target not in slots:
+        return False
+    from kiro_crew import crew_mode
+
+    if not crew_mode.slot_is_crew_mode_root(slot):
+        return False
+    return crew_mode.live_stamps(slots).get(target, ("", False))[0] == slot.key
+
+
 async def _name_grant_refusal_for(event: object) -> Refusal | None:
     """Why a shell *event* may not be auto-approved by program NAME, or ``None``.
 
@@ -750,7 +778,10 @@ async def _on_permission_request(turn: _ChatTurn, event) -> Literal[_Flow.CONTIN
     # parent turn. Deny-by-default (CWE-1188): with no active crew this
     # predicate is False no matter the trust flags, so the tool falls
     # through to the normal trust gate below, then _on_permission_prompt's card.
-    if _native_crew_should_auto_approve(_native_tracker, state, slot) and _child_grant_eligible:
+    _own_worker_call = _crew_root_own_worker_call(state, slot, event)
+    if (
+        _own_worker_call or _native_crew_should_auto_approve(_native_tracker, state, slot)
+    ) and _child_grant_eligible:
         logger.debug(
             "Native crew auto-approve: %r (request_id=%s)",
             _safe_native_crew_debug_title(event.title),
@@ -793,7 +824,7 @@ async def _on_permission_request(turn: _ChatTurn, event) -> Literal[_Flow.CONTIN
             tool_kind=event.tool_kind,
             outcome="auto_approved",
             request_id=event.request_id,
-            metadata={"reason": "native_crew"},
+            metadata={"reason": "crew_mode_own_worker" if _own_worker_call else "native_crew"},
         )
         return _Flow.CONTINUE
     # Session-trusted patterns: auto-approve commands matching user globs.

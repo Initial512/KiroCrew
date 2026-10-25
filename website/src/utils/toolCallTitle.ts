@@ -75,6 +75,7 @@
  */
 
 import { i18nT } from '../i18n/t'
+import { store } from '../store'
 
 import { classifyShellCommand, hostOf } from './shellCommandParse'
 import { decodePathForDisplay } from './pathBasename'
@@ -595,7 +596,12 @@ export function renderToolAction(action: ToolAction): string {
       return i18nT('utils.toolCallTitle.view_image', { path: cap(action.path) })
     case 'mcp': {
       const label = action.title || humanizeToolName(action.tool)
-      return action.arg ? i18nT('utils.toolCallTitle.mcp_with_arg', { title: label, arg: action.arg }) : label
+      // A session tool names its target by key; show the session's title instead.
+      const sessionTitle = action.arg && action.tool.startsWith('session_')
+        ? store.getState().dashboard.slots.find(s => s.key === action.arg)?.title
+        : undefined
+      const arg = sessionTitle ? cap(sessionTitle) : action.arg
+      return arg ? i18nT('utils.toolCallTitle.mcp_with_arg', { title: label, arg }) : label
     }
     case 'unknown':
       return action.cmd
