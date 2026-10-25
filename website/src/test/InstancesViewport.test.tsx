@@ -185,6 +185,35 @@ describe('InstancesViewport', () => {
     expect(frame.hasAttribute('allowfullscreen')).toBe(true)
   })
 
+  it('sandboxes the pane with the flags it needs and no top navigation', async () => {
+    // The pane hosts another gateway's SPA. It needs scripts, its own origin
+    // (cookies, storage), forms, popups that leave the sandbox (window.open
+    // hand-off, pop-outs), dialogs and downloads. A missing flag breaks a pane
+    // feature with no error, so the set is pinned exactly. No allow-top-navigation*
+    // token may appear: a pane document must not replace the dashboard's top frame.
+    const store = createTestStore({
+      instances: { warm: { 'cd-1': { port: 7778, token: 'tok' } }, activeId: 'cd-1', mru: ['cd-1'], unread: {} },
+    })
+    renderWithProviders(<InstancesViewport />, { store })
+    const frame = await waitFor(() => {
+      const f = document.querySelector('iframe')
+      if (!f) throw new Error('no iframe yet')
+      return f as HTMLIFrameElement
+    })
+    expect(frame.hasAttribute('sandbox')).toBe(true)
+    const tokens = (frame.getAttribute('sandbox') ?? '').split(/\s+/).filter(Boolean).sort()
+    expect(tokens).toEqual([
+      'allow-downloads',
+      'allow-forms',
+      'allow-modals',
+      'allow-popups',
+      'allow-popups-to-escape-sandbox',
+      'allow-same-origin',
+      'allow-scripts',
+    ])
+    expect(tokens.some(t => t.startsWith('allow-top-navigation'))).toBe(false)
+  })
+
   it('renders the active instance iframe with the loopback token URL', async () => {
     const store = createTestStore({
       instances: { warm: { 'cd-1': { port: 7778, token: 'tok' } }, activeId: 'cd-1', mru: ['cd-1'], unread: {} },

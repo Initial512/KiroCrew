@@ -1498,6 +1498,11 @@ export default function InstancesViewport({ macInset = false }: { macInset?: boo
           // left as a maintainer decision.
           // allowFullScreen mirrors the legacy attribute some engines still
           // require alongside the Permissions-Policy delegation.
+          // Sandboxed to what the pane uses. No allow-top-navigation* flag: a
+          // page in the pane must never replace this dashboard's top document.
+          // allow-same-origin beside allow-scripts is safe only because the pane
+          // is a different origin (another port) from this document.
+          sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads"
           allow="microphone; fullscreen; clipboard-write; display-capture"
           allowFullScreen
           onLoad={e => {
