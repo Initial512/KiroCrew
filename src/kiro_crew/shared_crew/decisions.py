@@ -463,7 +463,16 @@ def respond(reply: Reply) -> Any:
     from aiohttp import web
 
     status, body = reply
-    return web.json_response(body, status=status)
+    if status == 409:
+        return web.json_response(
+            {
+                "error": "this decision was already answered",
+                "code": "already_resolved",
+                "decision": body.get("decision"),
+            },
+            status=409,
+        )
+    return web.json_response(body)
 
 
 def _settle_future(fut: Any, resolved: str) -> bool:
