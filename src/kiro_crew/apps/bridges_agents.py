@@ -962,6 +962,22 @@ def _register_agents(
         return registered
 
 
+def _refuse_foreign_agents_dir(agents_dir: Path, app_name: str) -> None:
+    """Raise ``SharedAgentHomeRefused`` when this data home does not own *agents_dir*.
+
+    Asked once per sweep, before any unlink: the guard answers for the directory,
+    so a per-file check would only repeat the question and its audit record.
+    """
+    from kiro_crew import agent as _agent
+    from kiro_crew.agent_files import AGENT_FILENAME
+
+    if _agent._declined_foreign_spec_write(agents_dir / AGENT_FILENAME):
+        raise _agent.SharedAgentHomeRefused(
+            f"{agents_dir} is owned by another data home; app {app_name}'s agent "
+            "specs and launch copies were left in place"
+        )
+
+
 def _deregister_agents(app_name: str) -> int:
     """Remove all agent symlinks for an app from ~/.kiro/agents/."""
     prefix = _safe_link_name(app_name + "/")
@@ -969,6 +985,7 @@ def _deregister_agents(app_name: str) -> int:
     agents_dir = _kiro_agents_dir()
     if not agents_dir.is_dir():
         return 0
+    _refuse_foreign_agents_dir(agents_dir, app_name)
     for entry in agents_dir.iterdir():
         if entry.name.startswith(prefix) and entry.name.endswith(".json"):
             try:

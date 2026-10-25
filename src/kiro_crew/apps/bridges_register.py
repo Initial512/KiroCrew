@@ -18,7 +18,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
-from kiro_crew.apps.bridges_agents import _deregister_agents, _register_agents
+from kiro_crew.apps.bridges_agents import (
+    _deregister_agents,
+    _refuse_foreign_agents_dir,
+    _register_agents,
+)
 from kiro_crew.apps.bridges_crons import _deregister_crons, _register_crons
 from kiro_crew.apps.bridges_mcp import (
     _deregister_mcp_servers,
@@ -140,6 +144,7 @@ def _prune_stale_app_resources(app_name: str, manifest: AppManifest, app_root: P
         current_agent_names.add(str(agent_name))
     agents_dir = _kiro_agents_dir()
     if current_links is not None and agents_dir.is_dir():
+        _refuse_foreign_agents_dir(agents_dir, app_name)
         prefix = _safe_link_name(app_name + "/")
         for entry in agents_dir.iterdir():
             if (
@@ -169,8 +174,7 @@ def _prune_stale_app_resources(app_name: str, manifest: AppManifest, app_root: P
             ]
             for k in stale:
                 del servers[k]
-            if stale:
-                _write_mcp_json_unlocked(data)
+            if stale and _write_mcp_json_unlocked(data):
                 logger.info("Pruned %d stale app MCP server(s) for %s", len(stale), app_name)
 
 
@@ -302,7 +306,12 @@ def refresh_app_agents(app_name: str, io_failures: list[str] | None = None) -> l
     # merged into them) would be rewritten and become dispatchable again. On
     # denial, scrub any stale materialized agents and register nothing.
     if _registration_denied(app_name, action="resource_register", app_root=app_root):
-        _deregister_agents(app_name)
+        from kiro_crew.agent import SharedAgentHomeRefused
+
+        try:
+            _deregister_agents(app_name)
+        except SharedAgentHomeRefused as exc:
+            logger.error("App %s is denied but its agents were not scrubbed: %s", app_name, exc)
         return []
     return _register_agents(app_name, manifest, app_root, io_failures=io_failures)
 
