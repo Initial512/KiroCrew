@@ -159,6 +159,13 @@ describe('TailscaleAccess', () => {
     await waitFor(() => expect(read).toHaveBeenCalled())
     expect(screen.queryByTestId('tailscale-access')).toBeNull()
   })
+
+  it('a failed read shows an error notice with a hand-off instead of an empty space', async () => {
+    read.mockRejectedValue(new ApiError(500, 'x', JSON.stringify({ code: 'error' })))
+    mount()
+    const notice = await screen.findByTestId('access-load-error')
+    expect(within(notice).getByRole('button', { name: /Ask the agent/ })).toBeInTheDocument()
+  })
 })
 
 describe('safeAvatarUrl', () => {

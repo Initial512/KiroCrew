@@ -941,6 +941,7 @@ function ChatSidebar({
       {/* The floating dock (components/ListDock): the glass search capsule, the
           filter chips and the list-level notices hover over the lanes, and
           every lane's scroller pads its top by the dock's live height. */}
+      <ListDock {...renderSearchDock(scope)}>
       {creatorFilterOn ? (
         <CreatorFilteredSessions
           key={`${creatorFilter}\u0000${slotFilter.trim()}`}
@@ -951,7 +952,6 @@ function ChatSidebar({
           onClear={() => setCreatorFilter('all')}
         />
       ) : (
-      <ListDock {...renderSearchDock(scope)}>
       <LayoutGroup id="chat-slots">
         {conductorLaneActive ? (
           lanes.renderConductorLane()
@@ -963,8 +963,8 @@ function ChatSidebar({
           board.renderBoardLane()
         )}
       </LayoutGroup>
-      </ListDock>
       )}
+      </ListDock>
 
       {/* Drag-move confirmation + undo. Deliberately a SIBLING of the lanes and
           a sibling ABOVE the separator, so it never covers the row that just

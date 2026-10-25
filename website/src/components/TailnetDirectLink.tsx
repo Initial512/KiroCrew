@@ -49,7 +49,7 @@ function CopyUrl({ url }: { url: string }) {
         <ErrorNotice
           variant="inline"
           message={i18nT('sharedCrew.direct_link_copy_failed')}
-          noHandoffReason="The browser refused the clipboard; the link stays selectable in the field above, and an agent cannot copy it for the person."
+          askAgent
           testId="direct-link-copy-error"
         />
       )}

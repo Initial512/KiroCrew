@@ -142,6 +142,15 @@ describe('TailscaleInvites', () => {
     await waitFor(() => expect(revoke).toHaveBeenCalledWith('9'))
   })
 
+  it('a pending email invite shows only Confirm and Cancel while confirming a revoke', async () => {
+    read.mockResolvedValue(status({ invites: [invite({ id: '7' })] }))
+    mount()
+    expect(await screen.findByTestId('invite-resend')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('invite-revoke'))
+    expect(screen.getByTestId('invite-revoke-confirm')).toBeInTheDocument()
+    expect(screen.queryByTestId('invite-resend')).toBeNull()
+  })
+
   it('removes the API key only after a confirm, since it cannot be undone', async () => {
     read.mockResolvedValue(status())
     disconnect.mockResolvedValue(status({ connected: false }))

@@ -10,5 +10,6 @@ describe('TailnetDirectLink', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Copy' }))
     const notice = await screen.findByTestId('direct-link-copy-error')
     expect(notice).toHaveAttribute('role', 'alert')
+    expect(screen.getByRole('button', { name: /Ask the agent/ })).toBeInTheDocument()
   })
 })

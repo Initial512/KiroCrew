@@ -268,7 +268,7 @@ function InviteRow({ invite }: { invite: TailscaleInvite }) {
         {invite.created_at > 0 && <span className="text-[12px] text-muted">{i18nT('sharedCrew.invite_sent_at', { when: fmtDateTime(invite.created_at * 1000) })}</span>}
       </div>
       <div className="flex flex-wrap gap-2">
-        {invite.kind === 'email' && invite.status === 'pending' && (
+        {!confirming && invite.kind === 'email' && invite.status === 'pending' && (
           <Btn type="button" onClick={() => resend.mutate()} disabled={resend.isPending || resend.isSuccess} data-testid="invite-resend">
             <RefreshCw size={14} className="lucide-inline" aria-hidden /> {resend.isSuccess ? i18nT('sharedCrew.invite_resent') : i18nT('sharedCrew.invite_resend')}
           </Btn>

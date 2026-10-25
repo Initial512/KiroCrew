@@ -184,11 +184,23 @@ function ApprovedRow({ person }: { person: ApprovedPerson }) {
   )
 }
 
-/** The whole card. Hidden for anyone but the owner, or a gateway without the routes. */
+/** The whole card. Hidden for anyone but the owner, or a gateway without the routes (404). */
 export function TailscaleAccess() {
   const access = useSharedCrewAccess()
   const { guard, firstShareDialog } = useFirstShareGate()
-  if (access.isLoading || access.isError || !access.data) return null
+  if (access.isLoading) return null
+  if (access.isError) {
+    // A non-owner is refused by design: the card is the owner's alone.
+    const code = inviteErrorCode(access.error)
+    if (code === 'owner_only') return null
+    return (
+      <SettingsSection title={i18nT('sharedCrew.waitlist_title')}>
+        <ErrorNotice message={accessErrorText(code)} askAgent testId="access-load-error" />
+      </SettingsSection>
+    )
+  }
+  // A gateway without the routes (404): nothing to show here.
+  if (!access.data) return null
   const view = access.data
   return (
     <SettingsSection title={i18nT('sharedCrew.waitlist_title')}>

@@ -1196,7 +1196,7 @@ that never learned a revision sends none and is not compared.
 | `GET /api/shared-crew/people` | observed collaborators with usage, and the directory state |
 | `GET /api/shared-crew/capacity` | `CapacityResponse` for the viewer |
 | `GET /api/shared-crew/work?session_key=` | public `AcceptedWork` list |
-| `POST /api/shared-crew/work/{work_id}/cancel` `{expected_revision}` | the next `AcceptedWork`, or 409 with `current` |
+| `POST /api/shared-crew/work/{work_id}/cancel` `{expected_revision}` | the next `AcceptedWork`, or 409 with `current`; a planned task or schedule run is owner only (403 `owner_only`), as on its own cancel route |
 | a chat send | 200 when admitted, 202 with `work` when queued, 429 / 413 / 503 with `error_body` |
 | an approval or answer, with `response_id` | the `SharedDecision`; 409 `already_resolved` with it on a lost race |
 | `GET /api/shared-crew/presence?session_key=` | the session's `PresenceEntry` list (dashboard users only) |
@@ -1271,7 +1271,8 @@ People, owner only (`TailscaleAccess`, theme tokens, rows wrap at narrow widths)
 | entries carried over from config | one line listing them |
 | access set unreadable | an error line: only the owner can open the Crew |
 | an Approve, Dismiss or Remove fails (`not_waiting`, `first_share_ack_required`, any error) | an inline `ErrorNotice` in the row with the agent hand-off (no draft sits beside it) |
-| the direct link's Copy is refused by the browser | an inline `ErrorNotice` with no hand-off: the link stays selectable in its field |
+| the direct link's Copy is refused by the browser | an inline `ErrorNotice` with the agent hand-off; the link stays selectable in its field |
+| the access list read fails (not `owner_only`, not 404) | the card's title and an `ErrorNotice` with the agent hand-off |
 | first invite or approve while nobody else has access | a one-time confirm with the session and Crew memory counts, plus a laptop note on a laptop host |
 | Remove key | a confirm, then `DELETE .../credential` with the irreversible-confirm header |
 | teammate or a gateway without the routes | nothing |

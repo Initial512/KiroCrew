@@ -3,7 +3,8 @@
 Read and write access follows the existing dashboard auth: these handlers run
 behind ``token_auth_middleware`` like every other ``/api`` route and add no
 authorization of their own, because every authorized collaborator has equal
-rights. Cancellation is compare-and-set on the record's ``revision``; a stale
+rights. The one exception is cancelling a planned task or a schedule run: that
+keeps the owner gate its own cancel route has. Cancellation is compare-and-set on the record's ``revision``; a stale
 or illegal request answers 409 with the server's ``current`` record.
 
 Shapes:
@@ -33,6 +34,7 @@ from aiohttp import web
 from kiro_crew.shared_crew import admission_gate
 from kiro_crew.shared_crew.admission import (
     InvalidTransition,
+    OperationKind,
     ReasonCode,
     StaleRevision,
     error_body,
@@ -47,6 +49,7 @@ logger = logging.getLogger(__name__)
 CAPACITY_PATH = "/api/shared-crew/capacity"
 WORK_PATH = "/api/shared-crew/work"
 CANCEL_PATH = "/api/shared-crew/work/{work_id}/cancel"
+_OWNER_ONLY_CANCEL = frozenset({OperationKind.TASK, OperationKind.CRON})
 
 FAIRNESS_DESCRIPTION: dict[str, Any] = {
     "algorithm": "deficit_round_robin",
@@ -124,6 +127,16 @@ async def api_work_cancel(request: web.Request) -> web.Response:
             {"error": "expected_revision must be an integer", "code": "invalid_request"},
             status=400,
         )
+    target = await service.current_work(work_id)
+    if target is not None and target.operation in _OWNER_ONLY_CANCEL:
+        from kiro_crew.dashboard.handlers._shared_access import (
+            require_owner_for_dashboard_caller,
+        )
+
+        # Planned tasks and schedules are the owner's: their own cancel routes refuse others.
+        denied = await require_owner_for_dashboard_caller(request, "shared_crew.work_cancel")
+        if denied is not None:
+            return denied
     try:
         work = await service.cancel(work_id, expected_revision=expected)
     except KeyError:

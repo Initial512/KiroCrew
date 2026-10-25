@@ -144,7 +144,7 @@ export function CreatorFilteredSessions({ creator, q, connected, onOpen, onClear
   const data = page.data
   const unavailable = page.isSuccess && data === null
   return (
-    <div className="flex-1 min-h-0 overflow-y-auto px-2 pb-2" data-testid="creator-filtered-sessions" aria-busy={page.isFetching}>
+    <div className="flex-1 min-h-0 overflow-y-auto px-2 pb-2 pt-[var(--list-dock-h,0.5rem)]" data-testid="creator-filtered-sessions" aria-busy={page.isFetching}>
       {page.isLoading && (
         <div className="flex flex-col gap-2 pt-1" aria-label={i18nT('sharedCrew.loading')}>
           <Skeleton className="h-10" /><Skeleton className="h-10" /><Skeleton className="h-10" />

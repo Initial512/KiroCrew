@@ -16,7 +16,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
 from kiro_crew.shared_crew import admission_gate, audit, routes_admission
-from kiro_crew.shared_crew.admission import StaleRevision
+from kiro_crew.shared_crew.admission import OperationKind, StaleRevision
 from kiro_crew.shared_crew.collab import DecisionKind
 from kiro_crew.shared_crew.contracts import (
     ACTOR_REQUEST_KEY,
@@ -103,7 +103,7 @@ class _Service:
         return None
 
 
-def _client(service: _Service, monkeypatch) -> TestClient:
+def _client(service: _Service, monkeypatch, app_claim: str | None = None) -> TestClient:
     async def current_service() -> _Service:
         return service
 
@@ -111,6 +111,8 @@ def _client(service: _Service, monkeypatch) -> TestClient:
 
     @web.middleware
     async def mw(request, handler):
+        if app_claim is not None:
+            request["app"] = app_claim
         request[ACTOR_REQUEST_KEY] = ActorContext(
             principal=BOB, request_id="r", transport=Transport.HTTP
         )
@@ -157,3 +159,37 @@ async def test_a_late_different_response_is_audited_as_conflict(events):
         ("shared_crew.approval", "applied", BOB.id),
         ("shared_crew.approval", "conflict", CAROL.id),
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "operation,owner,status",
+    [
+        (OperationKind.TASK, False, 403),
+        (OperationKind.CRON, False, 403),
+        (OperationKind.TASK, True, 200),
+        (OperationKind.CHAT_TURN, False, 200),
+    ],
+)
+async def test_only_the_owner_cancels_a_planned_task_or_schedule_run(
+    events, monkeypatch, operation, owner, status
+):
+    from kiro_crew.dashboard.handlers import source_providers
+
+    monkeypatch.setattr(source_providers, "is_owner_dashboard_request", lambda _r: owner)
+    service = _Service()
+    cancelled: list[str] = []
+
+    async def current_work(work_id: str) -> Any:
+        return SimpleNamespace(operation=operation)
+
+    async def cancel(work_id: str, *, expected_revision: int) -> Any:
+        cancelled.append(work_id)
+        return service.work
+
+    service.current_work = current_work  # type: ignore[method-assign]
+    service.cancel = cancel  # type: ignore[method-assign]
+    async with _client(service, monkeypatch, app_claim="") as client:
+        resp = await client.post("/api/shared-crew/work/w1/cancel", json={"expected_revision": 3})
+        assert resp.status == status
+    assert cancelled == ([] if status == 403 else ["w1"])
