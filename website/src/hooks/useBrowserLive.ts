@@ -613,8 +613,9 @@ class BrowserLiveStore {
     try {
       const answer = await (body ? this.writes.release(sessionKey, body) : this.writes.release(sessionKey))
       if (body && (answer as { delivered?: unknown } | null)?.delivered === 'chat') {
-        // No agent op is waiting to read it (the turn is over): it becomes the
-        // person's next chat message, exactly as if typed in the composer.
+        // No agent op is parked to read it (the turn is over, or the agent is
+        // between ops): it becomes the person's next chat message, exactly as if
+        // typed in the composer.
         const text = [choice, note].filter(Boolean).join(': ')
         window.dispatchEvent(new CustomEvent(BROWSER_HANDBACK_CHAT_EVENT, { detail: { slotKey: sessionKey, text } }))
       }

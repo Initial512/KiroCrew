@@ -410,7 +410,7 @@ async def api_browser_op(request: web.Request) -> web.Response:
         # Answered at once, with ``hold``: the shim parks the tool and polls
         # ``/api/browser/handback`` until the person lets go, then posts the op
         # again. Nothing waits here, so other chats keep browsing meanwhile.
-        return _held(request, op, interrupted=False)
+        return _held(request, hub, key, op, interrupted=False)
     try:
         await asyncio.wait_for(_OP_LOCK.acquire(), timeout=LOCK_WAIT_S)
     except asyncio.TimeoutError:
@@ -434,15 +434,15 @@ async def api_browser_op(request: web.Request) -> web.Response:
     finally:
         _OP_LOCK.release()
     if result is _HELD:
-        return _held(request, op, interrupted=False)
+        return _held(request, hub, key, op, interrupted=False)
     if result is _INTERRUPTED:
         hub.record_op(key, op, args, {"ok": False, "code": "interrupted"}, mark)
-        return _held(request, op, interrupted=True)
+        return _held(request, hub, key, op, interrupted=True)
     assert isinstance(result, dict)
     # The turn replay's event for this op: generic, from the step it reported and
     # the result it answered (``browser_harness.recording.agent_event``).
     hub.record_op(key, op, args, result, mark)
-    # A hand-back the person made with no op waiting on it reaches the next op.
+    # A note left for a parked poll that never came back to take it reaches this op.
     said = hub.take_handback(key)
     if result.get("ok"):
         answer: dict[str, Any] = {"ok": True, "result": result}
@@ -480,9 +480,13 @@ _HELD = object()
 _INTERRUPTED = object()
 
 
-def _held(request: web.Request, op: str, *, interrupted: bool) -> web.Response:
+def _held(
+    request: web.Request, hub: LiveHub, key: str, op: str, *, interrupted: bool
+) -> web.Response:
     """The person holds the browser: a refusal the shim turns into a parked wait."""
     _audit(request, "allowed")
+    # The shim now polls for the hand-back: a note the person writes goes to it.
+    hub.park(key)
     if interrupted:
         body = harness_ops.refusal(
             "interrupted",

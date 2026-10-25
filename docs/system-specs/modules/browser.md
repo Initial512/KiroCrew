@@ -527,16 +527,22 @@ most `HANDBACK_CHOICE_MAX` (40); anything longer or not a string is 400
 `invalid_note` / `invalid_choice` and nothing is handed back; control characters
 are dropped. The answer's `delivered` says where it went:
 
-* `agent`: the turn is still running. The hub keeps `{choice, note}` on the
-  session (`LiveHub.take_handback` takes it once). The parked tool's next poll
-  answers `released` with `handed_back`, and the tool appends one line to the
-  op's result (or to the `interrupted` text): `handed_back: {"choice", "note"}`,
-  marked as the user's own words, not page content. With no op parked, the
-  agent's next op answer carries `handed_back` instead.
-* `chat`: no turn is left to read it (a view reopened after its turn, or the turn
-  ended under the takeover). The card fires `mc:browser-handback-chat`
+* `agent`: an agent op of this turn is parked on this takeover: the op route
+  answered it `hold` (`LiveHub.park`, `LiveSession.parked`), so the tool polls
+  `/api/browser/handback` until the hand-back. The flag is cleared by the
+  hand-back, the turn's start and its end. The hub keeps `{choice, note}` on the
+  session (`LiveHub.take_handback` takes it once; a second note while one is
+  untaken goes to chat); the poll answers `released` with `handed_back`, and the
+  tool appends one line to the op's result (or to the `interrupted` text):
+  `handed_back: {"choice", "note"}`, marked as the user's own words, not page
+  content. Should the poll go away without taking it, the turn's next op answer
+  carries it.
+* `chat`: no op is parked -- the turn is between ops (it may end without
+  another), a view was reopened after its turn, or the turn ended under the
+  takeover. The card fires `mc:browser-handback-chat`
   (`BROWSER_HANDBACK_CHAT_EVENT`), and the chat page sends `choice: note` as the
-  person's next message to that slot, as if typed in the composer.
+  person's next message to that slot, as if typed in the composer (queued
+  behind a running turn). So a note is never held for an op that may not come.
 
 The note never carries page content, is never logged on the input path, and is
 recorded on the turn replay as the person's event (`actor: user`, label

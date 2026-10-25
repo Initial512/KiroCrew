@@ -510,7 +510,7 @@ export function useAutoSendIntake({
     send(txt, appLaunch?.slotKey, undefined, !!appLaunch)
   }, [send, connected, autoSendTick, autoSendRef, appLaunchSendRef])
 
-  // A browser hand-back note no agent op was waiting for (the turn had ended):
+  // A browser hand-back note no parked agent op was waiting for:
   // the person typed it on the card's hand-back bar and pressed Enter, so it is
   // their message, sent to the chat the card belongs to.
   useEffect(() => {

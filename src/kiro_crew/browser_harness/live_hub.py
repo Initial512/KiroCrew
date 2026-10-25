@@ -152,8 +152,13 @@ class LiveSession:
     #: outer op then records no summary event of its own (:meth:`LiveHub.record_op`).
     inner_seq: int = 0
     #: What the person said when they handed back (:meth:`LiveHub.release`), until
-    #: the agent's parked op or its next op takes it (:meth:`LiveHub.take_handback`).
+    #: the agent's parked op takes it (:meth:`LiveHub.take_handback`).
     handback: dict[str, str] | None = None
+    #: An agent op of this turn was answered ``hold`` (:meth:`LiveHub.park`) and
+    #: waits for the hand-back: its poll will take a note. Cleared by the hand-back
+    #: and at the turn's start and end, so a note goes to the agent only while an
+    #: op is there to take it.
+    parked: bool = False
     #: The hand-back choices the agent's parked op offered, or ``[]``: the card then
     #: shows its own defaults (:meth:`LiveHub.set_handback_options`).
     handback_options: list[str] = field(default_factory=list)
@@ -444,6 +449,7 @@ class LiveHub:
         sess.steps = []
         sess.loop = None
         sess.handback = None
+        sess.parked = False
         sess.handback_options = []
         sess.started_at = self._clock()
         sess.ended_at = 0.0
@@ -499,6 +505,7 @@ class LiveHub:
 
     def _fold(self, sess: LiveSession) -> None:
         sess.fold_on_release = False
+        sess.parked = False
         sess.ended = True
         sess.lock.release()
         sess.released.set()
@@ -862,12 +869,13 @@ class LiveHub:
     async def release(self, session_key: str, *, note: str = "", choice: str = "") -> str:
         """Hand back, with what the person said (already checked by the route).
 
-        A *note* or *choice* goes to the agent's op waiting on this hand-back (the
-        parked tool's poll, or the agent's next op takes it): ``"agent"``. With no
-        turn left to take it (the card was reopened after its turn, or the turn
-        ended under the takeover), the card sends it as the person's next chat
-        message instead: ``"chat"``. Nothing said: ``""``. The note is recorded on
-        the replay as the person's event.
+        A *note* or *choice* goes to the agent's op parked on this takeover
+        (:meth:`park`), whose hand-back poll takes it: ``"agent"``. With no op
+        parked (the turn ended, or the agent is between browser ops and may end
+        its turn without another), the card sends it as the person's next chat
+        message instead -- queued behind a running turn like anything typed -- so
+        it is never held for an op that may not come: ``"chat"``. Nothing said:
+        ``""``. The note is recorded on the replay as the person's event.
         """
         sess = self._sessions.get(session_key)
         if sess is None:
@@ -883,11 +891,12 @@ class LiveHub:
                 await sess.stream.set_takeover(False)
             self._fold(sess)
             return DELIVERED_CHAT if said else ""
-        if said and sess.turn_over:
-            delivered = DELIVERED_CHAT
-        elif said:
+        waiting, sess.parked = sess.parked, False
+        if said and waiting and not sess.turn_over and sess.handback is None:
             sess.handback = {"choice": choice, "note": note}
             delivered = DELIVERED_AGENT
+        elif said:
+            delivered = DELIVERED_CHAT
         else:
             delivered = ""
         sess.handback_options = []
@@ -900,6 +909,12 @@ class LiveHub:
         if was_held:
             await self._emit_now(sess)
         return delivered
+
+    def park(self, session_key: str) -> None:
+        """An agent op was answered ``hold``: it waits for this takeover's hand-back."""
+        sess = self._sessions.get(session_key)
+        if sess is not None and sess.lock.held():
+            sess.parked = True
 
     def take_handback(self, session_key: str) -> dict[str, str] | None:
         """What the person said at the hand-back, once: the agent's op takes it."""

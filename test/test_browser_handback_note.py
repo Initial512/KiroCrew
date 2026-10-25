@@ -8,10 +8,12 @@ What is pinned:
 * with the agent's op parked on the hand-back, the poll returns ``handed_back``
   once, and the tool tells the agent with the op's result (or with the
   ``interrupted`` text, when the op is not re-run);
-* with no op parked but the turn still running, the agent's next op carries it;
-* with no turn left to take it (a view reopened after its turn, or the turn
-  ending under the takeover), ``delivered`` is ``chat``: the card sends it as the
-  person's next message, and no op ever sees it;
+* an op answered ``hold`` stays parked between its polls until the hand-back,
+  and nothing parked or kept outlives its turn;
+* with no op parked -- the turn still running between ops, a tool that stopped
+  polling, a view reopened after its turn, the turn ending under the takeover
+  -- ``delivered`` is ``chat``: the card sends it as the person's next message,
+  and no op ever sees it, so a turn that ends without another op loses nothing;
 * the agent's ``handback_options`` reach the card (``handback_options`` on the
   ``browser_live`` event), bounded to four short strings, and reset by the hand-back;
 * the note is the person's event on the turn replay.
@@ -19,6 +21,7 @@ What is pinned:
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -32,6 +35,14 @@ from kiro_crew.dashboard.handlers import browser_ops as ops_mod
 from kiro_crew.mcp_tools import browser as tool
 
 pytestmark = pytest.mark.asyncio
+
+
+@pytest.fixture(autouse=True)
+def _fresh_hub():
+    # Each test runs on its own event loop; a session's events must not outlive it.
+    lh.reset_live_hub()
+    yield
+    lh.reset_live_hub()
 
 
 class _Recorder:
@@ -55,6 +66,14 @@ async def _held_client(app):
     return hub
 
 
+async def _park(hub: lh.LiveHub, key: str = "chat-1") -> asyncio.Task:
+    """The agent's parked op (answered ``hold``), with its hand-back poll waiting."""
+    hub.park(key)
+    task = asyncio.ensure_future(ops_mod.api_browser_handback(_request({"session_key": key})))
+    await asyncio.sleep(0)
+    return task
+
+
 async def test_release_carries_the_note_to_the_parked_op_once() -> None:
     app, wire = _app()
     async with TestClient(TestServer(app)) as client:
@@ -62,14 +81,14 @@ async def test_release_carries_the_note_to_the_parked_op_once() -> None:
         rec = _Recorder()
         hub.attach_recorder(rec)  # type: ignore[arg-type]
         await _post(client, "/api/browser/input/claim", {"session_key": "chat-1"})
+        poll = await _park(hub)
         status, body = await _post(
             client,
             "/api/browser/input/release",
             {"session_key": "chat-1", "choice": "Didn't work", "note": "It says wrong password"},
         )
         assert status == 200 and body["delivered"] == "agent" and body["in_control"] is False
-    poll = await ops_mod.api_browser_handback(_request({"session_key": "chat-1"}))
-    answer = json.loads(poll.body)
+        answer = json.loads((await poll).body)
     assert answer["released"] is True
     assert answer["handed_back"] == {"choice": "Didn't work", "note": "It says wrong password"}
     again = json.loads(
@@ -107,11 +126,12 @@ async def test_a_note_at_the_cap_is_kept_without_control_characters() -> None:
         hub = await _held_client(app)
         await _post(client, "/api/browser/input/claim", {"session_key": "chat-1"})
         note = "a\x00b" + "c" * (lh.HANDBACK_NOTE_MAX - 2)
+        poll = await _park(hub)
         status, _body = await _post(
             client, "/api/browser/input/release", {"session_key": "chat-1", "note": note}
         )
         assert status == 200
-    said = hub.take_handback("chat-1")
+        said = json.loads((await poll).body)["handed_back"]
     assert said is not None and said["note"] == "ab" + "c" * (lh.HANDBACK_NOTE_MAX - 2)
 
 
@@ -146,19 +166,99 @@ async def test_a_turn_that_ended_under_the_takeover_also_goes_to_chat() -> None:
     assert hub.take_handback("chat-1") is None
 
 
-async def test_with_no_op_parked_the_next_op_carries_the_note(monkeypatch) -> None:
+async def test_mid_turn_with_no_op_parked_the_note_goes_to_chat_and_survives_the_turn_end(
+    monkeypatch,
+) -> None:
+    # The lost-note case: the turn is running, nothing is parked, and the turn ends
+    # without another browser op. The note must not wait for an op that never comes.
     _install(monkeypatch, _Supervisor())
     _no_stream(monkeypatch)
     hub = lh.get_live_hub()
     hub.turn_started("k", "t1")
     await hub.claim("k")
-    await hub.release("k", choice="Wrong site", note="It opened the EU store")
+    delivered = await hub.release("k", choice="Wrong site", note="It opened the EU store")
+    assert delivered == lh.DELIVERED_CHAT
+    hub.turn_ended("k")
+    hub.turn_started("k", "t2")
     resp = await ops_mod.api_browser_op(_request({"op": "snapshot", "session_key": "k"}))
-    body = json.loads(resp.body)
-    assert body["ok"] is True
-    assert body["handed_back"] == {"choice": "Wrong site", "note": "It opened the EU store"}
-    resp = await ops_mod.api_browser_op(_request({"op": "snapshot", "session_key": "k"}))
-    assert "handed_back" not in json.loads(resp.body)
+    assert "handed_back" not in json.loads(resp.body), "no op sees it twice"
+
+
+async def test_an_op_answered_hold_is_parked_until_the_hand_back(monkeypatch) -> None:
+    _install(monkeypatch, _Supervisor())
+    _no_stream(monkeypatch)
+    hub = lh.get_live_hub()
+    hub.turn_started("k", "t1")
+    await hub.claim("k")
+    resp = await ops_mod.api_browser_op(_request({"op": "click", "session_key": "k"}))
+    assert json.loads(resp.body)["hold"] is True and hub.get("k").parked is True
+
+
+async def test_between_two_polls_the_op_still_takes_the_note() -> None:
+    hub = lh.get_live_hub()
+    hub.turn_started("chat-1", "turn-1")
+    await _live()
+    await hub.claim("chat-1")
+    hub.park("chat-1")
+    hub._sleep = _instant  # the poll's bound passes at once, still held
+    answer = json.loads(
+        (await ops_mod.api_browser_handback(_request({"session_key": "chat-1"}))).body
+    )
+    assert answer["released"] is False
+    # The person hands back before the tool's next poll: that poll takes the note.
+    assert await hub.release("chat-1", note="Back to you") == lh.DELIVERED_AGENT
+    taken = json.loads(
+        (await ops_mod.api_browser_handback(_request({"session_key": "chat-1"}))).body
+    )
+    assert taken["handed_back"] == {"choice": "", "note": "Back to you"}
+    # That op was released: the next takeover, with no op parked, goes to chat.
+    await hub.claim("chat-1")
+    assert await hub.release("chat-1", note="Later") == lh.DELIVERED_CHAT
+
+
+async def test_a_new_turn_starts_with_nothing_parked_or_kept() -> None:
+    hub = lh.get_live_hub()
+    hub.turn_started("chat-1", "turn-1")
+    await _live()
+    await hub.claim("chat-1")
+    hub.park("chat-1")
+    hub.turn_started("chat-1", "turn-2")
+    sess = hub.get("chat-1")
+    assert sess.parked is False and sess.handback is None
+
+
+async def test_each_hand_back_goes_to_the_op_parked_on_it() -> None:
+    hub = lh.get_live_hub()
+    hub.turn_started("chat-1", "turn-1")
+    await _live()
+    got = []
+    for note in ("first", "second"):
+        await hub.claim("chat-1")
+        poll = await _park(hub)
+        assert await hub.release("chat-1", note=note) == lh.DELIVERED_AGENT
+        got.append(json.loads((await poll).body)["handed_back"]["note"])
+    await hub.claim("chat-1")
+    assert await hub.release("chat-1", note="third") == lh.DELIVERED_CHAT
+    assert got == ["first", "second"] and hub.take_handback("chat-1") is None
+
+
+async def test_a_second_note_never_overwrites_one_not_yet_taken() -> None:
+    hub = lh.get_live_hub()
+    hub.turn_started("chat-1", "turn-1")
+    await _live()
+    await hub.claim("chat-1")
+    hub.park("chat-1")
+    assert await hub.release("chat-1", note="first") == lh.DELIVERED_AGENT
+    await hub.claim("chat-1")
+    hub.park("chat-1")  # the first poll has not resumed to take it yet
+    assert await hub.release("chat-1", note="second") == lh.DELIVERED_CHAT
+    assert hub.take_handback("chat-1") == {"choice": "", "note": "first"}
+
+
+async def test_a_closed_session_keeps_nothing() -> None:
+    hub = lh.get_live_hub()
+    assert await hub.release("never-opened", note="hello") == ""
+    assert hub.take_handback("never-opened") is None
 
 
 async def test_the_agent_s_options_reach_the_card_and_reset_at_the_hand_back() -> None:
