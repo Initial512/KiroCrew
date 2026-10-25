@@ -1587,7 +1587,15 @@ class AdmissionService:
     ) -> list[AcceptedWork]:
         if self._store is None:
             return []
-        rows = await self._store.list(session_key=session_key, budget_key=budget_key, limit=limit)
+        # Open work first, so a long finished history never hides a queued turn.
+        rows = await self._store.list(
+            states=set(S) - TERMINAL, session_key=session_key, budget_key=budget_key, limit=limit
+        )
+        room = limit - len(rows)
+        if room > 0:
+            rows += await self._store.list(
+                states=TERMINAL, session_key=session_key, budget_key=budget_key, limit=room
+            )
         return [self._live[w.work_id].work if w.work_id in self._live else w for w in rows]
 
     def holding_states(self) -> frozenset[OperationState]:

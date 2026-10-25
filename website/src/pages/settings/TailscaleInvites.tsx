@@ -317,6 +317,7 @@ function Connected({ status }: { status: TailscaleInvitesStatus }) {
         <Btn type="button" onClick={() => { void onDisconnect() }} disabled={disconnect.isPending} data-testid="invite-disconnect">{i18nT('sharedCrew.invite_key_remove')}</Btn>
         {confirmDialog}
       </div>
+      <ErrorLine code={disconnect.isError ? inviteErrorCode(disconnect.error) || 'error' : ''} testId="invite-disconnect-error" />
       {status.key_expires && (
         <p className="text-[12px] text-muted" data-testid="invite-key-expiry">
           {i18nT('sharedCrew.invite_key_expires_at', { when: fmtDateTime(Date.parse(status.key_expires)) })}

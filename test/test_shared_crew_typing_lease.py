@@ -134,6 +134,16 @@ def test_renewal_extends_and_the_idle_window_releases():
     assert reg.holder("s1") == BOB
 
 
+def test_a_read_after_the_idle_window_leaves_the_end_for_the_sweep():
+    clock = _Clock()
+    reg = _registry(clock)
+    reg.typed("s1", "ws:a", ALICE)
+    clock.now += 10
+    assert reg.holder("s1") is None and reg.state("s1")["holder"] is None
+    # The sweep still sees the end, so the idle timer broadcasts it.
+    assert reg.sweep().sessions == {"s1": END_IDLE}
+
+
 def test_release_on_send_on_clear_and_on_disconnect():
     clock = _Clock()
     reg = _registry(clock)

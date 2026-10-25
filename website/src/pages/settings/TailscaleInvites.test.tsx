@@ -162,6 +162,15 @@ describe('TailscaleInvites', () => {
     await waitFor(() => expect(disconnect).toHaveBeenCalledTimes(1))
   })
 
+  it('shows a failed key removal', async () => {
+    read.mockResolvedValue(status())
+    disconnect.mockRejectedValue(new ApiError(500, 'x', JSON.stringify({ code: 'error' })))
+    mount()
+    fireEvent.click(await screen.findByTestId('invite-disconnect'))
+    fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Remove key' }))
+    expect(await screen.findByTestId('invite-disconnect-error')).toBeInTheDocument()
+  })
+
   it('asks the first-share question before the first invite, then sends', async () => {
     read.mockResolvedValue(status())
     accessRead.mockResolvedValue({

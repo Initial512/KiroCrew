@@ -182,8 +182,7 @@ class TypingLeaseRegistry:
 
     def holder(self, session_key: str) -> Principal | None:
         with self._lock:
-            self._expire_locked(self._clock())
-            lease = self._leases.get(session_key)
+            lease = self._live_locked(session_key)
             return lease.holder if lease is not None else None
 
     def blocks(self, session_key: str, principal: Principal) -> Principal | None:
@@ -202,8 +201,7 @@ class TypingLeaseRegistry:
     def state(self, session_key: str, *, ended: str = "") -> dict[str, Any]:
         """The whole-value lease state: the GET body and the frame body."""
         with self._lock:
-            self._expire_locked(self._clock())
-            lease = self._leases.get(session_key)
+            lease = self._live_locked(session_key)
             if lease is None:
                 return {
                     "schema_version": SCHEMA_VERSION,
@@ -245,6 +243,14 @@ class TypingLeaseRegistry:
                     del self._leases[key]
                     ended[key] = reason
             return LeaseChange(ended)
+
+    def _live_locked(self, session_key: str) -> _Lease | None:
+        """The lease if it is not idle; a read never ends it (the sweep does, and broadcasts)."""
+        lease = self._leases.get(session_key)
+        now = self._clock()
+        if lease is None or all(now - at >= self._idle for at in lease.drafting.values()):
+            return None
+        return lease
 
     def _expire_locked(self, now: float) -> dict[str, str]:
         ended: dict[str, str] = {}

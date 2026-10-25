@@ -197,3 +197,19 @@ async def test_every_work_write_reaches_tabs_as_a_frame_naming_the_tab(service, 
     assert {f["type"] for f in sent} == {"shared_crew.work"}
     assert {f["slot_key"] for f in sent} == {"tab-f"}
     assert work_store._CHANGE_LISTENER is None
+
+
+@pytest.mark.asyncio
+async def test_open_work_is_listed_before_a_long_finished_history(service):
+    from kiro_crew.shared_crew.admission import OperationState as S
+
+    pool = [SimpleNamespace(work_id=f"d{i}", state=S.COMPLETED) for i in range(3)]
+    pool.append(SimpleNamespace(work_id="q", state=S.QUEUED))
+
+    class _Store:
+        async def list(self, *, states=None, limit, **_kw):
+            return [w for w in pool if states is None or w.state in states][:limit]
+
+    service._store = _Store()
+    rows = await service.list_work(limit=3)
+    assert [w.work_id for w in rows] == ["q", "d0", "d1"]
