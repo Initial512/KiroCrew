@@ -1209,7 +1209,7 @@ export const SessionRow = memo(function SessionRow({ view, actions }: SessionRow
             if (!connected) return
             if (peerId) { onOpenPeerSession?.(peerId, s.key); return }
             if (onOpenElsewhere) { onOpenElsewhere(); return }
-            dispatch(switchSlot({ key: s.key, announceOnMissing: true }))
+            dispatch(switchSlot({ key: s.key, announceOnMissing: true, gesture: true }))
             onSelectSlot?.(s.key)
           }}
           onDragStart={!dndRow ? (e => { e.dataTransfer.setData('text/plain', s.key); e.dataTransfer.effectAllowed = 'move'; nativeDragInFlight.current = true; onNativeDragStart?.(s.key) }) : undefined}
@@ -1271,7 +1271,7 @@ export const SessionRow = memo(function SessionRow({ view, actions }: SessionRow
               onOpenSlotInNewTab(s.key, { background: true })
               return
             }
-            dispatch(switchSlot({ key: s.key, announceOnMissing: true }))
+            dispatch(switchSlot({ key: s.key, announceOnMissing: true, gesture: true }))
             onSelectSlot?.(s.key)
           }}
           onDoubleClick={e => {
@@ -1637,7 +1637,7 @@ export const SessionRow = memo(function SessionRow({ view, actions }: SessionRow
                 connected={connected}
                 isActive={isActive}
                 onOpenSource={onOpenSource}
-                onActivateSlot={() => { dispatch(switchSlot({ key: s.key, announceOnMissing: true })); onSelectSlot?.(s.key) }}
+                onActivateSlot={() => { dispatch(switchSlot({ key: s.key, announceOnMissing: true, gesture: true })); onSelectSlot?.(s.key) }}
               />
             )}
             {/* No tag chips here: every tag renders in the meta line above as

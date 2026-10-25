@@ -325,7 +325,7 @@ export function useRecentsProvider(): ResourceProvider {
               // focused once the switch has LANDED (#15732), never while the gateway
               // round trip is still in flight -- a caret placed before that would
               // file the keystrokes typed meanwhile under a slot a 404 then evicts.
-              const switched = dispatch(switchSlot({ key: s.key, announceOnMissing: true })).unwrap()
+              const switched = dispatch(switchSlot({ key: s.key, announceOnMissing: true, gesture: true })).unwrap()
               navigate('/chat')
               focusComposerForOpenedSession(switched, s.key, store)
             },

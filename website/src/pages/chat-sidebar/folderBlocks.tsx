@@ -287,7 +287,7 @@ export function createFolderBlocks(shell: SidebarScope & LaneRows) {
             // down selects a session nothing can load, so the click would close
             // the menu onto an empty pane with no way back to the row.
             if (!connected) return
-            dispatch(switchSlot({ key: conductor.key, announceOnMissing: true }))
+            dispatch(switchSlot({ key: conductor.key, announceOnMissing: true, gesture: true }))
             onSelectSlot?.(conductor.key)
           }}>
             <CornerUpRight size={14} className="text-accent mt-[3px] shrink-0" />
@@ -663,7 +663,7 @@ export function createFolderBlocks(shell: SidebarScope & LaneRows) {
                 // every session click has: switching to a session nothing can
                 // load would leave an empty pane with no way back to the row.
                 if (!connected) return
-                dispatch(switchSlot({ key: folderRowConductor.key, announceOnMissing: true }))
+                dispatch(switchSlot({ key: folderRowConductor.key, announceOnMissing: true, gesture: true }))
                 onSelectSlot?.(folderRowConductor.key)
               }}>
               <CornerUpRight size={12} className="shrink-0" />

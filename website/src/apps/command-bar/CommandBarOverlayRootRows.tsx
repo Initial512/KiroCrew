@@ -161,7 +161,7 @@ export function useCommandBarOverlayRootRows({
           // composer is focused only once it has landed (#15732): `pending` enters
           // the slot synchronously, and a caret placed before the gateway answers
           // would file the keystrokes typed meanwhile under a slot a 404 then evicts.
-          const switched = dispatch(switchSlot({ key: slot.key, announceOnMissing: true })).unwrap()
+          const switched = dispatch(switchSlot({ key: slot.key, announceOnMissing: true, gesture: true })).unwrap()
           navigate('/chat')
           focusComposerForOpenedSession(switched, slot.key, store)
         },
@@ -206,7 +206,7 @@ export function useCommandBarOverlayRootRows({
         // sort key of its own.
         run: async () => {
           // See the attention row above (#15732).
-          const switched = dispatch(switchSlot({ key: slot.key, announceOnMissing: true })).unwrap()
+          const switched = dispatch(switchSlot({ key: slot.key, announceOnMissing: true, gesture: true })).unwrap()
           navigate('/chat')
           focusComposerForOpenedSession(switched, slot.key, store)
         },

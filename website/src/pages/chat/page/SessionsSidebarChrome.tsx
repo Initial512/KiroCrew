@@ -228,6 +228,9 @@ export default function SessionsSidebarChrome({
       // drawer's contents are unmounted.
       <GuideRevealScope id={isMobile ? 'chat.sessions-drawer' : 'chat.sessions-sidebar'} open={sidebarOpen}>
       <OverlayDrawer open={isMobile ? drawerMounted : sidebarOpen} width={isMobile ? Math.max(0, winW - DRAWER_UNCOVERED_PX) : effectiveSidebarWidth} dragging={sidebarDragging} slideX={isMobile ? drawerX : undefined} slideRef={drawerPanelRef}
+        // Covers the chat pane only while open: on a phone `sidebarOpen` is
+        // the drawer's open phase, false while it slides out (#23564).
+        coversPane={isMobile && sidebarOpen}
         // Mobile only: the same visible-band inset the scrim above carries, so the
         // two surfaces move together. Margins rather than restated edges is what
         // matters here: top-safe-offset-[42px] and bottom-safe compose env() insets

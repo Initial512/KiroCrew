@@ -743,7 +743,7 @@ function ChatInput({
   // The name in the status row is the way there: one click switches to the
   // chat that holds the mic, where the user can end the capture.
   const micHeldElsewhereAction = micOwnerTitle && voiceBusyElsewhereSession
-    ? { label: micOwnerTitle, onClick: () => { void dispatch(switchSlot({ key: voiceBusyElsewhereSession, announceOnMissing: true })) } }
+    ? { label: micOwnerTitle, onClick: () => { void dispatch(switchSlot({ key: voiceBusyElsewhereSession, announceOnMissing: true, gesture: true })) } }
     : undefined
   // One-row shape (`inlineToolbarWhileFits`): the text still fits on the single
   // line, nothing but text is staged, and no mode owns the box's shape itself.

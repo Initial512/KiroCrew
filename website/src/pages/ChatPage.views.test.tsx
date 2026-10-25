@@ -67,6 +67,7 @@ import ChatTitleOverlay from './chat/page/ChatTitleOverlay'
 import ChatTranscriptView from './chat/page/ChatTranscriptView'
 import { api } from '../api/client'
 import { requestSlotReveal } from '../store/chatSlice'
+import { transcriptShownFor } from '../hooks/useAckCronNotesInView'
 
 /** A view's props: the fields a case sets, the rest left undefined (each view reads only what its branch needs). */
 const props = <T,>(over: Partial<T>) => over as T
@@ -232,5 +233,19 @@ describe('ChatTranscriptView', () => {
     expect(vi.mocked(api.resolveApproval).mock.calls[0][0]).toBe('ap-1')
     expect(p.dismissApproval).toHaveBeenCalledWith('ap-1')
     expect(noId.onApprove).toBe(p.approve)
+  })
+
+  // #23564: a cron note is read against a transcript the user can see. While the
+  // restore gate hides the loaded rows behind the skeleton, the pane is not
+  // showing the chat yet.
+  it('counts its chat shown only once the restore gate lifts', () => {
+    const items = [{ kind: 'msg', idx: 0, msg: msg('assistant', 'a1') }]
+    const gated = base(items, { activeSlot: 'cron-a', slotLoading: false, virt: { measureRef: () => undefined, restoreGate: true } as never })
+    const { rerender, unmount } = render(<ChatTranscriptView {...gated} />)
+    expect(transcriptShownFor('cron-a')).toBe(false)
+    rerender(<ChatTranscriptView {...base(items, { activeSlot: 'cron-a', slotLoading: false })} />)
+    expect(transcriptShownFor('cron-a')).toBe(true)
+    unmount()
+    expect(transcriptShownFor('cron-a')).toBe(false)
   })
 })

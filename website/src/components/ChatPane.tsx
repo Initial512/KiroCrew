@@ -67,6 +67,7 @@ import { useChatPaneSend } from './useChatPaneSend'
 import { useChatPaneStop, useChatPaneRunSync } from './useChatPaneTurnControl'
 import { useChatPaneContinue } from './useChatPaneContinue'
 import { useChatPaneRenderers, ChatPaneAboveRows } from './ChatPaneTranscript'
+import { useMarkTranscriptShown } from '../hooks/useAckCronNotesInView'
 
 export type { PaneLeading } from './ChatPaneProps'
 
@@ -298,6 +299,10 @@ export default function ChatPane({
     () => (crewmate ? filterCrewmateChat(withQueuedAsBubbles(allMessages, queuedMessages)) : paneMessages),
     [crewmate, allMessages, paneMessages, queuedMessages],
   )
+  // This pane shows the chat's transcript once it has rows; a bell note for a
+  // cron run is read against that, and a closed pane drops out (#23564).
+  // The scroller is what the on-screen backstop probes.
+  useMarkTranscriptShown(slotKey, messages.length > 0, () => scrollerRef.current)
   // The host's greeting is drawn while it is still the newest word: a reply
   // landing after it (a patrol / wake turn keeps it up) takes it down.
   const greetingShown = useCrewmateGreetingShown(!!crewmate && !!crewmateGreeting, messages)

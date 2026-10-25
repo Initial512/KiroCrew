@@ -1016,7 +1016,7 @@ describe('CommandBarOverlay rows', () => {
     // so the mock answers with the thunk's shape.
     resolvingDispatch()
     fireEvent.mouseDown(rows[0])
-    expect(dispatch).toHaveBeenCalledWith({ type: 'switchSlot', key: 'slot-a', announceOnMissing: true })
+    expect(dispatch).toHaveBeenCalledWith({ type: 'switchSlot', key: 'slot-a', announceOnMissing: true, gesture: true })
   })
 
   it('never drops a blocked session: past the cap a final row counts the rest and reveals them', () => {
@@ -1089,6 +1089,7 @@ describe('CommandBarOverlay rows', () => {
       type: 'switchSlot',
       key: 'slot-new',
       announceOnMissing: true,
+      gesture: true,
     })
   })
 
@@ -1152,7 +1153,7 @@ describe('CommandBarOverlay rows', () => {
     // Activation still targets the session's own key.
     resolvingDispatch()
     fireEvent.mouseDown(untitled)
-    expect(dispatch).toHaveBeenCalledWith({ type: 'switchSlot', key: 'chat-4-1785440411', announceOnMissing: true })
+    expect(dispatch).toHaveBeenCalledWith({ type: 'switchSlot', key: 'chat-4-1785440411', announceOnMissing: true, gesture: true })
   })
 
   it('labels an untitled recent row "Untitled session", not its key (#20910)', () => {
@@ -1168,7 +1169,7 @@ describe('CommandBarOverlay rows', () => {
     expect(rows[1].textContent).toContain('Named thread')
     resolvingDispatch()
     fireEvent.mouseDown(rows[0])
-    expect(dispatch).toHaveBeenCalledWith({ type: 'switchSlot', key: 'chat-5-1785440411', announceOnMissing: true })
+    expect(dispatch).toHaveBeenCalledWith({ type: 'switchSlot', key: 'chat-5-1785440411', announceOnMissing: true, gesture: true })
   })
 
   it('still finds an untitled session row by its key once the key is no longer shown', () => {
@@ -1182,7 +1183,7 @@ describe('CommandBarOverlay rows', () => {
     expect(hit).toBeTruthy()
     resolvingDispatch()
     fireEvent.mouseDown(hit!)
-    expect(dispatch).toHaveBeenCalledWith({ type: 'switchSlot', key: 'chat-5-1785440411', announceOnMissing: true })
+    expect(dispatch).toHaveBeenCalledWith({ type: 'switchSlot', key: 'chat-5-1785440411', announceOnMissing: true, gesture: true })
   })
 
   it('always gives the typed text a way to reach an agent', async () => {

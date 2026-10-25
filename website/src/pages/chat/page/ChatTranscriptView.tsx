@@ -18,6 +18,7 @@ import EarlierMessagesBar from '../EarlierMessagesBar'
 import TranscriptScrollShell from '../TranscriptScrollShell'
 import TurnNavigationMinimap from '../TurnNavigationMinimap'
 import WelcomeView from '../../../components/WelcomeView'
+import { useMarkTranscriptShown } from '../../../hooks/useAckCronNotesInView'
 import SessionPulseSurveyCard from '../../../components/SessionPulseSurveyCard'
 import { ChatFooter } from '..'
 import type { ChatConfig } from '../ChatSettings'
@@ -96,6 +97,11 @@ export default function ChatTranscriptView({
   onScrollPin, pinned, approve, dismissApproval, currentSlot, regenerating, sendUnconfirmed, dockH, lastRole, streamTick, toggleAct, renderedDisplayItems, stableMsgKey, virtualKey, handleLoadEarlier,
   spinnerNearTop, virt, visibleDisplayItems, chatNav, navigateToTurn, turnStepAnnouncement, renderFarmItem, renderMessage, renderTurnItem,
 }: ChatTranscriptViewProps) {
+  // This pane shows the chat's transcript once it has loaded rows; a bell note
+  // for a cron run is read against that (#23564). Not while the restore gate
+  // hides the rows behind the skeleton: loaded is not yet visible.
+  // The scroller is what the on-screen backstop probes.
+  useMarkTranscriptShown(activeSlot, !slotLoading && !virt.restoreGate && !isWelcomeState && renderedDisplayItems.length > 0, () => scrollerRef.current)
   return (
     <>
       {isWelcomeState ? (

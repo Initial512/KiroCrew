@@ -27,7 +27,7 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { motion, useReducedMotion } from 'framer-motion'
 import { AlertTriangle, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Compass, Loader2, X } from 'lucide-react'
-import { GUIDE_LAYER_SELECTOR } from './probeRegistry'
+import { openModalDialog } from './openModalDialog'
 import { Btn, IconButton } from '../components/ui'
 import ErrorNotice from '../components/ErrorNotice'
 import { useGuardedLeave } from '../components/NavigationLeaveGuard'
@@ -280,17 +280,9 @@ export function keepClearBoxes(viewport: Viewport, root: Document = document): B
   return out
 }
 
-/** A page dialog that is modal right now (never the guide's own layer). */
-export function openModalDialog(root: Document = document): Element | null {
-  // The topmost one: a confirm opened from inside another dialog portals
-  // after it in document order (into the same root), so it comes later and
-  // covers it.
-  const open = Array.from(root.querySelectorAll('[role="dialog"][aria-modal="true"], [role="alertdialog"][aria-modal="true"]'))
-  for (let i = open.length - 1; i >= 0; i--) {
-    if (!open[i].closest(GUIDE_LAYER_SELECTOR)) return open[i]
-  }
-  return null
-}
+// Lives in its own module so `paneVisibility` can share it; re-exported here for
+// the guide's existing callers.
+export { openModalDialog }
 
 /**
  * Whether an open page modal hides *el*: the target is outside the dialog and

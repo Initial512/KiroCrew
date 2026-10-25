@@ -911,7 +911,7 @@ function ChatSidebar({
        *  reaches: a running turn takes it after its current tool call, an idle
        *  session starts a new turn. Crewmate chats are left out by default. */}
       {broadcastOpen && (
-        <BroadcastPanel slots={localSlots} folders={folders} tags={tagsData ?? []} agents={installedAgents} signals={{ subagentStartedCounts, subagentApprovalCounts, workflowActiveSet, automationRunningSet }} onClose={() => setBroadcastOpen(false)} onOpenSession={key => { dispatch(switchSlot({ key, announceOnMissing: true })); onSelectSlot?.(key) }} />
+        <BroadcastPanel slots={localSlots} folders={folders} tags={tagsData ?? []} agents={installedAgents} signals={{ subagentStartedCounts, subagentApprovalCounts, workflowActiveSet, automationRunningSet }} onClose={() => setBroadcastOpen(false)} onOpenSession={key => { dispatch(switchSlot({ key, announceOnMissing: true, gesture: true })); onSelectSlot?.(key) }} />
       )}
 
       {/* Manage-tags panel — mirrors the Clean Up / Switch All panels. Renders

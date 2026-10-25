@@ -18,6 +18,7 @@ import { appPathname } from '../../lib/basePath'
 import { MOBILE_NAV_WIDTH, type AppShell } from '../appShell'
 import { NavItem, NavBadge } from './navRow'
 import { hiddenChromeProps } from '../focus/focusChrome'
+import { coversPaneProps } from '../../hooks/paneVisibility'
 
 /**
  * The main navigation: the desktop rail, and the phone nav drawer with its scrim,
@@ -28,7 +29,7 @@ export function ShellNavRail({ shell }: { shell: AppShell }) {
   const {
     updateAvailable, terminalEnabled, terminalPoppedOut, bottomTerminalOpen, mobileConnectOpen,
     setMobileConnectOpen, hasRenderableMobileConnect, activeSlotProject, navigate, branding, botName, avatar,
-    isMobile, focusActive, focusChromeInert, railPeek, railPeekSurface, mobileNavMounted, mobileNavX, mobileNavPanelRef,
+    isMobile, focusActive, focusChromeInert, railPeek, railPeekSurface, mobileNavMounted, mobileNavOpen, mobileNavX, mobileNavPanelRef,
     mobileNavScrimRef, mobileNavScrim, closeMobileNavDrawer, advertisedNavItems, sortedAppGroup,
     activeAppDragId, appDndSensors, handleAppDragStart, handleAppDragEnd, handleAppDragCancel, APPS_NAV_LIMIT,
     appsExpanded, toggleAppsExpanded, slotOwners, appBadges, discoverBadges, railAppBadges, railAppRunStates,
@@ -400,6 +401,11 @@ export function ShellNavRail({ shell }: { shell: AppShell }) {
                 className="bg-bg-elevated border border-border rounded-xl flex flex-col mx-2 mt-2 mb-2 shadow-sm z-50 overflow-hidden fixed top-safe left-safe bottom-safe"
                 role="navigation"
                 aria-label={i18nT('app.main_navigation')}
+                // Drawn over the page with a scrim behind it: while OPEN a chat
+                // transcript under it is not on screen (see paneVisibility,
+                // #23564). It stays mounted through its slide-out, which no
+                // longer counts as covering.
+                {...(mobileNavOpen ? coversPaneProps : {})}
               >
                 {navBody}
               </motion.nav>

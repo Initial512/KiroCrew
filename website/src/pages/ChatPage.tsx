@@ -932,7 +932,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
   const flyoutSwitch = useCallback((key: string) => {
     // User gesture on a listed session row (collapsed-sidebar flyout): the
     // announced class, same as the expanded sidebar's own rows.
-    dispatch(switchSlot({ key, announceOnMissing: true }))
+    dispatch(switchSlot({ key, announceOnMissing: true, gesture: true }))
     setSplitMode(false)
     if (sidebarClickOpensTab) ensureSlotTab(key)
     flyout.close()
@@ -1019,7 +1019,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
             onCollapse={(slot, anchorTs, anchorMid) => {
               // User gesture on a session reference (split-pane collapse): the
               // announced class.
-              dispatch(switchSlot({ key: slot, announceOnMissing: true }))
+              dispatch(switchSlot({ key: slot, announceOnMissing: true, gesture: true }))
               setSplitMode(false)
               // switchSlot.pending sets activeSlot synchronously, so the pending-jump
               // effect pages back to the anchor instead of landing on the newest turn.
