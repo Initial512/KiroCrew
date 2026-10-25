@@ -34,6 +34,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Awaitable, Callable, Coroutine, Mapping, TypeVar
 
 from kiro_crew.config.sections_shared_crew import EffectiveLimits
+from kiro_crew.shared_crew import admission_parked as _parked
 from kiro_crew.shared_crew import admission_runtime as _runtime
 from kiro_crew.shared_crew import containment as _containment
 from kiro_crew.shared_crew import enterprise_revocation as _revocation
@@ -67,6 +68,7 @@ from kiro_crew.shared_crew.admission_http import (
     principal_of,
     request_digest,
 )
+from kiro_crew.shared_crew.admission_parked import MERGED_INTO_KEY
 from kiro_crew.shared_crew.admission_runtime import (
     SLICE_IDLE_SECONDS,
 )
@@ -111,8 +113,6 @@ STOPPED_BEFORE_START = "host_stopped_before_start"
 STOPPED_WHILE_RUNNING = "host_stopped_while_running"
 #: ``extra`` key counting the pre-restart runtime scopes reconciliation stopped.
 ORPHANS_REAPED_KEY = "orphans_reaped"
-#: ``extra`` key naming the work a merged queued message ran inside.
-MERGED_INTO_KEY = "merged_into"
 #: ``extra`` key marking a message parked behind its session's running turn.
 PARKED_KEY = "parked"
 
@@ -134,8 +134,6 @@ _QUEUE_IDS_MAX = 4096
 #: Unattached work ended before its execution started, remembered so the late
 #: start can be stopped (bounded, in memory).
 _ENDED_UNATTACHED_MAX = 4096
-#: Reasons that mean a person stopped the work: its text must never run.
-_PERSON_STOPS = frozenset({ReasonCode.CANCELLED_BY_USER, ReasonCode.ACCESS_REMOVED})
 #: How long a containment probe answers before it is taken again.
 _REPORT_TTL_SECONDS = 60.0
 
@@ -813,71 +811,12 @@ class AdmissionService:
         )
 
     async def _cancelled_parked(self, work_ids: list[str]) -> Admission | None:
-        """Refuse a merged prompt containing any work a person's stop ended.
-
-        That is work its sender cancelled and work whose sender was removed: the
-        text of either must never run, alone or merged into someone else's turn.
-        The refusal carries the work's own reason.
-        """
-        if self._store is None:
-            return None
-        lives = [self._live.get(work_id) for work_id in work_ids]
-        works = [
-            live.work if live is not None else await self._store.get(work_id)
-            for work_id, live in zip(work_ids, lives)
-        ]
-        for live, work in zip(lives, works):
-            if work is None:
-                continue
-            why = live.cancel_reason if live is not None else None
-            if why not in _PERSON_STOPS:
-                why = work.reason
-            if why in _PERSON_STOPS:
-                assert why is not None
-                return Admission(
-                    self,
-                    Decision.REJECTED.value,
-                    work=work,
-                    reason=why,
-                    capacity=self.capacity(work.budget_key),
-                )
-        return None
+        """See :func:`admission_parked.cancelled_parked`."""
+        return await _parked.cancelled_parked(self, work_ids)
 
     async def _settle_followers(self, live: _Live) -> None:
-        """End every message merged into *live*'s turn with *live*'s own outcome."""
-        assert self._store is not None
-        target = live.work.state
-        for work_id in live.followers:
-            follower = self._live.get(work_id)
-            if follower is None or follower.work.state in TERMINAL:
-                continue
-            extra = {MERGED_INTO_KEY: live.work.work_id}
-            try:
-                if target in (S.COMPLETED, S.FAILED):
-                    for step in (S.ADMITTED, S.RUNNING):
-                        if follower.work.state is not step:
-                            follower.work = await self._store.advance(follower.work, step)
-                    follower.work = await self._store.advance(
-                        follower.work,
-                        target,
-                        reason=live.work.reason,
-                        runtime=self._stopped_ref(follower),
-                        extra=extra,
-                    )
-                else:
-                    end = S.EXPIRED if target is S.EXPIRED else S.CANCELLED
-                    follower.work = await self._store.advance(
-                        follower.work, end, reason=live.work.reason, extra=extra
-                    )
-            except (StaleRevision, InvalidTransition):
-                current = await self._store.get(work_id)
-                if current is not None:
-                    follower.work = current
-            except Exception:
-                logger.warning("shared crew: settling merged %s failed", work_id, exc_info=True)
-            follower.self_stopped = True
-            follower.ended.set()
-            self._live.pop(work_id, None)
+        """See :func:`admission_parked.settle_followers`."""
+        await _parked.settle_followers(self, live)
 
     def _replay(self, work: AcceptedWork) -> Admission:
         live = self._live.get(work.work_id)
@@ -1252,18 +1191,8 @@ class AdmissionService:
             self.bind_session(session_key, live.work.budget_key, live.root_work_id or work_id)
 
     def _stop_late_start(self, work_id: str, execution_id: str) -> None:
-        """Stop an execution whose admitted work ended before it attached."""
-        ended = self._ended_unattached.pop(work_id, None)
-        if ended is None:
-            return
-        work, hook = ended
-        if hook is None or not execution_id:
-            return
-        logger.info("shared crew: %s ended before its start attached; stopping it", work_id)
-        try:
-            hook(replace(work, extra={**work.extra, "execution_id": execution_id}))
-        except Exception:  # noqa: BLE001 -- logged; the record is already terminal
-            logger.warning("shared crew: stopping late start %s failed", work_id, exc_info=True)
+        """See :func:`admission_parked.stop_late_start`."""
+        _parked.stop_late_start(self, work_id, execution_id)
 
     async def abandon(self, work_id: str, *, reason: ReasonCode | None = None) -> None:
         live = self._live.get(work_id)
