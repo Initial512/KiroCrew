@@ -176,11 +176,78 @@ async def close_sockets(app: web.Application, principal_ids: frozenset[str], log
     return closed
 
 
+def _drop_queued(state: Any, slot: Any, principal_ids: frozenset[str]) -> int:
+    """Drop *slot*'s queued messages a removed person sent that no admitted work covers."""
+    from kiro_crew.dashboard import responsive_chat
+    from kiro_crew.dashboard.chat_utils_injected_rows import _remove_queued_by_id
+    from kiro_crew.shared_crew.admission_entry import QUEUED_WORK_META_KEY
+    from kiro_crew.shared_crew.attribution import message_author
+
+    dropped = 0
+    for entry in list(getattr(slot, "_queue", None) or ()):
+        if not isinstance(entry, dict):
+            continue
+        meta = entry.get("meta")
+        if message_author(meta if isinstance(meta, dict) else None).id not in principal_ids:
+            continue
+        if isinstance(meta, dict) and meta.get(QUEUED_WORK_META_KEY):
+            # Parked admitted work: the admission service cancels it.
+            continue
+        if responsive_chat.row_already_written(slot, entry):
+            continue
+        queue_id = str(entry.get("id") or "")
+        if not queue_id or slot.queue_remove_by_id(queue_id) is None:
+            continue
+        _remove_queued_by_id(slot.messages, queue_id)
+        # The text never reaches anyone's composer: the sender's sockets are closed.
+        state.broadcast_ws("queue_cancel", {"slot": slot.key, "queue_id": queue_id, "content": ""})
+        dropped += 1
+    return dropped
+
+
+async def stop_slot_work(app: web.Application, principal_ids: frozenset[str]) -> dict[str, int]:
+    """Drop a removed person's queued messages, then stop the turns they started.
+
+    Covers the work no admitted record holds (fair admission off). Queued
+    messages go first, so a stopped turn's queue drain cannot start one.
+    """
+    from kiro_crew.dashboard.chat_handlers import stop_slot_turn
+    from kiro_crew.shared_crew.turn_gate import unadmitted_slots
+
+    state = app.get("state")
+    slots = getattr(state, "_slots", None)
+    if state is None or not isinstance(slots, dict):
+        return {"queued": 0, "running": 0}
+    queued = 0
+    for slot in list(slots.values()):
+        try:
+            queued += _drop_queued(state, slot, principal_ids)
+        except Exception:  # noqa: BLE001 -- one slot never blocks the rest
+            logger.debug("dropping a removed person's queued message failed", exc_info=True)
+    running = 0
+    for key in unadmitted_slots(principal_ids):
+        slot = slots.get(key)
+        if slot is None or not slot.running:
+            continue
+        try:
+            await stop_slot_turn(state, slot, source="shared_crew_access_removed", escalate=False)
+            running += 1
+        except Exception:  # noqa: BLE001 -- one slot never blocks the rest
+            logger.warning("stopping a removed person's turn failed", exc_info=True)
+    if queued or running:
+        state.push_slots_update()
+    return {"queued": queued, "running": running}
+
+
 async def _install_closer(app: web.Application) -> None:
     async def close(principal_ids: frozenset[str], login: str) -> int:
         return await close_sockets(app, principal_ids, login)
 
+    async def stop(principal_ids: frozenset[str]) -> dict[str, int]:
+        return await stop_slot_work(app, principal_ids)
+
     access_set.socket_closer = close
+    access_set.slot_work_stopper = stop
 
 
 def register(app: web.Application) -> None:

@@ -162,6 +162,23 @@ def _retry_after(raw: str | None) -> float:
     return max(0.0, min(value, 3600.0))
 
 
+async def _read_capped(stream: aiohttp.StreamReader, cap: int) -> bytes:
+    """The whole body up to EOF, or ``cap + 1`` bytes once it grows past *cap*.
+
+    One ``read(n)`` returns as soon as any bytes arrive, so a body split across
+    packets is read in a loop until EOF.
+    """
+    chunks: list[bytes] = []
+    total = 0
+    while total <= cap:
+        chunk = await stream.read(cap + 1 - total)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        total += len(chunk)
+    return b"".join(chunks)
+
+
 SessionFactory = Callable[[], aiohttp.ClientSession]
 Sleep = Callable[[float], Awaitable[None]]
 
@@ -199,7 +216,7 @@ class TailscaleApi:
                     allow_redirects=False,
                     headers={"Accept": "application/json", "Authorization": basic_auth(self._key)},
                 ) as resp:
-                    raw = await resp.content.read(MAX_RESPONSE_BYTES + 1)
+                    raw = await _read_capped(resp.content, MAX_RESPONSE_BYTES)
                     status = resp.status
                     retry_after = _retry_after(resp.headers.get("Retry-After"))
         except TailscaleApiError:

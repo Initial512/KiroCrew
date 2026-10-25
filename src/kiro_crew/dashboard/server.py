@@ -1028,8 +1028,8 @@ async def start_dashboard(
         _ts_cfg = _cfg.dashboard.tailscale
         _tailnet_host = await tailnet.resolve_tailnet_host(_ts_cfg.enabled)
         _tailnet_trust = await _resolve_tailnet_trust(_cfg)
-        # Shared Crew: the Tailscale setup path reports what resolved here.
-        from kiro_crew.dashboard.tailnet_proxy_proof import proof_support
+        # Shared Crew: the Tailscale setup path reports what resolved here. The
+        # proxy-proof probe runs after the bind (``host_power.probe_after_start``).
         from kiro_crew.shared_crew.access import note_tailnet
 
         note_tailnet(
@@ -1037,7 +1037,7 @@ async def start_dashboard(
             host=_tailnet_host,
             identity_trust=_tailnet_trust.enforces_identity and not _tailnet_trust.identity_unknown,
             loopback_only=local_only,
-            proof_gap=await asyncio.to_thread(proof_support),
+            proof_gap=None,
             identity_config_unreadable=tailnet_identity_unknown(_cfg.degraded_sections),
         )
         # Direct tailnet listener: whois-verified, token-free, on this machine's

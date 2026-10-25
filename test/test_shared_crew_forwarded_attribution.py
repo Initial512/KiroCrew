@@ -9,6 +9,7 @@ claiming names it can never produce.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -78,6 +79,62 @@ def test_an_unrecognised_gap_reads_unavailable():
 def test_attribution_stays_available_where_the_gap_does_not_apply(kwargs):
     note_tailnet(enabled=True, host="crew.tail.ts.net", **kwargs)
     assert _attribution() == ("available", "")
+
+
+def test_the_row_says_not_checked_until_the_post_start_probe_answers():
+    note_tailnet(enabled=True, host="h", identity_trust=True, loopback_only=True, proof_gap=None)
+    assert _attribution() == ("degraded", "not_checked")
+    access.note_proof_gap("daemon_same_user")
+    assert _attribution() == ("unavailable", "daemon_same_user")
+    access.note_proof_gap("")
+    assert _attribution() == ("available", "")
+
+
+def test_the_boot_path_runs_no_host_probe(monkeypatch):
+    """The access set is installed at boot; the laptop and keep-awake probe is not."""
+    from kiro_crew.config.loader import KiroCrewConfig
+    from kiro_crew.dashboard import tailnet_direct_listener
+    from kiro_crew.shared_crew import access_set, host_power
+
+    def refuse() -> None:
+        raise AssertionError("a host probe ran on the boot path")
+
+    monkeypatch.setattr(host_power, "note_host", refuse)
+    monkeypatch.setattr(access_set, "install", lambda _seed: None)
+    tailnet_direct_listener._install_access_set(KiroCrewConfig())
+
+
+@pytest.mark.asyncio
+async def test_the_post_start_probe_fills_both_rows(monkeypatch):
+    from kiro_crew.shared_crew import host_power
+
+    note_tailnet(enabled=True, host="h", identity_trust=True, loopback_only=True, proof_gap=None)
+    monkeypatch.setattr(proof, "proof_support", lambda: "daemon_not_found")
+    noted: list[bool] = []
+    monkeypatch.setattr(host_power, "note_host", lambda: noted.append(True) or {})
+    await host_power.probe_after_start()
+    assert _attribution() == ("degraded", "daemon_not_found")
+    assert noted == [True]
+
+
+@pytest.mark.asyncio
+async def test_the_maintenance_starter_kicks_the_host_probe(monkeypatch):
+    from aiohttp import web
+
+    from kiro_crew.shared_crew import enterprise_gates, host_power
+
+    ran: list[bool] = []
+
+    async def probe() -> None:
+        ran.append(True)
+
+    monkeypatch.setattr(host_power, "probe_after_start", probe)
+    start = enterprise_gates.install_lifecycle(web.Application())
+    start()
+    start()
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert ran == [True]
 
 
 def test_a_failed_source_still_wins_over_the_gap_reason():

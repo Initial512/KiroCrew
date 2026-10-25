@@ -413,6 +413,90 @@ async def test_removing_a_person_stops_their_running_turn_and_frees_capacity_aft
 
 
 @pytest.mark.asyncio
+async def test_removing_a_person_stops_their_turn_and_queue_with_admission_off(
+    monkeypatch,
+) -> None:
+    """Fair admission off (the default): no admitted record exists, the work still stops."""
+    from kiro_crew.dashboard import chat_handlers
+    from kiro_crew.dashboard.state import _ChatSlot
+    from kiro_crew.shared_crew import turn_gate
+
+    _install()
+    access_set.acknowledge_first_share("owner")
+    assert access_set.note_waiting(_peer("100.64.0.7"))
+    access_set.approve("31", "owner")
+    tailnet_live_allowlist.note_admitted("mallory@example.com", "31")
+    mallory = tailnet_principal(
+        "mallory@example.com", "", Provenance.TAILSCALE_LISTENER, user_id="31"
+    )
+    alice = tailnet_principal("alice@example.com", "", Provenance.TAILSCALE_LISTENER, user_id="21")
+    ag.install_service(None)
+    assert not await turn_gate.admission_on()
+
+    running_slot, queue_slot = _ChatSlot("s1"), _ChatSlot("s2")
+    queue_slot.queue_append("from mallory", meta={"author": mallory.to_public_dict()})
+    queue_slot.queue_append("from alice", meta={"author": alice.to_public_dict()})
+    state = SimpleNamespace(
+        _slots={"s1": running_slot, "s2": queue_slot},
+        _ws_clients=[],
+        broadcast_ws=lambda *_a, **_k: None,
+        push_slots_update=lambda: None,
+    )
+    app = web.Application()
+    app["state"] = state
+    await routes_access._install_closer(app)
+
+    started = asyncio.Event()
+
+    async def turn() -> None:
+        started.set()
+        await asyncio.Event().wait()
+
+    with turn_gate.initiated_by(mallory.id):
+        task = asyncio.ensure_future(turn_gate.gate_turn(state, running_slot, "hi", {}, turn))
+    await asyncio.wait_for(started.wait(), 30)
+    assert turn_gate.unadmitted_slots({mallory.id}) == ["s1"]
+
+    stops: list[str] = []
+
+    async def fake_stop(_state: Any, slot: Any, **_kw: Any) -> dict[str, Any]:
+        stops.append(slot.key)
+        task.cancel()
+        return {"ok": True}
+
+    monkeypatch.setattr(chat_handlers, "stop_slot_turn", fake_stop)
+    monkeypatch.setattr(_ChatSlot, "running", property(lambda self: self.key == "s1"))
+    result = await access_set.remove_approval("31", "owner")
+
+    assert result["stopped_running"] == 1 and result["cancelled_queued"] == 1
+    assert stops == ["s1"]
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert [q["content"] for q in queue_slot._queue] == ["from alice"]
+    assert turn_gate.unadmitted_slots({mallory.id}) == []
+
+
+@pytest.mark.asyncio
+async def test_a_removed_persons_drained_turn_does_not_start_with_admission_off() -> None:
+    from kiro_crew.dashboard.state import _ChatSlot
+    from kiro_crew.shared_crew import turn_gate
+
+    ag.install_service(None)
+    pid = tailnet_principal("mallory@example.com", "", Provenance.TAILSCALE_DIRECT, user_id="31").id
+    access_set._note_removed(frozenset({pid}))
+    slot = _ChatSlot("s1")
+    ran: list[bool] = []
+
+    async def turn() -> None:
+        ran.append(True)
+
+    with turn_gate.initiated_by(pid):
+        await turn_gate.gate_turn(SimpleNamespace(), slot, "queued", {}, turn)
+    assert ran == []
+    assert "no longer has access" in slot.messages[-1]["content"]
+
+
+@pytest.mark.asyncio
 async def test_finished_work_is_kept_when_its_person_is_removed(tmp_path) -> None:
     pid = tailnet_principal("a@example.com", "", Provenance.TAILSCALE_SERVE).id
     svc = _service(tmp_path)

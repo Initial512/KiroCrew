@@ -287,7 +287,7 @@ def test_one_user_on_two_nodes_is_one_principal_named_by_display_name():
     a, b = direct_principal(laptop), direct_principal(phone)
     assert a.id == b.id
     assert a.subject == "uid:21"
-    assert a.provenance is Provenance.TAILSCALE_DIRECT
+    assert a.provenance is Provenance.TAILSCALE_LISTENER
     assert a.display.name == "Alice A" and a.display.login == "alice@example.com"
     renamed = parse_whois(
         _whois_body("alice@example.com", 21, "alice-laptop", KEY_B, display="Other"), "x", 1, "x"
@@ -317,7 +317,7 @@ async def test_owner_is_admitted_without_a_token_with_owner_rights():
     assert (body["login"], body["name"], body["provenance"]) == (
         "owner@example.com",
         "Owner Person",
-        "tailscale_direct",
+        "tailscale_listener",
     )
 
 

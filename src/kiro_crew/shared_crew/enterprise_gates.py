@@ -83,7 +83,12 @@ _APPROVAL_PATHS = re.compile(
 
 #: Provenance that marks a person reaching the Crew through a shared path.
 SHARED_PROVENANCE = frozenset(
-    {Provenance.TAILSCALE_SERVE, Provenance.TAILSCALE_DIRECT, Provenance.ENTERPRISE}
+    {
+        Provenance.TAILSCALE_SERVE,
+        Provenance.TAILSCALE_DIRECT,
+        Provenance.TAILSCALE_LISTENER,
+        Provenance.ENTERPRISE,
+    }
 )
 
 #: ``(pattern, operation)`` for every POST that starts new model work over HTTP.
@@ -405,6 +410,7 @@ def install_lifecycle(app: web.Application) -> Callable[[], None]:
     ``ensure_ready`` themselves, sharing its reconciliation lock with maintenance.
     """
     maintenance: asyncio.Task[None] | None = None
+    probes: asyncio.Task[None] | None = None
 
     async def _shared_crew_startup(app_: web.Application) -> None:
         # Defer admission imports until startup; registering hooks performs no I/O.
@@ -415,9 +421,13 @@ def install_lifecycle(app: web.Application) -> Callable[[], None]:
         await startup_check()
 
     def start_maintenance() -> None:
-        nonlocal maintenance
+        nonlocal maintenance, probes
+        from kiro_crew.shared_crew import host_power
         from kiro_crew.shared_crew.admission_gate import installed_service
 
+        if probes is None:
+            # Informational host probes, after the bind and off the boot path.
+            probes = asyncio.create_task(host_power.probe_after_start())
         service = installed_service()
         if maintenance is not None or service is None or not service.enabled:
             return
@@ -437,9 +447,10 @@ def install_lifecycle(app: web.Application) -> Callable[[], None]:
         # Cleanup is optional until startup has built an admission service.
         from kiro_crew.shared_crew.admission_gate import shutdown_cleanup
 
-        if maintenance is not None:
-            maintenance.cancel()
-            await asyncio.gather(maintenance, return_exceptions=True)
+        for task in (maintenance, probes):
+            if task is not None:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
         try:
             await asyncio.wait_for(shutdown_cleanup(), timeout=SHUTDOWN_CLEANUP_TIMEOUT_SECONDS)
         except Exception:  # noqa: BLE001 -- cleanup never blocks the stop

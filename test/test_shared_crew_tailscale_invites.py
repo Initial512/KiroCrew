@@ -214,6 +214,70 @@ async def test_wrong_key_is_auth_failed(fake: FakeTailscale) -> None:
     assert err.value.code == "auth_failed"
 
 
+class _SplitStream:
+    """A body that arrives in pieces: each ``read(n)`` returns at most one piece."""
+
+    def __init__(self, pieces: list[bytes]) -> None:
+        self._pieces = list(pieces)
+
+    async def read(self, n: int = -1) -> bytes:
+        if not self._pieces:
+            return b""
+        piece = self._pieces.pop(0)
+        if 0 <= n < len(piece):
+            self._pieces.insert(0, piece[n:])
+            piece = piece[:n]
+        return piece
+
+
+class _SplitSession:
+    def __init__(self, pieces: list[bytes]) -> None:
+        self._pieces = pieces
+
+    async def __aenter__(self) -> "_SplitSession":
+        return self
+
+    async def __aexit__(self, *_exc: Any) -> None:
+        return None
+
+    def request(self, *_a: Any, **_kw: Any) -> Any:
+        pieces = self._pieces
+
+        class _Resp:
+            status = 200
+            headers: dict[str, str] = {}
+            content = _SplitStream(pieces)
+
+            async def __aenter__(self) -> "_Resp":
+                return self
+
+            async def __aexit__(self, *_exc: Any) -> None:
+                return None
+
+        return _Resp()
+
+
+@pytest.mark.asyncio
+async def test_a_body_split_across_reads_is_read_to_the_end() -> None:
+    body = json.dumps([{"id": "1", "accepted": False, "deviceId": 2}]).encode()
+    split = [body[:7], body[7:20], body[20:]]
+    api = TailscaleApi(KEY, session_factory=lambda: _SplitSession(split))  # type: ignore[arg-type,return-value]
+    listed = await api.list_invites("nSelf")
+    assert [i.id for i in listed] == ["1"]
+
+
+@pytest.mark.asyncio
+async def test_a_split_body_over_the_cap_is_refused(monkeypatch) -> None:
+    from kiro_crew.shared_crew import tailscale_api
+
+    monkeypatch.setattr(tailscale_api, "MAX_RESPONSE_BYTES", 16)
+    pieces = [b"[" + b" " * 10, b" " * 10, b"]"]
+    api = TailscaleApi(KEY, session_factory=lambda: _SplitSession(pieces))  # type: ignore[arg-type,return-value]
+    with pytest.raises(TailscaleApiError) as err:
+        await api.list_invites("nSelf")
+    assert err.value.code == "bad_response"
+
+
 @pytest.mark.asyncio
 async def test_redirect_is_refused_and_never_followed() -> None:
     app = web.Application()
@@ -474,6 +538,67 @@ async def test_revoke_deletes_share_removes_allowlist_and_closes_sockets(
     assert _logins(config_file) == [OWNER_LOGIN]
     assert tailnet.login_allowed("a@example.com", (OWNER_LOGIN, "a@example.com")) is False
     assert store.load_state()["members"] == {}
+
+
+@pytest.mark.asyncio
+async def test_revoke_during_the_list_read_is_not_undone_by_sync(
+    fake, config_file, monkeypatch
+) -> None:
+    """A revoke that lands after sync read the list wins: the stale list admits nobody."""
+    await invites.connect(KEY, "owner")
+    made = await invites.create_invites(
+        ["a@example.com"], multi_use=False, alias="", avatar_id="", actor="o"
+    )
+    fake.accept(made[0]["id"], "u-1", "a@example.com")
+    real_factory = invites.api_factory
+
+    def factory(key: str) -> TailscaleApi:
+        api = real_factory(key)
+        real_list = api.list_invites
+
+        async def list_then_revoke(device_id: str) -> Any:
+            listed = await real_list(device_id)
+            await invites.revoke(made[0]["id"], "owner")
+            return listed
+
+        api.list_invites = list_then_revoke  # type: ignore[method-assign]
+        return api
+
+    monkeypatch.setattr(invites, "api_factory", factory)
+    result = await invites.sync(force=True)
+    assert result["admitted"] == []
+    assert store.load_state()["members"] == {}
+    assert "a@example.com" not in _logins(config_file)
+    assert tailnet.login_allowed("a@example.com", (OWNER_LOGIN,)) is False
+
+
+@pytest.mark.asyncio
+async def test_revoke_while_sync_admits_waits_and_then_removes(
+    fake, config_file, monkeypatch
+) -> None:
+    """A revoke started while sync is admitting runs after the admit, so it removes them."""
+    await invites.connect(KEY, "owner")
+    made = await invites.create_invites(
+        ["a@example.com"], multi_use=False, alias="", avatar_id="", actor="o"
+    )
+    fake.accept(made[0]["id"], "u-1", "a@example.com")
+    real_writer = invites.allowlist_writer
+    revoking: list[asyncio.Task[Any]] = []
+
+    async def writer(login: str, add: bool) -> Any:
+        if add and not revoking:
+            task = asyncio.ensure_future(invites.revoke(made[0]["id"], "owner"))
+            revoking.append(task)
+            # Give an unlocked revoke the time to finish before the admit commits.
+            await asyncio.wait({task}, timeout=0.5)
+        return await real_writer(login, add)
+
+    monkeypatch.setattr(invites, "allowlist_writer", writer)
+    await invites.sync(force=True)
+    await revoking[0]
+    assert store.load_state()["members"] == {}
+    assert made[0]["id"] not in fake.invites
+    assert tailnet.login_allowed("a@example.com", (OWNER_LOGIN, "a@example.com")) is False
 
 
 @pytest.mark.asyncio

@@ -52,6 +52,8 @@ def _person(login: str, provenance: Provenance = Provenance.TAILSCALE_SERVE) -> 
 ALICE = _person("alice@example.test")
 BOB = _person("bob@example.test")
 DIRECT = _person("dave@example.test", Provenance.TAILSCALE_DIRECT)
+#: A member the direct tailnet listener verified and admitted (the default path).
+LISTENER = _person("lee@example.test", Provenance.TAILSCALE_LISTENER)
 LOCAL = Principal(
     id=principal_id_for("local", "dashboard", "slack-user"),
     kind=PrincipalKind.HUMAN,
@@ -136,6 +138,21 @@ async def test_a_collaborator_sees_and_answers_and_the_first_answer_wins(state):
     assert decision is not None
     assert decision.responder is not None and decision.responder.id == BOB.id
     assert decision.initiator.id == ALICE.id
+
+
+@pytest.mark.asyncio
+async def test_a_direct_listener_member_sees_and_answers(state):
+    task = await _open_question(state)
+    async with _client(state, LISTENER, subject="lee") as lee:
+        resp = await lee.get("/api/ask-question/pending")
+        assert resp.status == 200
+        assert [p["ask_id"] for p in (await resp.json())["pending"]] == ["q1"]
+        won = await lee.post(
+            "/api/ask-question/q1/answer",
+            json={"answers": {"Ship it?": "yes"}, "response_id": "lee-click"},
+        )
+        assert won.status == 200
+    assert await task == {"Ship it?": "yes"}
 
 
 @pytest.mark.asyncio
@@ -288,6 +305,7 @@ def _ctx(p: Principal) -> ActorContext:
 def test_only_membership_provenances_are_collaborators():
     ctx = _ctx
     assert collaborators.is_collaborator_actor(ctx(BOB))
+    assert collaborators.is_collaborator_actor(ctx(LISTENER))
     assert collaborators.is_collaborator_actor(ctx(_person("e@x.test", Provenance.ENTERPRISE)))
     for p in (DIRECT, LOCAL, Principal.unknown()):
         assert not collaborators.is_collaborator_actor(ctx(p))

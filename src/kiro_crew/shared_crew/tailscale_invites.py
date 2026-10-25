@@ -31,6 +31,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import weakref
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
@@ -361,6 +362,21 @@ async def _default_allowlist_writer(login: str, add: bool) -> bool:
 allowlist_writer: Callable[[str, bool], Any] = _default_allowlist_writer
 
 
+#: One accept-or-revoke commit at a time, per event loop: a revoke landing while
+#: ``sync`` admits the same invite runs before or after it, never between.
+_COMMIT_LOCKS: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _commit_lock() -> asyncio.Lock:
+    loop = asyncio.get_running_loop()
+    lock = _COMMIT_LOCKS.get(loop)
+    if lock is None:
+        lock = _COMMIT_LOCKS[loop] = asyncio.Lock()
+    return lock
+
+
 def _new_accepts(
     state: dict[str, Any], invites: list[DeviceInvite]
 ) -> list[tuple[DeviceInvite, dict[str, Any]]]:
@@ -400,7 +416,24 @@ async def sync(*, actor: str = "crew", force: bool = False) -> dict[str, Any]:
         if exc.code == CODE_RATE_LIMITED:
             raise InviteError(CODE_RATE_LIMITED, wait) from exc
         raise
-    accepts = _new_accepts(state, invites)
+    known = set(state.get("invites") or {})
+    async with _commit_lock():
+        return await _commit_accepts(invites, known, actor)
+
+
+async def _commit_accepts(
+    invites: list[DeviceInvite], known: set[str], actor: str
+) -> dict[str, Any]:
+    """Admit each newly accepted person, against the state as it is now.
+
+    Runs under :func:`_commit_lock`. The state is read again here: an invite
+    Crew made that is gone from it now (*known* held it when the list was
+    fetched) was revoked meanwhile and admits nobody.
+    """
+    state = await asyncio.to_thread(store.load_state)
+    rows = state.get("invites") or {}
+    revoked = known - set(rows)
+    accepts = [(i, r) for i, r in _new_accepts(state, invites) if i.id not in revoked]
     restart = False
     admitted: list[dict[str, Any]] = []
     for invite, row in accepts:
@@ -481,6 +514,32 @@ connection_closer: ConnectionCloser = _no_closer
 
 async def revoke(invite_id: str, actor: str) -> dict[str, Any]:
     api, _ = await asyncio.to_thread(_api)
+    async with _commit_lock():
+        row, member, closed = await _revoke_locked(api, invite_id, actor)
+    stopped = {"cancelled_queued": 0, "stopped_running": 0}
+    if member:
+        # Their running turn stops now; the slot frees once its runtime has stopped.
+        login = str(member.get("login") or "")
+        stopped = await access_set.stop_work(login, frozenset(), actor=actor)
+    await _audit_async(
+        "revoke",
+        "granted",
+        actor,
+        email=row.get("email", ""),
+        detail=f"closed_connections:{closed}",
+    )
+    return {
+        "revoked": invite_id,
+        "member_removed": bool(member),
+        "closed_connections": closed,
+        **stopped,
+    }
+
+
+async def _revoke_locked(
+    api: TailscaleApi, invite_id: str, actor: str
+) -> tuple[dict[str, Any], dict[str, Any] | None, int]:
+    """Delete the share and drop its member; ``(invite row, member, sockets closed)``."""
     state = await asyncio.to_thread(store.load_state)
     row = (state.get("invites") or {}).get(invite_id) or {}
     member_id = str(row.get("accepted_user_id") or "")
@@ -503,7 +562,6 @@ async def revoke(invite_id: str, actor: str) -> dict[str, Any]:
             )
             raise
     closed = 0
-    stopped = {"cancelled_queued": 0, "stopped_running": 0}
     if member:
         login = str(member.get("login") or "")
         from kiro_crew.dashboard import tailnet_live_allowlist
@@ -523,21 +581,7 @@ async def revoke(invite_id: str, actor: str) -> dict[str, Any]:
     await asyncio.to_thread(store.update_state, _mutate)
     if member:
         await asyncio.to_thread(access_set.rebuild)
-        # Their running turn stops now; the slot frees once its runtime has stopped.
-        stopped = await access_set.stop_work(login, frozenset(), actor=actor)
-    await _audit_async(
-        "revoke",
-        "granted",
-        actor,
-        email=row.get("email", ""),
-        detail=f"closed_connections:{closed}",
-    )
-    return {
-        "revoked": invite_id,
-        "member_removed": bool(member),
-        "closed_connections": closed,
-        **stopped,
-    }
+    return row, member, closed
 
 
 # ── background poll ──

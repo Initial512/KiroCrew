@@ -192,6 +192,13 @@ describe('TailscaleInvites', () => {
     await waitFor(() => expect(read).toHaveBeenCalledTimes(2))
     expect(screen.queryByTestId('tailscale-invites')).toBeNull()
   })
+
+  it('a failed read shows an error notice instead of an empty space', async () => {
+    read.mockRejectedValue(new ApiError(500, 'x', JSON.stringify({ code: 'tailscale_auth_failed' })))
+    mount()
+    expect(await screen.findByTestId('invite-load-error')).toHaveTextContent('Tailscale did not accept this key')
+    expect(screen.queryByTestId('tailscale-invites')).toBeNull()
+  })
 })
 
 describe('invite helpers', () => {

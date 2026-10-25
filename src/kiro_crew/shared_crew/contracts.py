@@ -70,6 +70,9 @@ class Provenance(str, enum.Enum):
     TAILSCALE_SERVE = "tailscale_serve"
     #: Tailscale daemon ``whois`` of a peer connecting to a tailnet address directly.
     TAILSCALE_DIRECT = "tailscale_direct"
+    #: Tailscale daemon ``whois`` of a peer the direct tailnet listener admitted
+    #: through its access set (``tailnet_direct.DirectGate``): a verified member.
+    TAILSCALE_LISTENER = "tailscale_listener"
     #: The single local operator: a loopback or owner-minted dashboard token.
     LOCAL_OPERATOR = "local_operator"
     #: An enterprise identity assertion validated by an edition provider.

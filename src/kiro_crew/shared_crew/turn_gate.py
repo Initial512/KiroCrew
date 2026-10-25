@@ -60,6 +60,31 @@ _ERROR_CLS = "msg msg-err"
 #: Turn outcomes (``metrics.turns.turn_outcome``) that settle the work ``failed``.
 _FAULT_OUTCOMES = frozenset({"error", "timeout", "stall_exhausted"})
 
+#: Slot key -> the principal whose turn runs there outside admitted work (fair
+#: admission off). Admitted work is stopped through the admission service; this
+#: is how a removed person's unadmitted turn is found. In memory.
+_UNADMITTED_RUNNING: dict[str, str] = {}
+
+
+@contextlib.contextmanager
+def _running_unadmitted(slot_key: str, principal_id: str) -> Iterator[None]:
+    prior = _UNADMITTED_RUNNING.get(slot_key)
+    _UNADMITTED_RUNNING[slot_key] = principal_id
+    try:
+        yield
+    finally:
+        if _UNADMITTED_RUNNING.get(slot_key) == principal_id:
+            if prior is None:
+                _UNADMITTED_RUNNING.pop(slot_key, None)
+            else:
+                _UNADMITTED_RUNNING[slot_key] = prior
+
+
+def unadmitted_slots(principal_ids: Iterable[str]) -> list[str]:
+    """The slots running a turn charged to one of *principal_ids* outside admitted work."""
+    wanted = frozenset(principal_ids)
+    return [key for key, pid in list(_UNADMITTED_RUNNING.items()) if pid in wanted]
+
 
 @contextlib.contextmanager
 def mark_admitted(work_id: str) -> Iterator[None]:
@@ -146,6 +171,8 @@ def in_channel_turn() -> bool:
 def capacity_note(reason: object) -> str:
     """The one-line answer a refused message gets on its own surface."""
     raw = str(getattr(reason, "value", reason) or "capacity")
+    if raw == ReasonCode.ACCESS_REMOVED.value:
+        return "This message did not start: its sender no longer has access to this Crew."
     label = raw.replace("_", " ")
     if raw.startswith(_BUDGET_REASON_PREFIX):
         return f"This message did not start: the Crew's inference budget ({label})."
@@ -168,6 +195,10 @@ async def inference_refusal(operation: OperationKind) -> str | None:
 
     verdict = await check_background_inference_off_loop(BudgetOperation.NEW_TURN)
     return None if verdict.allowed else verdict.reason
+
+
+def _reset_unadmitted_for_tests() -> None:
+    _UNADMITTED_RUNNING.clear()
 
 
 def admitted_work() -> str:
@@ -303,15 +334,23 @@ async def gate_turn(
     from kiro_crew.dashboard.chat_slack import slot_is_live
     from kiro_crew.dashboard.chat_utils import effective_session_key
 
+    budget = turn_budget(kwargs, initiator)
     admission = await _start_parked(parked)
     if admission is None:
         admission = await admit_turn(
-            budget_key=turn_budget(kwargs, initiator),
+            budget_key=budget,
             session_key=effective_session_key(slot) or slot.key,
             text=message if isinstance(message, str) else "",
         )
     if admission is None:
-        await run()
+        from kiro_crew.shared_crew import access_set
+
+        if access_set.principal_removed(budget):
+            # Removed while this turn waited (a queued follow-up being drained).
+            _note_not_started(slot, ReasonCode.ACCESS_REMOVED)
+            return
+        with _running_unadmitted(slot.key, budget):
+            await run()
         return
     if admission.rejected:
         _note_not_started(slot, admission.reason)
@@ -526,4 +565,5 @@ __all__ = [
     "run_slack_message",
     "turn_budget",
     "turn_failure",
+    "unadmitted_slots",
 ]

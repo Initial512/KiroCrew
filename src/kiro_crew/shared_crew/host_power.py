@@ -22,6 +22,7 @@ from ``PATH``, and every failure reads as "not a laptop" or "unavailable".
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import subprocess
@@ -195,6 +196,26 @@ def note_host() -> dict[str, Any]:
     return dict(report)
 
 
+async def probe_after_start() -> None:
+    """Run the informational host probes once the dashboard already accepts requests.
+
+    The proxy-proof scan and the laptop and keep-awake detection only fill
+    capability rows, so they run off the boot path; the rows say
+    ``not_checked`` until this has answered.
+    """
+    from kiro_crew.dashboard.tailnet_proxy_proof import proof_support
+    from kiro_crew.shared_crew import access
+
+    try:
+        access.note_proof_gap(await asyncio.to_thread(proof_support))
+    except Exception:  # noqa: BLE001 -- the row keeps saying not_checked
+        logger.warning("shared crew: the proxy proof probe failed", exc_info=True)
+    try:
+        await asyncio.to_thread(note_host)
+    except Exception:  # noqa: BLE001 -- the row keeps saying not_checked
+        logger.warning("shared crew: the host power probe failed", exc_info=True)
+
+
 def reported() -> dict[str, Any]:
     """The capabilities' ``keep_awake`` row: no I/O, ``unavailable`` before :func:`note_host`."""
     if not _REPORTED:
@@ -293,6 +314,7 @@ __all__ = [
     "detect_laptop",
     "keep_awake_capability",
     "note_host",
+    "probe_after_start",
     "reported",
     "shared_use_wants_awake",
 ]

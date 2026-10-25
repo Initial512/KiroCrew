@@ -15,9 +15,11 @@ Evidence, strongest first:
   principal;
 * a tailnet peer the local daemon resolved behind ``tailscale serve``
   (``tailscale_serve``), already resolved and allowlisted by the middleware;
+* a tailnet peer the direct tailnet listener admitted through its access set
+  (``tailscale_listener``);
 * a tailnet peer connected to the gateway's tailnet address directly, resolved
   here through the daemon's ``whois`` of the socket address
-  (``tailscale_direct``);
+  (``tailscale_direct``, attribution only);
 * a loopback socket with no forwarding header at all: the local operator, keyed
   by the token subject;
 * anything else: Unknown.
@@ -124,11 +126,11 @@ def tailnet_principal(
 
 
 def direct_principal(peer: DirectPeer) -> Principal:
-    """The principal of a peer the direct tailnet listener verified."""
+    """The principal of a peer the direct tailnet listener verified and admitted."""
     return tailnet_principal(
         peer.login,
         peer.node,
-        Provenance.TAILSCALE_DIRECT,
+        Provenance.TAILSCALE_LISTENER,
         user_id=peer.user_id,
         display_name=peer.display_name,
         tagged=peer.tagged,

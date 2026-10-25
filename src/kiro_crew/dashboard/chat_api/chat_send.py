@@ -1063,6 +1063,14 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
             # Same reason as the busy-slot queue above: this entry is drained
             # later, so only its meta can name the actor.
             _hold_meta[TURN_ACTOR_META_KEY] = "app"
+        else:
+            # The server-derived author rides the entry like the busy-slot
+            # branch's: the drain writes it on the row and charges the turn.
+            from kiro_crew.shared_crew.attribution import author_meta as _hold_author_meta
+            from kiro_crew.shared_crew.contracts import MESSAGE_AUTHOR_META_KEY
+            from kiro_crew.shared_crew.identity import actor_of as _hold_actor_of
+
+            _hold_meta[MESSAGE_AUTHOR_META_KEY] = _hold_author_meta(_hold_actor_of(request))
         qid = slot.queue_append(
             message,
             meta=_hold_meta,
@@ -1392,17 +1400,26 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
             _turn_kwargs["_attachments"] = _accepted_attachments
             # Typed form for the refusal replay: keeps ``dirs`` entries as folders.
             _turn_kwargs["_attachment_meta"] = _accepted_attachment_meta
-        task = spawn_guarded_turn(
-            state,
-            slot,
-            admission_entry.admitted_or_direct(
-                slot.key,
-                turn_admission,
-                state.run_background_turn(slot, _run_chat(state, slot, message, **_turn_kwargs)),
-                still_live=lambda: slot_is_live(state, slot),
-                on_ended=state.push_slots_update,
-            ),
-        )
+        # The turn task inherits its sender as initiator, so a turn running
+        # outside admitted work is still found and stopped when the owner
+        # removes that person (``access_set.stop_work``).
+        from kiro_crew.shared_crew.admission_gate import actor_budget as _turn_actor_budget
+        from kiro_crew.shared_crew.turn_gate import initiated_by as _turn_initiated_by
+
+        with _turn_initiated_by("" if request_app else _turn_actor_budget(request)):
+            task = spawn_guarded_turn(
+                state,
+                slot,
+                admission_entry.admitted_or_direct(
+                    slot.key,
+                    turn_admission,
+                    state.run_background_turn(
+                        slot, _run_chat(state, slot, message, **_turn_kwargs)
+                    ),
+                    still_live=lambda: slot_is_live(state, slot),
+                    on_ended=state.push_slots_update,
+                ),
+            )
         turn_dispatched = True
         slot.task = task
     finally:

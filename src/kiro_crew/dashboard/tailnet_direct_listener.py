@@ -33,12 +33,11 @@ def _install_access_set(cfg: KiroCrewConfig) -> None:
     An unreadable tailnet section seeds nothing (the seed is taken only from a
     list that was read), and a later start seeds from it then.
     """
-    from kiro_crew.shared_crew import access_set, host_power
+    from kiro_crew.shared_crew import access_set
 
     unknown = tailnet_identity_unknown(cfg.degraded_sections)
     seed = None if unknown else tuple(cfg.dashboard.tailscale.allowed_logins)
     access_set.install(seed)
-    host_power.note_host()
 
 
 def _resolve_blocking(

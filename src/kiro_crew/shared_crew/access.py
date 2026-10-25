@@ -62,7 +62,9 @@ class IdentityClass(str, enum.Enum):
 #: The key a verified enterprise principal carries its class under, in ``extra``.
 IDENTITY_CLASS_KEY = "identity_class"
 
-_TAILNET_PROVENANCE = frozenset({Provenance.TAILSCALE_SERVE, Provenance.TAILSCALE_DIRECT})
+_TAILNET_PROVENANCE = frozenset(
+    {Provenance.TAILSCALE_SERVE, Provenance.TAILSCALE_DIRECT, Provenance.TAILSCALE_LISTENER}
+)
 
 
 def parse_identity_class(raw: object) -> IdentityClass:
@@ -282,6 +284,8 @@ FORWARDED_ATTRIBUTION_REASONS: tuple[str, ...] = (
     REASON_DAEMON_SAME_USER,
     REASON_DAEMON_NOT_FOUND,
 )
+#: The forwarded-attribution reason until the post-start probe has answered.
+REASON_NOT_CHECKED = "not_checked"
 
 
 @dataclass(frozen=True)
@@ -315,10 +319,11 @@ def unregister_setup_path_source(path: str) -> None:
 
 
 def _reset_setup_paths_for_tests() -> None:
-    global _forwarded_attribution, _identity_config_unreadable, _direct_tailnet
+    global _forwarded_attribution, _forwarded_inputs, _identity_config_unreadable, _direct_tailnet
     with _LOCK:
         _SOURCES.clear()
         _forwarded_attribution = ForwardedAttribution()
+        _forwarded_inputs = (False, False)
         _identity_config_unreadable = False
         _direct_tailnet = DirectTailnet()
 
@@ -345,13 +350,19 @@ class ForwardedAttribution:
 
 
 _forwarded_attribution = ForwardedAttribution()
+#: ``(identity_trust, loopback_only)`` as :func:`note_tailnet` last recorded them.
+_forwarded_inputs: tuple[bool, bool] = (False, False)
 _identity_config_unreadable = False
 
 
 def _forwarded_state(
-    identity_trust: bool, loopback_only: bool, proof_gap: str
+    identity_trust: bool, loopback_only: bool, proof_gap: str | None
 ) -> ForwardedAttribution:
-    if not (identity_trust and loopback_only and proof_gap):
+    if not (identity_trust and loopback_only):
+        return ForwardedAttribution()
+    if proof_gap is None:
+        return ForwardedAttribution(CapabilityState.DEGRADED, REASON_NOT_CHECKED)
+    if not proof_gap:
         return ForwardedAttribution()
     if proof_gap not in FORWARDED_ATTRIBUTION_REASONS:
         return ForwardedAttribution(CapabilityState.UNAVAILABLE, REASON_PLATFORM_UNPROVABLE)
@@ -366,7 +377,7 @@ def note_tailnet(
     host: str,
     identity_trust: bool = False,
     loopback_only: bool = False,
-    proof_gap: str = "",
+    proof_gap: str | None = "",
     identity_config_unreadable: bool = False,
 ) -> None:
     """Record the tailnet path and forwarded attribution the gateway resolved at start.
@@ -379,19 +390,31 @@ def note_tailnet(
     gateway listens on loopback alone (so ``tailscale serve`` is the only way
     in), and *proof_gap* says why the daemon proof cannot succeed here
     (``tailnet_proxy_proof.proof_support``): ``unavailable`` for a platform or
-    a same-user daemon, ``degraded`` while no daemon is running.
+    a same-user daemon, ``degraded`` while no daemon is running. ``None`` means
+    the probe has not answered yet: the row reads ``degraded`` with
+    ``not_checked`` until :func:`note_proof_gap` records the answer.
 
     *identity_config_unreadable* says the tailnet login allowlist could not be
     read (``config.resolution.tailnet_identity_unknown``); ``crew_mode`` refuses
     team mode while it holds.
     """
-    global _forwarded_attribution, _identity_config_unreadable
+    global _forwarded_attribution, _forwarded_inputs, _identity_config_unreadable
     answer = _tailnet_state(bool(enabled), str(host or ""), bool(identity_trust))
-    forwarded = _forwarded_state(bool(identity_trust), bool(loopback_only), str(proof_gap or ""))
+    gap = None if proof_gap is None else str(proof_gap)
+    forwarded = _forwarded_state(bool(identity_trust), bool(loopback_only), gap)
     with _LOCK:
         _SOURCES[SETUP_TAILSCALE] = lambda: answer
         _forwarded_attribution = forwarded
+        _forwarded_inputs = (bool(identity_trust), bool(loopback_only))
         _identity_config_unreadable = bool(identity_config_unreadable)
+
+
+def note_proof_gap(proof_gap: str) -> None:
+    """Record the proxy-proof answer the post-start probe found (``""`` when provable)."""
+    global _forwarded_attribution
+    with _LOCK:
+        identity_trust, loopback_only = _forwarded_inputs
+        _forwarded_attribution = _forwarded_state(identity_trust, loopback_only, str(proof_gap))
 
 
 @dataclass(frozen=True)
@@ -495,6 +518,7 @@ __all__ = [
     "access_modes_dict",
     "detect_workload_host",
     "forwarded_attribution",
+    "note_proof_gap",
     "identity_class_of",
     "note_tailnet",
     "note_tailnet_direct",

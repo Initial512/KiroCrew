@@ -29,6 +29,7 @@ import {
 } from '../../api/sharedCrewInvites'
 import { SettingsCard, SettingsSection } from '../../components/settings'
 import { Badge, Btn, Input, Toggle } from '../../components/ui'
+import ErrorNotice from '../../components/ErrorNotice'
 import { copyToClipboard } from '../../utils/clipboard'
 import { sharedCrewKeys } from '../../hooks/sharedCrew/sharedCrewSocket'
 import { fmtDateTime } from '../../i18n/format'
@@ -76,7 +77,9 @@ function ExtLink({ href, label, testId }: { href: string; label: string; testId:
 
 function ErrorLine({ code, testId }: { code: string; testId: string }) {
   if (!code) return null
-  return <p role="alert" className="text-[12px] text-danger" data-testid={testId}>{inviteErrorText(code)}</p>
+  // No hand-off: each line sits beside a form whose unsaved draft (key, emails,
+  // picture) the hand-off would leave behind.
+  return <ErrorNotice variant="inline" message={inviteErrorText(code)} testId={testId} />
 }
 
 /** No key yet: the manual share path, and the one-time key form. */
@@ -341,8 +344,18 @@ export function TailscaleInvites() {
   const query = useInvites()
   if (query.isLoading) return null
   const status = query.data
-  // A 403 (not the owner) or a gateway without the routes: nothing to show here.
-  if (query.isError || status === null || status === undefined) return null
+  if (query.isError) {
+    // A non-owner is refused by design: the card is the owner's alone.
+    const code = inviteErrorCode(query.error)
+    if (code === 'owner_only') return null
+    return (
+      <SettingsSection title={i18nT('sharedCrew.invite_title')}>
+        <ErrorNotice message={inviteErrorText(code || 'error')} askAgent testId="invite-load-error" />
+      </SettingsSection>
+    )
+  }
+  // A gateway without the routes (404): nothing to show here.
+  if (status === null || status === undefined) return null
   return (
     <SettingsSection title={i18nT('sharedCrew.invite_title')}>
       <SettingsCard>

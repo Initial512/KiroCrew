@@ -96,6 +96,16 @@ async def _no_socket_closer(_principal_ids: frozenset[str], _login: str) -> int:
 socket_closer: Callable[[frozenset[str], str], Awaitable[int]] = _no_socket_closer
 
 
+async def _no_slot_work_stopper(_principal_ids: frozenset[str]) -> dict[str, int]:
+    return {"queued": 0, "running": 0}
+
+
+#: Stops the given principals' work that no admitted record covers (fair
+#: admission off): their queued follow-ups and their running turns. The routes
+#: install the real one.
+slot_work_stopper: Callable[[frozenset[str]], Awaitable[dict[str, int]]] = _no_slot_work_stopper
+
+
 def _empty() -> dict[str, Any]:
     return {
         "schema": SCHEMA,
@@ -491,9 +501,12 @@ async def stop_work(login: str, user_ids: frozenset[str], *, actor: str) -> dict
     """Cancel a removed person's queued work and stop their running turn now.
 
     Call after the person is out of the set, so a request racing this one is
-    already refused. Capacity is freed by the admission service once each
-    runtime has stopped, never here. Work that has not started yet and is
-    charged to them is refused when it reaches the front of the queue.
+    already refused. Admitted work is cancelled through the admission service,
+    which frees its capacity once each runtime has stopped. Work no admitted
+    record covers (fair admission off, the default) is stopped through
+    :data:`slot_work_stopper`: queued follow-ups they sent are dropped and a
+    turn they started is stopped. Work charged to them that still reaches the
+    front of a queue is refused there.
     """
     from kiro_crew.shared_crew.admission_gate import installed_service
     from kiro_crew.shared_crew.admission_revoke import stop_principals
@@ -507,6 +520,14 @@ async def stop_work(login: str, user_ids: frozenset[str], *, actor: str) -> dict
             stopped = await stop_principals(service, ids)
         except Exception:  # noqa: BLE001 -- reported, never raised past the removal
             logger.warning("stopping a removed person's work failed", exc_info=True)
+    try:
+        unadmitted = await slot_work_stopper(ids)
+        stopped = {
+            "queued": stopped["queued"] + int(unadmitted.get("queued") or 0),
+            "running": stopped["running"] + int(unadmitted.get("running") or 0),
+        }
+    except Exception:  # noqa: BLE001 -- reported, never raised past the removal
+        logger.warning("stopping a removed person's unadmitted work failed", exc_info=True)
     await asyncio.to_thread(
         _audit,
         "stop_work",
@@ -564,7 +585,7 @@ def view() -> dict[str, Any]:
 
 
 def reset_for_tests() -> None:
-    global _STATE, socket_closer, clock
+    global _STATE, socket_closer, slot_work_stopper, clock
     with _LOCK:
         _STATE = None
         _OWNER.update(login="", user_id="")
@@ -572,6 +593,7 @@ def reset_for_tests() -> None:
         _TOUCHED.clear()
         _REMOVED.clear()
     socket_closer = _no_socket_closer
+    slot_work_stopper = _no_slot_work_stopper
     clock = time.time
 
 

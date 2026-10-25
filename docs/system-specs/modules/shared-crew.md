@@ -118,7 +118,7 @@ Evidence, strongest first (`identity.derive_principal`):
 | An app identity (an app token, or an internal caller the middleware derived an app for) | `system`, component `app:<name>` | `internal` |
 | The internal loopback secret (kiro-cli, MCP, doctor) | `system`, component `internal` | `internal` |
 | Loopback peer forwarded by local `tailscale serve`, resolved and allowlisted by `tailnet.resolve_forwarded_peer` | `human` keyed by tailnet login; `machine` keyed by node for a tagged node | `tailscale_serve` |
-| Tailnet peer on the direct tailnet listener, admitted by daemon `whois` of its own TCP `ip:port` and the derived access set (`tailnet_direct.DirectGate`) | `human` keyed by stable Tailscale user id; `machine` keyed by node for a tagged node | `tailscale_direct` |
+| Tailnet peer on the direct tailnet listener, admitted by daemon `whois` of its own TCP `ip:port` and the derived access set (`tailnet_direct.DirectGate`) | `human` keyed by stable Tailscale user id; `machine` keyed by node for a tagged node | `tailscale_listener` |
 | Tailnet peer reaching a widened bind on its tailnet address, no forwarding header, resolved by daemon `whois` of the socket address (`tailnet.resolve_direct_peer`) | `human` keyed by tailnet login; `machine` keyed by node | `tailscale_direct` |
 | Loopback socket with no forwarding header at all | `human`, the local operator, keyed by the token subject | `local_operator` |
 | Anything else auth admitted | `Principal.unknown()` | `none` |
@@ -248,8 +248,10 @@ port. The direct tailnet listener names people on every platform. When it is act
 `attribution` is `available` and the capabilities carry `attribution_via:
 tailscale_direct` and `tailnet_direct` (`state`, `reason`, `method`, `urls`,
 `owner_login`, `addresses`). Otherwise, when identity trust is on and
-the gateway listens on loopback only, `access.note_tailnet` records
-`tailnet_proxy_proof.proof_support()` at start and `attribution` reports
+the gateway listens on loopback only, `host_power.probe_after_start` runs
+`tailnet_proxy_proof.proof_support()` in a background task after the listener
+accepts requests and records it (`access.note_proof_gap`); `attribution` reports
+`degraded` (`not_checked`) until then, and afterwards
 `unavailable` (`platform_unprovable`, `daemon_same_user`) or `degraded`
 (`daemon_not_found`). A
 `Tailscale-User-Login` header that disagrees with the daemon drops the
@@ -393,8 +395,19 @@ ends `cancelled` at once; running work moves to `cancelling`, its turn is
 cancelled, and its slot is released only when the runtime has stopped and the
 work settles. Finished work is kept. Work of theirs that reaches the front of a
 queue later is refused at revalidation (`enterprise_revocation.queued_dispatch_recheck`
-consults `access_set.principal_removed`). The audit detail reads
+consults `access_set.principal_removed`). With fair admission off (the default)
+no work record exists, so `access_set.slot_work_stopper`
+(`routes_access.stop_slot_work`) drops the queued messages the person sent first
+and then stops each turn they started through `stop_slot_turn`: a turn running
+outside admitted work records its initiator per slot
+(`turn_gate.unadmitted_slots`; a chat send passes its sender with
+`initiated_by`), and `turn_gate.gate_turn` refuses a removed person's drained
+turn with an `access_removed` note. The audit detail reads
 `stopped: access removed`.
+
+Revoking an invite and `tailscale_invites.sync` commit one at a time
+(`_commit_lock`): `sync` reads the invite state again under the lock, and an
+invite Crew made that was revoked after the list was read admits nobody.
 
 **First share.** While nobody but the owner is in the set and the owner has not
 acknowledged it, the first invite (with a key connected) and the first approve
@@ -1011,9 +1024,11 @@ the decision with an Unknown responder, and an unanswered one closes as `expired
 An agent question belongs to every collaborator. `collaborators.is_collaborator_request`
 admits the owner (`is_owner_dashboard_request`) and a dashboard-user session whose
 verified actor is a person a membership boundary admitted: provenance
-`tailscale_serve` (allowlisted and pinned by the middleware) or `enterprise`. A
-direct tailnet peer, a Slack-allowlist dashboard token, an app token, an internal
-caller and Unknown are not collaborators and keep the owner gate's 403.
+`tailscale_serve` (allowlisted and pinned by the middleware), `tailscale_listener`
+(admitted by the direct tailnet listener's access set) or `enterprise`. A
+`tailscale_direct` peer (attribution only, on a widened bind), a Slack-allowlist
+dashboard token, an app token, an internal caller and Unknown are not
+collaborators and keep the owner gate's 403.
 `GET /api/ask-question/pending`, `POST /api/ask-question/{id}/answer` and
 `POST /api/ask-question/dismiss` accept every collaborator; opening a question
 (`POST /api/ask-question`) stays owner-only. The card frames (`question_card`,
@@ -1283,9 +1298,10 @@ A source answers from state it already holds; it does no I/O on the request path
 - `workload_identity`: `supported_hosts`, the detected `host`, `host_supported` and a
   `reason` (`host_not_supported` off a supported host);
 - `keep_awake`: `state` (`available` | `unavailable`), `reason` (`no_backend`,
-  `unsupported_platform`, `not_checked` before the gateway's start-time check),
+  `unsupported_platform`, `not_checked` until the post-start probe has run),
   `backend`, `laptop` and `laptop_reason` (`battery_present`, `no_battery`,
-  `unknown`), from `host_power.note_host` at start (see Access set, Keep awake).
+  `unknown`), from `host_power.note_host`, which `host_power.probe_after_start`
+  runs in a background task after the listener is up (see Access set, Keep awake).
 
 The People surface (Settings > People) shows one setup empty state while no setup
 path is `available` and no one but the viewer has been seen: it names the three paths, each with the availability its
