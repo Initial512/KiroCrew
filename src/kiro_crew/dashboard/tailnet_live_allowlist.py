@@ -27,20 +27,17 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 _LOCK = threading.Lock()
 _GRANTED: set[str] = set()
 _REVOKED: set[str] = set()
 _REVOKED_IDS: set[str] = set()
 _SNAPSHOT: Optional["AccessSnapshot"] = None
-#: login -> stable Tailscale user ids the direct listener admitted under it.
-_SEEN: dict[str, set[str]] = {}
-_SEEN_MAX = 1024
 
 #: Called with a refused, daemon-verified person; returns whether they were
 #: listed as waiting for the owner's approval. Installed by Shared Crew.
-WaitingSink = Callable[[object], bool]
+WaitingSink = Callable[[Any], bool]
 _WAITING_SINK: Optional[WaitingSink] = None
 
 
@@ -180,24 +177,6 @@ def decision(login: str) -> bool | None:
     return None
 
 
-def note_admitted(login: str, user_id: str) -> None:
-    """Remember that *user_id* came in under *login*, so a removal can find their work."""
-    key = _norm(login)
-    if not key or not user_id:
-        return
-    with _LOCK:
-        ids = _SEEN.setdefault(key, set())
-        if user_id not in ids and len(ids) < 16:
-            ids.add(user_id)
-        while len(_SEEN) > _SEEN_MAX:
-            _SEEN.pop(next(iter(_SEEN)))
-
-
-def seen_user_ids(login: str) -> frozenset[str]:
-    with _LOCK:
-        return frozenset(_SEEN.get(_norm(login), ()))
-
-
 def install_waiting_sink(sink: Optional[WaitingSink]) -> None:
     global _WAITING_SINK
     with _LOCK:
@@ -222,6 +201,5 @@ def reset_for_tests() -> None:
         _GRANTED.clear()
         _REVOKED.clear()
         _REVOKED_IDS.clear()
-        _SEEN.clear()
         _SNAPSHOT = None
         _WAITING_SINK = None

@@ -51,7 +51,7 @@ async def test_chat_predispatch_exit_releases_admission(tmp_path, monkeypatch, s
         return result
 
     async def hold(st, sl):
-        assert accepted and service.holds_capacity(accepted[0].work.work_id)
+        assert accepted and service._scheduler.is_active(accepted[0].work.work_id)
         if exit_kind == "stop":
             sl._stop_generation += 1
         elif exit_kind == "close":
@@ -81,7 +81,7 @@ async def test_chat_predispatch_exit_releases_admission(tmp_path, monkeypatch, s
         work_id = accepted[0].work.work_id
         current = await service.current_work(work_id)
         assert current.state is OperationState.FAILED
-        assert not service.holds_capacity(work_id)
+        assert not service._scheduler.is_active(work_id)
         run.assert_not_awaited()
         if slot is not None:
             assert slot._has_reader is False
@@ -137,7 +137,7 @@ async def test_workflow_replay_never_starts_or_abandons(
     assert body["admission"]["work"]["work_id"] == first.work.work_id
     assert body.get("run_id") == ("original-run" if attached else None)
     assert response.status == (200 if attached else 202)
-    assert service.holds_capacity(first.work.work_id)
+    assert service._scheduler.is_active(first.work.work_id)
 
 
 @pytest.mark.asyncio
@@ -174,7 +174,7 @@ async def test_taskrunner_replay_never_starts_or_abandons(tmp_path, monkeypatch,
     body = json.loads(response.body)
     assert response.status == 200 and body["replayed"] is True
     assert body["task_id"] == "original-task"
-    assert service.holds_capacity(first.work.work_id)
+    assert service._scheduler.is_active(first.work.work_id)
 
 
 @pytest.mark.asyncio

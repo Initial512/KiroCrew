@@ -557,13 +557,10 @@ that trigger instead of a person (`trigger.trigger_of`): `created_by` of
 `cron:<job id>` (stamped only for a transport-attested cron caller), a key in the
 `cron` or `hook` namespace in either separator spelling, or slot origin `system`.
 The public attribution then carries `trigger` `{kind: scheduled | webhook |
-system, ref, name, configured_by}`, and never for a human creator. The UI reads
+system, ref, name}`, and never for a human creator. The UI reads
 `Scheduled: <job name>`, `Webhook: <name>` or `Crew automation`. The job name
 comes from the cron service's in-memory snapshot (`wiring.cron_job_namer`), so a
-label costs no I/O; without it the label omits the name. `configured_by` is the
-verified principal who configured the trigger; no schedule or webhook records one
-in this build, so it is `null`, and the UI never fills it with the viewer or the
-job's owner session. A trigger is a label derived from editable records and grants
+label costs no I/O; without it the label omits the name. A trigger is a label derived from editable records and grants
 nothing.
 
 External attribution output is suspended pending product reconciliation: no
@@ -616,9 +613,8 @@ Crew workload are named separately. Work no person started (a
 system or Unknown initiator in a `cron` or `hook` session) adds `trigger` `{kind,
 ref, name}`; a human initiator never gets one. The causal join is the record's
 `target` (the work id for work actions), `session_key`, `turn_id`,
-`causal_action_id` and initiator id; `audit.joins_work` checks a record against
-the accepted work it acted on, and the initiator stays distinct from the work's
-owner (`budget_key`) when a collaborator acts on someone else's work.
+`causal_action_id` and initiator id, and the initiator stays distinct from the
+work's owner (`budget_key`) when a collaborator acts on someone else's work.
 
 The write is the log's fail-closed `critical` mode, off the event loop, bounded by
 `AUDIT_TIMEOUT_SECONDS`. `record_action` returns whether the record is confirmed.
@@ -715,9 +711,9 @@ durable queue stays the store of record and this is its projection.
 
 ### Capacity accounting
 
-Work counts against active capacity in `CAPACITY_HOLDING` and against queue depth in
-`QUEUE_HOLDING`. `AcceptedWork.release_allowed` returns capacity only for terminal
-work whose `RuntimeOwnershipRef` shows the runtime and every descendant proven stopped.
+Work counts against active capacity in `CAPACITY_HOLDING` and against queue depth
+while `queued`. `AdmissionService._maybe_release` returns capacity only for terminal
+work whose runtime is proven stopped and whose children have all settled.
 Restart, disconnect or lease expiry therefore never frees a slot while a child lives.
 
 `RuntimeOwnershipRef` points into the existing ownership registry
@@ -790,16 +786,17 @@ its queue card exists it waits on; once the card is gone it ends `cancelled`
 (`queue_entry_gone`). A card cancelled through the work API, or whose sender was
 removed, does not run.
 
-A queued ticket leaves the scheduler only when its terminal write is durable. When
-the write of a cancel or an expiry fails (the task store is locked past its
-timeout), `AdmissionService._end` puts the ticket back in its own place
-(`FairScheduler.restore_queued`): the work stays `queued`, the cancel raises, and
-the next tick expires it again. A finished run whose terminal write fails keeps its
-slot and its merged messages; the next tick writes the outcome again
-(`_Live.unsettled`), and the slot is freed once that write is durable. A caller
-cancelled before its work starts (a queued chat closed while it waits) ends that
-work `cancelled` (`admission_parked.end_unstarted`), so its ticket never holds a slot. A child whose attach write fails is stopped through
-its cancel hook and its work ends `failed` (`admission_parked.end_failed_attach`).
+Capacity lives in memory (the scheduler and the live table); the store is the
+durable record. When any admission write fails (promotion, the pre-start
+`running` write, settle, cancel, expiry, attach; the task store is locked past its
+timeout), `AdmissionService._fail_closed` ends the work in memory at once: it
+frees the slot, stops the child (`_stop_child`), wakes every waiter and logs a
+warning. The durable row keeps its last state until the next restart's reconcile
+settles it, so `current_work` and `list_work` can show a stale non-terminal row
+that holds no capacity. A deadline whose `cancelling` write fails still stops the
+child. A caller cancelled before its work starts (a queued chat closed while it
+waits) ends that work `cancelled` (`admission_parked.end_unstarted`); any other
+error before the start fails it closed, so its ticket never holds a slot.
 
 A background run admitted now can be cancelled while its start is still in flight.
 `_end` remembers the ended, not-yet-attached work with its operation's cancel hook,
@@ -930,7 +927,7 @@ the gateway's uid, which can reach the user bus and the delegated subtree, so
 adversarial escape is not closed (`adversarial_escape_closed: false`). IO is not
 delegated on the supported profile and is `unavailable`. Disk is `app_accounting`:
 `shared_crew.accounting` charges accepted request bytes per principal to the durable
-`principal_storage` ledger and refuses past `principal_storage_mb` with
+`principal_storage` ledger and refuses past `principal_storage_bytes` with
 `storage_limit`; it is not a filesystem quota.
 
 `hard_limits` turns any missing prerequisite (`not_linux`, `systemd_run_untrusted`,
@@ -954,14 +951,14 @@ start refused, logged at ERROR at start) rather than running unlimited.
 `dashboard.shared_crew` (`config.sections_shared_crew`), bounded at parse and resolved
 by `effective_limits`: `admission_enabled` false (the single-operator default; nothing
 is recorded and every entry point behaves as before), `principal_concurrency` 4,
-`principal_child_limit` 8, `principal_queue_depth` 16, `crew_concurrency` 0 (the
-session start gate's automatic width), `crew_child_limit` 0 (twice the Crew width),
-`crew_queue_depth` 64, `queue_expiry_seconds` 300, `root_deadline_seconds` 1800,
-`child_deadline_seconds` 600, `max_request_bytes` 4 MiB, `session_creates_per_minute`
-30, `principal_storage_mb` 2048, `containment_enabled` true, `hard_limits` false,
-`principal_cpu_quota_percent` 800, `principal_memory_max_mb` 24576,
-`principal_tasks_max` 8192, `crew_cpu_quota_percent` 2400. These are proof-of-concept
-test targets measured on one host, not product commitments.
+`crew_concurrency` 0 (the session start gate's automatic width), `containment_enabled`
+true, `hard_limits` false. The other limits are module constants in
+`config.sections_shared_crew`: 8 subagents per person (twice the Crew width
+Crew-wide), queue depth 16 per person and 64 Crew-wide, queue expiry 300 s, deadlines
+1800 s (root) and 600 s (child), 4 MiB per request, 30 session creates per minute,
+2048 MB accounted storage per person, and slice limits of 800% CPU, 24576 MB memory
+and 8192 tasks per person and 2400% CPU Crew-wide. These are proof-of-concept test
+targets measured on one host, not product commitments.
 
 `GET /api/shared-crew/capacity` reconciles first (`ensure_ready`), so after a
 restart it counts work whose runtime is still alive, and answers `CapacityResponse` plus `effective` (every
@@ -1303,8 +1300,8 @@ A source answers from state it already holds; it does no I/O on the request path
   gateway resolved at start (`access.note_tailnet`): `available` once Tailscale access
   is on and the tailnet name resolved, or once identity trust with an allowlist is on
   (`tailscale serve` set up by hand), `degraded` (`tailnet_unreachable`) when it is
-  on without a name, else `not_configured`. A path no source registered for
-  (`access.register_setup_path_source`) reports `not_in_this_build`;
+  on without a name, else `not_configured`. The other paths report
+  `not_in_this_build`;
 - `keep_awake`: `state` (`available` | `unavailable`), `reason` (`no_backend`,
   `unsupported_platform`, `not_checked` until the post-start probe has run),
   `backend`, `laptop` and `laptop_reason` (`battery_present`, `no_battery`,

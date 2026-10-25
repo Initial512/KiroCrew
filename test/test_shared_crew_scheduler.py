@@ -13,7 +13,6 @@ from kiro_crew.shared_crew.scheduler import (
     SchedulerLimits,
     Ticket,
     WorkClass,
-    starvation_bound_admissions,
 )
 from kiro_crew.testing.clock import ManualClock
 
@@ -138,8 +137,8 @@ def test_fairness_flooder_cannot_starve_a_second_principal(clock):
         admitted_order += new
         running += new
     others_before_b = admitted_order.index("b0")
-    bound = starvation_bound_admissions(eligible_principals=2, quantum=1, max_weight=1)
-    assert others_before_b <= bound == 1
+    # (eligible principals - 1) * (quantum + max weight - 1) = 1 with weight 1.
+    assert others_before_b <= 1
 
 
 def test_fairness_three_principals_round_robin(clock):

@@ -39,12 +39,15 @@ import logging
 import threading
 import time
 from collections import deque
-from typing import Any, Awaitable, Callable, Optional
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional
 
 from kiro_crew.atomic_write import atomic_write
 from kiro_crew.dashboard import tailnet_live_allowlist
-from kiro_crew.dashboard.tailnet_live_allowlist import AccessSnapshot
+from kiro_crew.dashboard.tailnet_live_allowlist import AccessSnapshot, _norm
 from kiro_crew.shared_crew import tailscale_invite_store as store
+
+if TYPE_CHECKING:
+    from kiro_crew.dashboard.tailnet_direct import DirectPeer
 
 logger = logging.getLogger(__name__)
 
@@ -181,19 +184,11 @@ def _home() -> str:
     return str(config_dir())
 
 
-def _norm(login: str) -> str:
-    return login.strip().lower()
-
-
 def _split_seed(entries: tuple[str, ...]) -> tuple[list[str], list[str]]:
-    logins: list[str] = []
-    tags: list[str] = []
-    for entry in entries:
-        if not isinstance(entry, str) or not entry.strip():
-            continue
-        value = _norm(entry)
-        (tags if value.startswith("tag:") else logins).append(value)
-    return sorted(set(logins)), sorted(set(tags))
+    from kiro_crew.dashboard.tailnet_direct import _split_allowlist
+
+    logins, tags = _split_allowlist(entries)
+    return sorted(logins), sorted(tags)
 
 
 def _invite_logins() -> set[str]:
@@ -282,25 +277,17 @@ def _audit(operation: str, outcome: str, actor: str, *, login: str = "", detail:
         logger.debug("access audit write failed", exc_info=True)
 
 
-def _clean(raw: object, limit: int = _DISPLAY_MAX) -> str:
-    if not isinstance(raw, str):
-        return ""
-    return "".join(ch for ch in raw.strip() if ch.isprintable())[:limit]
-
-
 # ── waiting ──
 
 
-def note_waiting(peer: Any) -> bool:
+def note_waiting(peer: DirectPeer) -> bool:
     """List a refused, ``whois``-verified person for the owner. Blocking; never raises.
 
     Returns whether the person is on the list now. A dismissed person, a full
     minute's quota of new people, or an unreadable file leaves them unlisted.
     """
-    user_id = str(getattr(peer, "user_id", "") or "")
-    login = _norm(str(getattr(peer, "login", "") or ""))
-    if not user_id or not login or getattr(peer, "tagged", False):
-        return False
+    user_id = peer.user_id
+    login = _norm(peer.login)
     now = clock()
     with _LOCK:
         try:
@@ -327,9 +314,9 @@ def note_waiting(peer: Any) -> bool:
         waiting[user_id] = {
             "user_id": user_id,
             "login": login,
-            "display_name": _clean(getattr(peer, "display_name", "")) or login,
-            "avatar_url": _clean(getattr(peer, "profile_pic_url", ""), 512),
-            "node": _clean(getattr(peer, "node", "")),
+            "display_name": store.clean_alias(peer.display_name, _DISPLAY_MAX) or login,
+            "avatar_url": store.clean_alias(peer.profile_pic_url, 512),
+            "node": store.clean_alias(peer.node, _DISPLAY_MAX),
             "first_seen": now,
             "last_seen": now,
             "attempts": 1,

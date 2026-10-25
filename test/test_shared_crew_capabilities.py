@@ -162,7 +162,7 @@ class TestAggregation:
             "i", {"attribution"}, _const(CapabilityContribution({"attribution": A}))
         )
         body = aggregate_capabilities().to_dict()
-        assert Capabilities.from_dict(body).attribution is A
+        assert body["attribution"] == A.value
 
 
 class TestRoute:

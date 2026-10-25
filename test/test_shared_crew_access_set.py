@@ -144,7 +144,7 @@ async def _call(client: TestClient, method: str, path: str, ip: str, **headers: 
 
 
 def _peer(ip: str) -> Any:
-    peer = tailnet_direct.parse_whois(PEERS[ip], ip, 1, "x")
+    peer = tailnet_direct.parse_whois(PEERS[ip])
     assert peer is not None
     return peer
 
@@ -268,8 +268,8 @@ def test_waiting_list_is_bounded_and_rate_limited() -> None:
     access_set.clock = lambda: clock[0]
 
     def stranger(n: int) -> Any:
-        return SimpleNamespace(
-            user_id=str(100 + n), login=f"p{n}@example.com", display_name="", node="n", tagged=False
+        return tailnet_direct.DirectPeer(
+            user_id=str(100 + n), login=f"p{n}@example.com", display_name="", node="n", node_key=""
         )
 
     burst = [access_set.note_waiting(stranger(n)) for n in range(12)]
@@ -367,8 +367,7 @@ async def test_removing_a_person_stops_their_running_turn_and_frees_capacity_aft
     access_set.acknowledge_first_share("owner")
     assert access_set.note_waiting(_peer("100.64.0.7"))
     access_set.approve("31", "owner")
-    tailnet_live_allowlist.note_admitted("mallory@example.com", "31")
-    pid = tailnet_principal("mallory@example.com", "", Provenance.TAILSCALE_DIRECT, user_id="31").id
+    pid = tailnet_principal("mallory@example.com", "", Provenance.TAILSCALE_DIRECT).id
     svc = _service(tmp_path)
     ag.install_service(svc)
     running = await svc.admit(
@@ -413,13 +412,13 @@ async def test_removing_a_person_stops_their_running_turn_and_frees_capacity_aft
     await asyncio.wait_for(runtime_stopping.wait(), 30)
     # Stopping, not stopped: the slot is still held until the runtime is gone.
     assert svc.live_work(running.work.work_id).state is S.CANCELLING
-    assert svc.holds_capacity(running.work.work_id)
+    assert svc._scheduler.is_active(running.work.work_id)
     stopped.set()
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(task, 30)
     final = await svc.current_work(running.work.work_id)
     assert final.state is S.CANCELLED and final.reason is ReasonCode.ACCESS_REMOVED
-    assert not svc.holds_capacity(running.work.work_id)
+    assert not svc._scheduler.is_active(running.work.work_id)
     gone = await svc.current_work(queued.work.work_id)
     assert gone.state is S.CANCELLED and gone.reason is ReasonCode.ACCESS_REMOVED
     # Refused from the next request, and any work of theirs still queued elsewhere.
@@ -443,11 +442,8 @@ async def test_removing_a_person_stops_their_turn_and_queue_with_admission_off(
     access_set.acknowledge_first_share("owner")
     assert access_set.note_waiting(_peer("100.64.0.7"))
     access_set.approve("31", "owner")
-    tailnet_live_allowlist.note_admitted("mallory@example.com", "31")
-    mallory = tailnet_principal(
-        "mallory@example.com", "", Provenance.TAILSCALE_LISTENER, user_id="31"
-    )
-    alice = tailnet_principal("alice@example.com", "", Provenance.TAILSCALE_LISTENER, user_id="21")
+    mallory = tailnet_principal("mallory@example.com", "", Provenance.TAILSCALE_LISTENER)
+    alice = tailnet_principal("alice@example.com", "", Provenance.TAILSCALE_LISTENER)
     ag.install_service(None)
     assert not await turn_gate.admission_on()
 
@@ -500,7 +496,7 @@ async def test_a_removed_persons_drained_turn_does_not_start_with_admission_off(
     from kiro_crew.shared_crew import turn_gate
 
     ag.install_service(None)
-    pid = tailnet_principal("mallory@example.com", "", Provenance.TAILSCALE_DIRECT, user_id="31").id
+    pid = tailnet_principal("mallory@example.com", "", Provenance.TAILSCALE_DIRECT).id
     access_set._note_removed(frozenset({pid}))
     slot = _ChatSlot("s1")
     ran: list[bool] = []
@@ -546,11 +542,9 @@ async def test_close_sockets_closes_the_removed_persons_direct_and_serve_sockets
         async def close(self, **_kw: Any) -> None:
             self.closed = True
 
-    direct = Sock(
-        tailnet_principal("ann@example.com", "phone", Provenance.TAILSCALE_DIRECT, user_id="44")
-    )
+    direct = Sock(tailnet_principal("ann@example.com", "phone", Provenance.TAILSCALE_DIRECT))
     serve = Sock(tailnet_principal("ann@example.com", "", Provenance.TAILSCALE_SERVE))
-    bob = Sock(tailnet_principal("bob@example.com", "", Provenance.TAILSCALE_DIRECT, user_id="5"))
+    bob = Sock(tailnet_principal("bob@example.com", "", Provenance.TAILSCALE_DIRECT))
     app = web.Application()
     app["state"] = SimpleNamespace(_ws_clients=[direct, serve, bob])
     ids = access_set.principal_ids_for("ann@example.com", frozenset({"44"}))
@@ -689,9 +683,7 @@ def test_keep_awake_starts_while_a_collaborator_is_here_and_stops_when_idle(
     collaborator = SimpleNamespace(
         closed=False,
         get=lambda key: ActorContext(
-            principal=tailnet_principal(
-                "alice@example.com", "", Provenance.TAILSCALE_DIRECT, user_id="21"
-            ),
+            principal=tailnet_principal("alice@example.com", "", Provenance.TAILSCALE_DIRECT),
             request_id="r",
             transport=Transport.WEBSOCKET,
         ),
@@ -699,9 +691,7 @@ def test_keep_awake_starts_while_a_collaborator_is_here_and_stops_when_idle(
     owner_socket = SimpleNamespace(
         closed=False,
         get=lambda key: ActorContext(
-            principal=tailnet_principal(
-                "owner@example.com", "", Provenance.TAILSCALE_DIRECT, user_id="11"
-            ),
+            principal=tailnet_principal("owner@example.com", "", Provenance.TAILSCALE_DIRECT),
             request_id="r",
             transport=Transport.WEBSOCKET,
         ),

@@ -29,6 +29,7 @@ from kiro_crew.shared_crew.admission_entry import (
     QUEUED_WORK_META_KEY,
 )
 from kiro_crew.shared_crew.contracts import MESSAGE_AUTHOR_META_KEY
+from kiro_crew.shared_crew.memory_changes import slot_for_session
 
 logger = logging.getLogger(__name__)
 
@@ -71,19 +72,6 @@ def parked_probe(state: Any) -> Callable[[str], bool]:
         return False
 
     return present
-
-
-def _slot_for(state: Any, session_key: str) -> Any:
-    from kiro_crew.dashboard.chat_utils import effective_session_key
-
-    slots = getattr(state, "_slots", None)
-    for slot in list(slots.values()) if isinstance(slots, dict) else ():
-        try:
-            if slot.key == session_key or effective_session_key(slot) == session_key:
-                return slot
-        except Exception:  # noqa: BLE001 -- a slot that cannot be keyed is skipped
-            continue
-    return None
 
 
 @dataclass(frozen=True)
@@ -178,7 +166,7 @@ async def deliver_owed_notes(state: Any) -> int:
 
 
 async def _deliver(state: Any, item: _Note) -> bool:
-    slot = _slot_for(state, item.session_key)
+    slot = slot_for_session(state, item.session_key)
     if slot is None and item.session_key.startswith(_DASHBOARD_PREFIX):
         from kiro_crew.dashboard.chat_persistence import rehydrate_slot_from_history_async
 

@@ -14,7 +14,7 @@ import enum
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
-from kiro_crew.shared_crew.admission import AcceptedWork, CapacityResponse
+from kiro_crew.shared_crew.admission import AcceptedWork
 from kiro_crew.shared_crew.codec import (
     SCHEMA_VERSION,
     ContractError,
@@ -36,7 +36,6 @@ from kiro_crew.shared_crew.contracts import Principal, principal_or_unknown
 FRAME_PRESENCE = "shared_crew.presence"
 FRAME_WORK = "shared_crew.work"
 FRAME_DECISION = "shared_crew.decision"
-FRAME_CAPACITY = "shared_crew.capacity"
 #: A session's send revision and its last accepted send (``send_race``).
 FRAME_SEND_STATE = "shared_crew.send_state"
 #: Who holds a session's composer typing lease (``typing_lease``), or nobody.
@@ -48,7 +47,6 @@ SERVER_FRAMES = frozenset(
         FRAME_PRESENCE,
         FRAME_WORK,
         FRAME_DECISION,
-        FRAME_CAPACITY,
         FRAME_SEND_STATE,
         FRAME_TYPING_LEASE,
         FRAME_MEMORY_CHANGE,
@@ -254,11 +252,3 @@ def work_frame(work: AcceptedWork, *, slot_key: str = "") -> dict[str, Any]:
     if slot_key:
         frame["slot_key"] = slot_key
     return frame
-
-
-def capacity_frame(capacity: CapacityResponse) -> dict[str, Any]:
-    return {
-        "type": FRAME_CAPACITY,
-        "schema_version": SCHEMA_VERSION,
-        "capacity": capacity.to_dict(),
-    }

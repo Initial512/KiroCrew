@@ -258,7 +258,7 @@ def run_real_slice_exercise() -> dict[str, object]:
         }
         return result
     finally:
-        mgr.stop(slice_name)
+        _systemctl("stop", slice_name)
         _systemctl("stop", parent)
         for p in procs:
             try:

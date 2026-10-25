@@ -71,7 +71,6 @@ def _resolve_gate(
         )
     ts = cfg.dashboard.tailscale
     return tailnet_direct.resolve(
-        enabled=True,
         port=port,
         allowed_logins=tailnet_effective_allowed_logins(cfg.degraded_sections, ts.allowed_logins),
         identity_unknown=tailnet_identity_unknown(cfg.degraded_sections),

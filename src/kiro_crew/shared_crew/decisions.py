@@ -36,7 +36,6 @@ from kiro_crew.shared_crew.collab import (
     decision_frame,
 )
 from kiro_crew.shared_crew.contracts import (
-    ACTOR_REQUEST_KEY,
     ActionOutcome,
     ActionType,
     ActorContext,
@@ -90,11 +89,9 @@ def request_principal(request: Any) -> Principal:
     Reads only what the auth middleware published. A body, header or query
     value is never consulted.
     """
-    getter = getattr(request, "get", None)
-    actor = getter(ACTOR_REQUEST_KEY) if callable(getter) else None
-    if isinstance(actor, ActorContext):
-        return actor.principal
-    return Principal.unknown()
+    from kiro_crew.shared_crew.identity import actor_of
+
+    return actor_of(request).principal
 
 
 def turn_initiator(messages: object) -> Principal:
@@ -466,16 +463,7 @@ def respond(reply: Reply) -> Any:
     from aiohttp import web
 
     status, body = reply
-    if status == 409:
-        return web.json_response(
-            {
-                "error": "this decision was already answered",
-                "code": "already_resolved",
-                "decision": body.get("decision"),
-            },
-            status=409,
-        )
-    return web.json_response(body)
+    return web.json_response(body, status=status)
 
 
 def _settle_future(fut: Any, resolved: str) -> bool:

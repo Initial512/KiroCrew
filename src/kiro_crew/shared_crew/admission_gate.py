@@ -162,8 +162,6 @@ class _Live:
     awaiting_proof: bool = False
     #: Set by :meth:`AdmissionService.note_failure`: the work returned, but failed.
     failure: str = ""
-    #: The outcome whose terminal write failed; the next tick writes it again.
-    unsettled: OperationState | None = None
     #: Queued messages a session drain merged into this work's turn.
     followers: list[str] = field(default_factory=list)
     #: This work is a queued message merged into another work's turn.
@@ -873,7 +871,7 @@ class AdmissionService:
             if current is not None:
                 live.work = current
         except Exception:
-            logger.warning("shared crew: promoting %s failed", work_id, exc_info=True)
+            self._fail_closed(live, "promotion")
             return
         live.admitted.set()
 
@@ -1082,10 +1080,8 @@ class AdmissionService:
             if current is not None:
                 live.work = current
         except Exception:
-            logger.warning("shared crew: settling %s failed", live.work.work_id, exc_info=True)
-            live.unsettled = outcome
-        if live.unsettled is None:
-            await self._settle_followers(live)
+            self._fail_closed(live, "settle")
+        await self._settle_followers(live)
         live.ended.set()
         self._maybe_release(live)
 
@@ -1120,24 +1116,15 @@ class AdmissionService:
         *,
         reason: ReasonCode | None,
         extra: Mapping[str, Any] | None = None,
-        removed: Ticket | None = None,
     ) -> None:
-        """Move unstarted or child work straight to a terminal *state*.
-
-        A queued ticket leaves the scheduler only once the terminal write is
-        durable. *removed* is a ticket the caller already took out (an expiry);
-        when the write fails it goes back, so the work stays queued and the next
-        cancel or tick settles it, and the error is raised.
-        """
+        """Move unstarted or child work straight to a terminal *state*."""
         assert self._store is not None
         work_id = live.work.work_id
         unattached = live.work.state in (S.QUEUED, S.ADMITTED) and not live.work.extra.get(
             "execution_id"
         )
-        parked = self._scheduler.is_parked(work_id)
-        ticket = removed
-        if ticket is None and live.work.state is S.QUEUED:
-            ticket = self._scheduler.cancel_queued(work_id)
+        if live.work.state is S.QUEUED:
+            self._scheduler.cancel_queued(work_id)
         try:
             if live.work.state is S.RUNNING and state is S.CANCELLED:
                 live.work = await self._store.advance(live.work, S.CANCELLING, reason=reason)
@@ -1151,9 +1138,7 @@ class AdmissionService:
             if current is not None:
                 live.work = current
         except Exception:
-            if ticket is not None and live.work.state is S.QUEUED:
-                self._scheduler.restore_queued(ticket, parked=parked)
-            raise
+            self._fail_closed(live, "end")
         if unattached and live.work.state in TERMINAL:
             self._ended_unattached[work_id] = (live.work, self._cancel_hook_for(live))
             while len(self._ended_unattached) > _ENDED_UNATTACHED_MAX:
@@ -1194,7 +1179,7 @@ class AdmissionService:
                 _parked.stop_late_start(self, work_id, execution_id)
             return
         except Exception:
-            await _parked.end_failed_attach(self, live, execution_id)
+            self._fail_closed(live, "attach", execution_id)
             raise
         if session_key:
             self.bind_session(session_key, live.work.budget_key, live.root_work_id or work_id)
@@ -1236,13 +1221,10 @@ class AdmissionService:
         if current.state in (S.QUEUED, S.ADMITTED):
             await self._end(live, S.CANCELLED, reason=why)
             return live.work
-        live.work = await self._store.advance(live.work, S.CANCELLING, reason=why)
-        if live.cancel_cb is not None:
-            live.cancel_cb()
-        else:
-            hook = self._cancel_hook_for(live)
-            if hook is not None:
-                hook(live.work)
+        try:
+            live.work = await self._store.advance(live.work, S.CANCELLING, reason=why)
+        finally:
+            self._stop_child(live)
         return live.work
 
     _child_cancel: CancelHook | None = None
@@ -1261,6 +1243,29 @@ class AdmissionService:
             return self._child_cancel
         return self._cancels.get(live.work.operation)
 
+    def _stop_child(self, live: _Live, execution_id: str = "") -> None:
+        """Stop *live*'s running execution: its task, else its operation's cancel hook."""
+        if live.cancel_cb is not None:
+            live.cancel_cb()
+            return
+        hook = self._cancel_hook_for(live)
+        exec_id = execution_id or str(live.work.extra.get("execution_id") or "")
+        if hook is not None and exec_id:
+            hook(replace(live.work, extra={**live.work.extra, "execution_id": exec_id}))
+
+    def _fail_closed(self, live: _Live, what: str, execution_id: str = "") -> None:
+        """A store write failed: end *live* in memory now; restart reconcile fixes the row."""
+        logger.warning(
+            "shared crew: %s write for %s failed; ending it", what, live.work.work_id, exc_info=True
+        )
+        self._scheduler.cancel_queued(live.work.work_id)
+        live.work = replace(live.work, state=S.FAILED, reason=ReasonCode.RUNTIME_ERROR)
+        self._stop_child(live, execution_id)
+        live.self_stopped = True
+        live.admitted.set()
+        live.ended.set()
+        self._maybe_release(live)
+
     # -- maintenance -------------------------------------------------------------
 
     async def tick(self, now: float | None = None) -> dict[str, int]:
@@ -1270,19 +1275,10 @@ class AdmissionService:
         at = self._clock() if now is None else now
         counts = {"expired": 0, "deadline": 0, "children": 0, "proven": 0, "parked": 0}
         counts["parked"] = await self._sweep_parked(at)
-        for unsettled, outcome in [(v, o) for v in self._live.values() if (o := v.unsettled)]:
-            unsettled.unsettled = None
-            await self._settle(unsettled, outcome)
         for ticket in self._scheduler.expire(at):
             live = self._live.get(ticket.work_id)
             if live is not None:
-                try:
-                    await self._end(
-                        live, S.EXPIRED, reason=ReasonCode.QUEUE_EXPIRED, removed=ticket
-                    )
-                except Exception:  # noqa: BLE001 -- re-queued; the next tick retries
-                    logger.warning("shared crew: expiring %s failed", ticket.work_id, exc_info=True)
-                    continue
+                await self._end(live, S.EXPIRED, reason=ReasonCode.QUEUE_EXPIRED)
                 counts["expired"] += 1
         for live in list(self._live.values()):
             work = live.work
@@ -1294,24 +1290,19 @@ class AdmissionService:
             ):
                 live.cancel_reason = ReasonCode.RUN_DEADLINE
                 counts["deadline"] += 1
-                if live.cancel_cb is not None:
-                    try:
-                        live.work = await self._store.advance(
-                            live.work, S.CANCELLING, reason=ReasonCode.RUN_DEADLINE
-                        )
-                    except (StaleRevision, InvalidTransition):
-                        pass
-                    live.cancel_cb()
-                else:
-                    hook = self._cancel_hook_for(live)
-                    if hook is not None:
-                        try:
-                            live.work = await self._store.advance(
-                                live.work, S.CANCELLING, reason=ReasonCode.RUN_DEADLINE
-                            )
-                        except (StaleRevision, InvalidTransition):
-                            pass
-                        hook(live.work)
+                if live.cancel_cb is None and self._cancel_hook_for(live) is None:
+                    continue
+                try:
+                    live.work = await self._store.advance(
+                        live.work, S.CANCELLING, reason=ReasonCode.RUN_DEADLINE
+                    )
+                except (StaleRevision, InvalidTransition):
+                    pass
+                except Exception:  # noqa: BLE001 -- the child is stopped regardless
+                    logger.warning(
+                        "shared crew: deadline write for %s failed", work.work_id, exc_info=True
+                    )
+                self._stop_child(live)
         for live in list(self._live.values()):
             probe = self._probe_for(live)
             if probe is None or live.cancel_cb is not None:
@@ -1590,9 +1581,6 @@ class AdmissionService:
         if live is not None or self._store is None:
             return live
         return await self._store.get(work_id)
-
-    def holds_capacity(self, work_id: str) -> bool:
-        return self._scheduler.is_active(work_id)
 
     async def list_work(
         self, *, session_key: str | None = None, budget_key: str | None = None, limit: int = 200

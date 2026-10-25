@@ -8,13 +8,13 @@ and ``GET /api/shared-crew/send-state?session_key=`` the session's send revision
 ``base_revision``, and ``GET /api/shared-crew/typing-lease?session_key=`` who
 holds the session's composer typing lease (the ``shared_crew.typing_lease``
 frame body).
-Both are reads of in-memory state for dashboard users; the existing auth
+Every one is a read of in-memory state for dashboard users; the existing auth
 middleware has already admitted the caller, and an app token is refused.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
 from aiohttp import web
 
@@ -26,65 +26,36 @@ from kiro_crew.shared_crew.send_race import send_race_for
 from kiro_crew.shared_crew.typing_lease import typing_lease_for
 
 
-def _refusal(request: web.Request) -> web.Response | None:
-    if not request.get("is_dashboard_user", False):
-        return web.json_response({"error": "dashboard users only", "code": "forbidden"}, status=403)
-    return None
+def _read(body: Callable[[Any, str], dict[str, Any]]) -> Callable[[web.Request], Any]:
+    """A GET handler that refuses a non-dashboard caller, reads ``session_key``, then answers *body*."""
+
+    async def handler(request: web.Request) -> web.Response:
+        if not request.get("is_dashboard_user", False):
+            return web.json_response(
+                {"error": "dashboard users only", "code": "forbidden"}, status=403
+            )
+        session_key = request.query.get("session_key", "")
+        if not session_key or len(session_key) > MAX_SESSION_KEY_LEN:
+            return web.json_response(
+                {"error": "session_key is required", "code": "invalid_session_key"}, status=400
+            )
+        return web.json_response(body(request.app["state"], session_key))
+
+    return handler
 
 
-def _session_key(request: web.Request) -> tuple[str, web.Response | None]:
-    raw = request.query.get("session_key", "")
-    if not raw or len(raw) > MAX_SESSION_KEY_LEN:
-        return "", web.json_response(
-            {"error": "session_key is required", "code": "invalid_session_key"}, status=400
-        )
-    return raw, None
-
-
-async def api_shared_crew_presence(request: web.Request) -> web.Response:
-    refused = _refusal(request)
-    if refused is not None:
-        return refused
-    session_key, bad = _session_key(request)
-    if bad is not None:
-        return bad
-    state: Any = request.app["state"]
-    return web.json_response(presence_frame(session_key, presence_for(state).entries(session_key)))
-
-
-async def api_shared_crew_decisions(request: web.Request) -> web.Response:
-    refused = _refusal(request)
-    if refused is not None:
-        return refused
-    session_key, bad = _session_key(request)
-    if bad is not None:
-        return bad
-    state: Any = request.app["state"]
-    items = [d.to_public_dict() for d in decisions_for(state).for_session(session_key)]
-    return web.json_response({"schema_version": SCHEMA_VERSION, "items": items})
-
-
-async def api_shared_crew_send_state(request: web.Request) -> web.Response:
-    refused = _refusal(request)
-    if refused is not None:
-        return refused
-    session_key, bad = _session_key(request)
-    if bad is not None:
-        return bad
-    state: Any = request.app["state"]
-    return web.json_response(send_race_for(state).state(session_key))
-
-
-async def api_shared_crew_typing_lease(request: web.Request) -> web.Response:
-    """Who holds the session's typing lease now (the ``shared_crew.typing_lease`` body)."""
-    refused = _refusal(request)
-    if refused is not None:
-        return refused
-    session_key, bad = _session_key(request)
-    if bad is not None:
-        return bad
-    state: Any = request.app["state"]
-    return web.json_response(typing_lease_for(state).state(session_key))
+api_shared_crew_presence = _read(
+    lambda state, key: presence_frame(key, presence_for(state).entries(key))
+)
+api_shared_crew_decisions = _read(
+    lambda state, key: {
+        "schema_version": SCHEMA_VERSION,
+        "items": [d.to_public_dict() for d in decisions_for(state).for_session(key)],
+    }
+)
+api_shared_crew_send_state = _read(lambda state, key: send_race_for(state).state(key))
+#: Who holds the session's typing lease now (the ``shared_crew.typing_lease`` body).
+api_shared_crew_typing_lease = _read(lambda state, key: typing_lease_for(state).state(key))
 
 
 def register(app: web.Application) -> None:

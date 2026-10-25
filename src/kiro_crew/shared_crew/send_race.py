@@ -29,8 +29,10 @@ Rules, in order, once no claim is pending:
 * a send with no ``base_revision`` (an app, a script, an old client) is not
   compared;
 * a send compares against the sends accepted after its base. Only another
-  principal's send makes it lose: one person's own tabs never race each other,
-  so a single operator's sessions behave exactly as before;
+  *person*'s send makes it lose, by the same rule the typing lease holds a
+  lease with (``typing_lease.same_person``): one person's own tabs, and a local
+  operator's own bootstrap subjects, never race each other, so a single
+  operator's sessions behave exactly as before;
 * a session with no accepted send since this process started accepts any base,
   and its next revision continues above the highest base it has seen, so a tab
   from before a restart still loses to a send accepted after it.
@@ -51,6 +53,7 @@ from typing import Any, Callable
 from kiro_crew.shared_crew.codec import SCHEMA_VERSION
 from kiro_crew.shared_crew.collab import FRAME_SEND_STATE
 from kiro_crew.shared_crew.contracts import Principal
+from kiro_crew.shared_crew.typing_lease import note_sent, same_person
 
 #: Sessions tracked at once; the least recently used idle one is dropped first.
 MAX_SESSIONS = 4096
@@ -144,10 +147,12 @@ class SendRaceRegistry:
         clock: Callable[[], float] = time.time,
         on_commit: Callable[[str, AcceptedSend], None] | None = None,
         settle_wait_seconds: float = SETTLE_WAIT_SECONDS,
+        owner_id: str = "",
     ) -> None:
         self._clock = clock
         self._on_commit = on_commit
         self._settle_wait = settle_wait_seconds
+        self._owner_id = owner_id
         self._sessions: OrderedDict[str, _Session] = OrderedDict()
 
     def _session(self, session_key: str) -> _Session:
@@ -168,10 +173,6 @@ class SendRaceRegistry:
                 return
             if self._sessions[key].pending is None:
                 del self._sessions[key]
-
-    def revision(self, session_key: str) -> int:
-        entry = self._sessions.get(session_key)
-        return entry.revision if entry is not None else 0
 
     def state(self, session_key: str) -> dict[str, Any]:
         """The whole-value send state of a session: the GET body and the frame body."""
@@ -246,13 +247,21 @@ class SendRaceRegistry:
             current.add_done_callback(lambda _task: self.release(claim))
         return Granted(claim)
 
-    @staticmethod
-    def _first_unseen(entry: _Session, principal: Principal, base: int) -> AcceptedSend | None:
-        """The earliest send by someone else accepted after *base*, or None."""
+    def _first_unseen(
+        self, entry: _Session, principal: Principal, base: int
+    ) -> AcceptedSend | None:
+        """The earliest send by someone else accepted after *base*, or None.
+
+        "Someone else" is the typing lease's own rule
+        (:func:`~kiro_crew.shared_crew.typing_lease.same_person`), so the subjects
+        that fold into one holder there fold into one sender here.
+        """
         # A base above the current revision comes from before a restart, so every
         # send accepted since is unseen.
         unseen = [a for a in entry.history if base > entry.revision or a.revision > base]
-        others = [a for a in unseen if a.principal.id != principal.id]
+        others = [
+            a for a in unseen if not same_person(a.principal, principal, owner_id=self._owner_id)
+        ]
         return others[0] if others else None
 
     def commit(self, claim: Claim, *, message_id: str = "") -> AcceptedSend:
@@ -313,7 +322,9 @@ def send_race_for(state: Any) -> SendRaceRegistry:
         frame = {"type": FRAME_SEND_STATE, **created[0].state(session_key)}
         state.broadcast_ws(FRAME_SEND_STATE, frame)
 
-    created.append(SendRaceRegistry(on_commit=_announce))
+    created.append(
+        SendRaceRegistry(on_commit=_announce, owner_id=str(getattr(state, "owner_id", "") or ""))
+    )
     state._shared_crew_send_race = created[0]
     return created[0]
 
@@ -371,18 +382,8 @@ def commit_request(request: Any, *, message_id: str = "") -> AcceptedSend | None
     accepted = send_race_for(state).commit(claim, message_id=message_id)
     if first:
         # The sender's typing lease ends with the send, for everyone at once.
-        from kiro_crew.shared_crew import typing_lease
-
         try:
-            typing_lease.note_sent(state, claim.session_key, claim.principal)
+            note_sent(state, claim.session_key, claim.principal)
         except Exception:
             pass
     return accepted
-
-
-def release_request(request: Any) -> None:
-    """Drop the request's claim if its send was not recorded. Safe to call twice."""
-    claim = request.get(CLAIM_REQUEST_KEY) if hasattr(request, "get") else None
-    if not isinstance(claim, Claim) or claim.result is not None:
-        return
-    send_race_for(request.app["state"]).release(claim)

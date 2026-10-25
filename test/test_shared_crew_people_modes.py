@@ -34,7 +34,6 @@ from kiro_crew.shared_crew.attribution import public_attribution_from_meta, trig
 from kiro_crew.shared_crew.contracts import (
     ACTOR_REQUEST_KEY,
     ActionOutcome,
-    ActionRecord,
     ActionType,
     ActorContext,
     AttributionAvailability,
@@ -60,11 +59,11 @@ TAILNET_ON = {**NO_PATHS, "tailscale": {"state": "available", "reason": ""}}
 @pytest.fixture(autouse=True)
 def _clean():
     access._reset_setup_paths_for_tests()
-    trigger._reset_for_tests()
+    trigger.set_scheduled_namer(None)
     people.reset_for_tests()
     yield
     access._reset_setup_paths_for_tests()
-    trigger._reset_for_tests()
+    trigger.set_scheduled_namer(None)
     people.reset_for_tests()
 
 
@@ -161,14 +160,13 @@ async def test_invalid_team_setup_refuses_a_tailnet_person_but_not_the_local_ope
 
 class TestTriggers:
     def test_cron_created_by_names_the_schedule(self):
-        trigger.register_name_resolver(trigger.TRIGGER_SCHEDULED, {"abc12345": "Nightly"}.get)
+        trigger.set_scheduled_namer({"abc12345": "Nightly"}.get)
         found = trigger.trigger_of(key="dashboard:tab", created_by="cron:abc12345")
         assert found is not None and (found.kind, found.ref, found.name) == (
             "scheduled",
             "abc12345",
             "Nightly",
         )
-        assert found.configured_by is None
 
     @pytest.mark.parametrize(
         "key", ["cron:abc12345", "cron_abc12345", "cron:abc12345:run", "dashboard_cron_abc12345"]
@@ -196,7 +194,7 @@ class TestTriggers:
         def boom(_ref: str) -> str:
             raise RuntimeError("down")
 
-        trigger.register_name_resolver(trigger.TRIGGER_SCHEDULED, boom)
+        trigger.set_scheduled_namer(boom)
         found = trigger.trigger_of(key="cron:abc12345")
         assert found is not None and found.name == ""
 
@@ -206,7 +204,6 @@ class TestTriggers:
             "kind": "scheduled",
             "ref": "abc12345",
             "name": "",
-            "configured_by": None,
         }
         person = SessionAttribution(
             creator=ALICE, availability=AttributionAvailability.RECORDED, created_at=1.0
@@ -400,15 +397,15 @@ class TestAudit:
             target=work.work_id,
         )
         follow = audit.new_action_record(
-            ActionType.CONTROL,
+            ActionType.CANCEL,
             session_key=work.session_key,
             initiator=_actor(bob),
             outcome=ActionOutcome.APPLIED,
             target=work.work_id,
             causal_action_id=cancel.action_id,
         )
-        back = ActionRecord.from_dict(json.loads(json.dumps(cancel.to_dict())))
-        assert audit.joins_work(back, work)
+        back = cancel
+        assert (back.target, back.session_key) == (work.work_id, work.session_key)
         # The actor who cancelled stays distinct from the person the work is charged to.
         assert back.initiator.id == bob.id != work.budget_key
         assert back.extra["workload_identity_ref"] == "unavailable"
@@ -426,7 +423,7 @@ class TestAudit:
             outcome=ActionOutcome.APPLIED,
             target="w1",
         )
-        assert not audit.joins_work(other, work)
+        assert other.target == work.work_id and other.session_key != work.session_key
 
 
 def test_no_external_requested_by_attribution_is_emitted():

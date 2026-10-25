@@ -11,8 +11,7 @@ Two rules carry the fairness guarantee and are encoded as data, not prose:
 * A rejected request was never accepted. ``REJECTED`` is reachable only from
   ``SUBMITTED`` and an :class:`AcceptedWork` can never hold it.
 * Capacity is released only when work leaves a :data:`CAPACITY_HOLDING` state
-  for a terminal one, and :meth:`AcceptedWork.release_allowed` additionally
-  requires the runtime and its descendants to be proven stopped.
+  for a terminal one and its runtime and descendants are proven stopped.
 """
 
 from __future__ import annotations
@@ -49,8 +48,6 @@ class OperationKind(str, enum.Enum):
     """Which entry point an admission request came from."""
 
     CHAT_TURN = "chat_turn"
-    SESSION_START = "session_start"
-    RESUME = "resume"
     SUBAGENT = "subagent"
     WORKFLOW = "workflow"
     TASK = "task"
@@ -90,9 +87,6 @@ TERMINAL: frozenset[OperationState] = frozenset(
 CAPACITY_HOLDING: frozenset[OperationState] = frozenset(
     {S.ADMITTED, S.RUNNING, S.CANCELLING, S.RECONCILING}
 )
-
-#: States in which the work counts against queue depth.
-QUEUE_HOLDING: frozenset[OperationState] = frozenset({S.QUEUED})
 
 TRANSITIONS: Mapping[OperationState, frozenset[OperationState]] = {
     S.SUBMITTED: frozenset({S.QUEUED, S.ADMITTED, S.REJECTED}),
@@ -232,14 +226,6 @@ class ResourceEstimate:
     def to_dict(self) -> dict[str, Any]:
         return {"slots": self.slots, "weight": self.weight}
 
-    @classmethod
-    def from_dict(cls, raw: object) -> ResourceEstimate:
-        data = require_mapping(raw, "estimate")
-        return cls(
-            slots=opt_int(data, "slots", minimum=1) or 1,
-            weight=opt_int(data, "weight", minimum=1) or 1,
-        )
-
 
 @dataclass(frozen=True)
 class AdmissionRequest:
@@ -287,27 +273,9 @@ class AdmissionRequest:
             "request_digest": self.request_digest,
         }
 
-    @classmethod
-    def from_dict(cls, raw: object) -> AdmissionRequest:
-        data = require_mapping(raw, "admission_request")
-        read_schema_version(data)
-        return cls(
-            idempotency_key=req_str(data, "idempotency_key"),
-            budget_key=req_str(data, "budget_key"),
-            session_key=req_str(data, "session_key"),
-            operation=req_enum(data, "operation", OperationKind),
-            submitted_at=req_float(data, "submitted_at"),
-            expires_at=req_float(data, "expires_at"),
-            policy_version=opt_str(data, "policy_version") or "",
-            parent_execution_id=opt_str(data, "parent_execution_id") or "",
-            estimate=ResourceEstimate.from_dict(data.get("estimate") or {}),
-            request_digest=opt_str(data, "request_digest") or "",
-        )
-
 
 class ContainmentKind(str, enum.Enum):
     SYSTEMD_SCOPE = "systemd_scope"
-    PROCESS_GROUP = "process_group"
     NONE = "none"
 
 
@@ -424,22 +392,6 @@ class AcceptedWork:
                 "malformed_record", "state", f"{self.state.value} work was never accepted"
             )
 
-    @property
-    def holds_capacity(self) -> bool:
-        return self.state in CAPACITY_HOLDING
-
-    def release_allowed(self) -> bool:
-        """Whether this work's capacity may be returned to the pool.
-
-        Terminal is necessary but not sufficient: work that ever held capacity
-        releases only once its runtime and every descendant are proven stopped.
-        """
-        if self.state not in TERMINAL:
-            return False
-        if self.runtime is None:
-            return True
-        return self.runtime.proven_stopped
-
     def advance(
         self,
         new_state: OperationState,
@@ -542,16 +494,6 @@ class ScopeUsage:
             "queue_limit": self.queue_limit,
         }
 
-    @classmethod
-    def from_dict(cls, raw: object) -> ScopeUsage:
-        data = require_mapping(raw, "usage")
-        return cls(
-            active=opt_int(data, "active") or 0,
-            queued=opt_int(data, "queued") or 0,
-            active_limit=opt_int(data, "active_limit"),
-            queue_limit=opt_int(data, "queue_limit"),
-        )
-
 
 @dataclass(frozen=True)
 class CapacityResponse:
@@ -583,25 +525,6 @@ class CapacityResponse:
             "queue_expiry_seconds": self.queue_expiry_seconds,
             "run_deadline_seconds": self.run_deadline_seconds,
         }
-
-    @classmethod
-    def from_dict(cls, raw: object) -> CapacityResponse:
-        data = require_mapping(raw, "capacity")
-        read_schema_version(data)
-        scope_raw = data.get("limiting_scope")
-        reason_raw = data.get("reason")
-        return cls(
-            principal=ScopeUsage.from_dict(data.get("principal") or {}),
-            crew=ScopeUsage.from_dict(data.get("crew") or {}),
-            enforcement=enum_or(data, "enforcement", EnforcementLevel, EnforcementLevel.NONE),
-            limiting_scope=(
-                None if scope_raw is None else req_enum(data, "limiting_scope", CapacityScope)
-            ),
-            reason=None if reason_raw is None else req_enum(data, "reason", ReasonCode),
-            retry_after_seconds=opt_int(data, "retry_after_seconds"),
-            queue_expiry_seconds=opt_int(data, "queue_expiry_seconds"),
-            run_deadline_seconds=opt_int(data, "run_deadline_seconds"),
-        )
 
 
 def error_body(
@@ -648,7 +571,6 @@ __all__ = [
     "Liveness",
     "OperationKind",
     "OperationState",
-    "QUEUE_HOLDING",
     "REASON_HTTP_STATUS",
     "ReasonCode",
     "ResourceEstimate",

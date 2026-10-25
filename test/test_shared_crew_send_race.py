@@ -39,7 +39,10 @@ from kiro_crew.shared_crew.contracts import (
     Transport,
     principal_id_for,
 )
+from kiro_crew.shared_crew.crew_mode import LOCAL_BOOTSTRAP_SUBJECTS
+from kiro_crew.shared_crew.identity import local_operator_principal
 from kiro_crew.shared_crew.send_race import Conflict, Granted, Replay, SendRaceRegistry
+from kiro_crew.shared_crew.typing_lease import same_person
 from kiro_crew.shared_crew.work_store import WorkStore
 from kiro_crew.taskq.store import TaskStore
 from kiro_crew.testing.clock import ManualClock
@@ -86,7 +89,7 @@ async def test_two_sends_on_one_revision_accept_exactly_one():
     assert isinstance(lost, Conflict)
     assert lost.winner == won
     assert lost.winner.principal.id == ALICE.id and lost.winner.message_id == "m-alice"
-    assert lost.current_revision == 1 == reg.revision("s")
+    assert lost.current_revision == 1 == reg.state("s")["revision"]
 
 
 @pytest.mark.asyncio
@@ -99,7 +102,7 @@ async def test_a_send_refused_for_another_reason_does_not_win_the_race():
     reg.release(first.claim)
     granted = await asyncio.wait_for(second, BOUND)
     assert isinstance(granted, Granted)
-    assert reg.revision("s") == 0
+    assert reg.state("s")["revision"] == 0
 
 
 @pytest.mark.asyncio
@@ -125,6 +128,25 @@ async def test_stale_and_reordered_submissions():
 
 
 @pytest.mark.asyncio
+async def test_one_operator_s_local_subjects_never_race_each_other():
+    """The race and the typing lease agree on who counts as one person.
+
+    Two machine-local bootstrap subjects are the one operator of this machine,
+    so the lease holds one lease across them and the race accepts a send under
+    either against a send the other made.
+    """
+    app, startup = (local_operator_principal(s) for s in LOCAL_BOOTSTRAP_SUBJECTS[:2])
+    assert app.id != startup.id and same_person(app, startup)
+    reg = _registry()
+    first = await reg.claim("s", principal=app, base_revision=0)
+    assert isinstance(first, Granted)
+    reg.commit(first.claim, message_id="from-app")
+    # The operator's other local token sends from a tab that still shows 0.
+    stale = await reg.claim("s", principal=startup, base_revision=0)
+    assert isinstance(stale, Granted)
+
+
+@pytest.mark.asyncio
 async def test_a_retry_of_the_winner_replays_and_accepts_nothing():
     reg = _registry()
     a = await reg.claim("s", principal=ALICE, base_revision=0, idempotency_key="k-1")
@@ -143,7 +165,7 @@ async def test_a_retry_of_the_winner_replays_and_accepts_nothing():
     reg.commit(b.claim, message_id="b")
     replay = await asyncio.wait_for(racing_retry, BOUND)
     assert isinstance(replay, Replay) and replay.accepted.message_id == "b"
-    assert reg.revision("s") == 2
+    assert reg.state("s")["revision"] == 2
     # The key is scoped to its principal: someone else's key never replays.
     other = await reg.claim("s", principal=ALICE, base_revision=2, idempotency_key="k-2")
     assert isinstance(other, Granted)
@@ -408,7 +430,7 @@ async def test_a_refused_send_gives_its_claim_back(dash_state):
                 client, "alice", {"slot": "s1", "message": "a", "base_revision": 0}
             )
             assert st1 == 409 and first["code"] == "relay_archive"
-            assert send_race.send_race_for(dash_state).revision("s1") == 0
+            assert send_race.send_race_for(dash_state).state("s1")["revision"] == 0
             assert send_race.send_race_for(dash_state)._sessions["s1"].pending is None
 
 
@@ -445,7 +467,7 @@ async def test_send_now_enters_admission_and_queues_without_steering(dash_state,
     work_ids = entry.queued_work_ids(slot._queue)
     assert len(work_ids) == 1
     assert installed._store.get_sync(work_ids[0]).state is OperationState.QUEUED
-    assert reg.revision("s1") == 2
+    assert reg.state("s1")["revision"] == 2
 
 
 @pytest.mark.asyncio

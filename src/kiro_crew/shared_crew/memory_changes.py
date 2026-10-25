@@ -103,7 +103,8 @@ def stamp_of(raw: object) -> dict[str, str] | None:
     }
 
 
-def _slot_for_session(state: Any, session_key: str) -> Any | None:
+def slot_for_session(state: Any, session_key: str) -> Any | None:
+    """The dashboard slot holding *session_key*, by slot key or effective key, else ``None``."""
     if not session_key or state is None:
         return None
     slots = getattr(state, "_slots", None)
@@ -118,7 +119,9 @@ def _slot_for_session(state: Any, session_key: str) -> Any | None:
         return None
     for candidate in list(slots.values()):
         try:
-            if effective_session_key(candidate) == session_key:
+            if getattr(candidate, "key", None) == session_key or (
+                effective_session_key(candidate) == session_key
+            ):
                 return candidate
         except Exception:  # noqa: BLE001 -- a broken slot names nobody
             continue
@@ -144,7 +147,7 @@ def writer_principal(request: Any, state: Any, session_key: str) -> Principal:
         principal = actor_of(request).principal
         if principal.kind is PrincipalKind.HUMAN:
             return principal
-    slot = _slot_for_session(state, session_key)
+    slot = slot_for_session(state, session_key)
     if slot is None:
         return Principal.unknown()
     return turn_initiator(getattr(slot, "messages", None))
@@ -259,7 +262,7 @@ def post_notice(state: Any, change: MemoryChange) -> bool:
     """
     payload = change.payload()
     appended = False
-    slot = _slot_for_session(state, change.session_key)
+    slot = slot_for_session(state, change.session_key)
     if slot is not None:
         try:
             slot.append(

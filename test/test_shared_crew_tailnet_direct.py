@@ -177,9 +177,9 @@ async def _get(
 
 def test_whois_names_the_owner_by_stable_user_id_and_never_the_sharer():
     body = _whois_body("alice@example.com", 21, "alice-laptop", KEY_B, node={"Sharer": 77})
-    peer = parse_whois(body, "100.64.0.5", 1, "localapi_unix")
+    peer = parse_whois(body)
     assert peer is not None
-    assert (peer.user_id, peer.login, peer.shared_in) == ("21", "alice@example.com", True)
+    assert (peer.user_id, peer.login) == ("21", "alice@example.com")
 
 
 @pytest.mark.parametrize(
@@ -196,7 +196,7 @@ def test_whois_names_the_owner_by_stable_user_id_and_never_the_sharer():
 def test_whois_without_a_stable_identity_names_nobody(mutate):
     body = _whois_body("alice@example.com", 21, "alice-laptop", KEY_B)
     mutate(body)
-    assert parse_whois(body, "100.64.0.5", 1, "x") is None
+    assert parse_whois(body) is None
 
 
 def test_status_keeps_only_tailnet_addresses_and_the_owner_login():
@@ -224,7 +224,7 @@ def test_status_keeps_only_tailnet_addresses_and_the_owner_login():
 
 
 def _peer(ip: str):
-    peer = parse_whois(PEERS[ip], ip, 1, "x")
+    peer = parse_whois(PEERS[ip])
     assert peer is not None
     return peer
 
@@ -238,7 +238,7 @@ def test_empty_allowlist_admits_only_the_owner():
 
 
 def test_owner_needs_both_the_stable_id_and_the_login():
-    impostor = parse_whois(_whois_body("owner@example.com", 12, "x", KEY_C), "100.64.0.8", 1, "x")
+    impostor = parse_whois(_whois_body("owner@example.com", 12, "x", KEY_C))
     assert impostor is not None
     assert admission_refusal(impostor, allowed_logins=(), owner=OWNER) == "login_not_allowed"
 
@@ -281,9 +281,7 @@ def test_unreadable_allowlist_admits_nobody_not_even_the_owner():
 
 def test_one_user_on_two_nodes_is_one_principal_named_by_display_name():
     laptop = _peer("100.64.0.5")
-    phone = parse_whois(
-        _whois_body("alice@example.com", 21, "alice-phone", KEY_C), "100.64.0.6", 1, "x"
-    )
+    phone = parse_whois(_whois_body("alice@example.com", 21, "alice-phone", KEY_C))
     assert phone is not None
     a, b = direct_principal(laptop), direct_principal(phone)
     assert a.id == b.id
@@ -291,7 +289,7 @@ def test_one_user_on_two_nodes_is_one_principal_named_by_display_name():
     assert a.provenance is Provenance.TAILSCALE_LISTENER
     assert a.display.name == "Alice A" and a.display.login == "alice@example.com"
     renamed = parse_whois(
-        _whois_body("alice@example.com", 21, "alice-laptop", KEY_B, display="Other"), "x", 1, "x"
+        _whois_body("alice@example.com", 21, "alice-laptop", KEY_B, display="Other")
     )
     assert renamed is not None and direct_principal(renamed).id == a.id
 
@@ -631,25 +629,14 @@ def _status_answer() -> Answer:
     )
 
 
-def test_flag_off_resolves_to_no_gate_and_never_asks_the_daemon():
+def test_resolve_reads_the_daemon_once_and_returns_an_active_gate():
     calls: list[int] = []
 
     def status() -> Answer:
         calls.append(1)
         return _status_answer()
 
-    off = tailnet_direct.resolve(
-        enabled=False,
-        port=PORT,
-        allowed_logins=(),
-        identity_unknown=False,
-        governance_pinned=False,
-        status_fn=status,
-    )
-    assert (off.state, off.reason, off.gate) == ("off", "disabled", None)
-    assert calls == []
     on = tailnet_direct.resolve(
-        enabled=True,
         port=PORT,
         allowed_logins=(),
         identity_unknown=False,
@@ -657,6 +644,7 @@ def test_flag_off_resolves_to_no_gate_and_never_asks_the_daemon():
         status_fn=status,
     )
     assert on.state == "active" and on.gate is not None and on.method == "localapi_unix"
+    assert calls == [1]
 
 
 @pytest.mark.parametrize(
@@ -678,7 +666,6 @@ def test_flag_off_resolves_to_no_gate_and_never_asks_the_daemon():
 )
 def test_unavailable_daemon_reports_a_reason(answer, reason):
     out = tailnet_direct.resolve(
-        enabled=True,
         port=PORT,
         allowed_logins=(),
         identity_unknown=False,

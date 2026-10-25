@@ -177,10 +177,6 @@ def capacity_note(reason: object) -> str:
     return f"This message did not start: Crew capacity ({label}). Try again later."
 
 
-def _reset_unadmitted_for_tests() -> None:
-    _UNADMITTED_RUNNING.clear()
-
-
 def admitted_work() -> str:
     return _ADMITTED_WORK.get()
 
@@ -465,7 +461,6 @@ async def run_channel_turn(
     charged to the bounded Unknown bucket and a monitor wake to automation.
     *refused* answers a turn that was refused or ended before it ran.
     """
-    budget = _gate.AUTOMATION_PRINCIPAL.id if automation else Principal.unknown().id
 
     async def _inside() -> T:
         token = _IN_CHANNEL_TURN.set(True)
@@ -474,21 +469,18 @@ async def run_channel_turn(
         finally:
             _IN_CHANNEL_TURN.reset(token)
 
-    admission = await admit_turn(
-        budget_key=budget,
+    reasons: list[ReasonCode | str | None] = []
+    result = await run_admitted(
+        _inside(),
         session_key=session_key,
         text=text,
+        budget_key=_gate.AUTOMATION_PRINCIPAL.id if automation else Principal.unknown().id,
         operation=OperationKind.CHANNEL_TURN,
+        refused=reasons.append,
     )
-    if admission is None:
-        return await _inside()
-    if admission.rejected:
-        return await refused(admission.reason)
-    coro = _inside()
-    try:
-        return await admission.run(coro)
-    except _gate.AdmissionEnded as ended:
-        return await refused(ended.work.reason)
+    if reasons:
+        return await refused(reasons[0])
+    return result  # type: ignore[return-value]
 
 
 async def run_slack_message(

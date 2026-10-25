@@ -20,7 +20,6 @@ from kiro_crew.shared_crew.admission import (
     CapacityResponse,
     CapacityScope,
     InvalidTransition,
-    Liveness,
     OperationKind,
     OperationState,
     ReasonCode,
@@ -51,7 +50,6 @@ from kiro_crew.shared_crew.contracts import (
     AuthSnapshot,
     Capabilities,
     CapabilityState,
-    CrewIdentity,
     DisplaySnapshot,
     EnforcementLevel,
     Principal,
@@ -147,7 +145,7 @@ class TestPrincipal:
 
 
 class TestActorAndCrew:
-    def test_actor_round_trip(self) -> None:
+    def test_actor_to_dict(self) -> None:
         actor = ActorContext(
             principal=ALICE,
             request_id="r1",
@@ -156,17 +154,9 @@ class TestActorAndCrew:
             auth=AuthSnapshot(token_subject="owner", is_dashboard_user=True, pin_scope="login"),
             parent_execution_id="e0",
         )
-        assert ActorContext.from_dict(actor.to_dict()) == actor
-
-    def test_actor_requires_known_transport(self) -> None:
-        raw = ActorContext(principal=ALICE, request_id="r", transport=Transport.HTTP).to_dict()
-        with pytest.raises(ContractError) as exc:
-            ActorContext.from_dict({**raw, "transport": "carrier_pigeon"})
-        assert exc.value.code == "unknown_enum_value"
-
-    def test_crew_identity_round_trip(self) -> None:
-        crew = CrewIdentity(crew_id="crew-1", workload_identity_ref="wl-1", profile_ref="prof")
-        assert CrewIdentity.from_dict(crew.to_dict()) == crew
+        body = actor.to_dict()
+        assert (body["transport"], body["parent_execution_id"]) == ("websocket", "e0")
+        assert body["auth"]["pin_scope"] == "login" and body["principal"]["id"] == ALICE.id
 
 
 class TestSessionAttribution:
@@ -201,7 +191,7 @@ class TestSessionAttribution:
 
 
 class TestActionRecord:
-    def test_round_trip_with_responder(self) -> None:
+    def test_to_dict_names_the_responder(self) -> None:
         rec = ActionRecord(
             action_id="a1",
             action_type=ActionType.APPROVAL,
@@ -212,17 +202,8 @@ class TestActionRecord:
             outcome=ActionOutcome.APPLIED,
             causal_action_id="a0",
         )
-        assert ActionRecord.from_dict(rec.to_dict()) == rec
-
-    def test_missing_initiator_is_unknown(self) -> None:
-        raw = {
-            "action_id": "a1",
-            "action_type": "message",
-            "session_key": "s",
-            "at": 1,
-            "outcome": "accepted",
-        }
-        assert ActionRecord.from_dict(raw).initiator.is_unknown
+        body = rec.to_dict()
+        assert body["responder"]["id"] == BOB.id and body["causal_action_id"] == "a0"
 
 
 class TestCapabilities:
@@ -239,13 +220,11 @@ class TestCapabilities:
             containment_level=EnforcementLevel.BEST_EFFORT,
             membership_link="tailscale_admin",
         )
-        assert Capabilities.from_dict(caps.to_dict()) == caps
+        assert caps.to_dict()["containment_level"] == "best_effort"
 
-    def test_arbitrary_link_refused_and_dropped(self) -> None:
+    def test_arbitrary_link_refused(self) -> None:
         with pytest.raises(ContractError):
             Capabilities(membership_link="https://evil.example")
-        read = Capabilities.from_dict({"membership_link": "https://evil.example"})
-        assert read.membership_link == ""
 
 
 class TestSessionQuery:
@@ -316,19 +295,6 @@ class TestStateMachine:
         with pytest.raises(InvalidTransition):
             _work().advance(OperationState.COMPLETED, expected_revision=0)
 
-    def test_release_requires_proven_stop(self) -> None:
-        alive = RuntimeOwnershipRef(execution_id="e1", liveness=Liveness.ALIVE)
-        work = _work(OperationState.RUNNING, runtime=alive)
-        assert work.holds_capacity
-        done = work.advance(OperationState.COMPLETED, expected_revision=0)
-        assert not done.release_allowed()
-        unknown_children = RuntimeOwnershipRef(
-            execution_id="e1", liveness=Liveness.STOPPED, descendants_alive=1
-        )
-        assert not replace(done, runtime=unknown_children).release_allowed()
-        stopped = RuntimeOwnershipRef(execution_id="e1", liveness=Liveness.STOPPED)
-        assert replace(done, runtime=stopped).release_allowed()
-
     def test_capacity_holding_states_are_not_terminal(self) -> None:
         assert not CAPACITY_HOLDING & TERMINAL
 
@@ -361,7 +327,7 @@ class TestAdmission:
             expires_at=2.0,
             parent_execution_id="e0",
         )
-        assert AdmissionRequest.from_dict(req.to_dict()) == req
+        assert req.to_dict()["parent_execution_id"] == "e0"
 
     def test_idempotency_scope_separates_principals_and_sessions(self) -> None:
         a = idempotency_scope(ALICE.id, "s1", "key-00000001")
@@ -393,7 +359,6 @@ class TestAdmission:
             reason=ReasonCode.PRINCIPAL_ACTIVE_LIMIT,
             retry_after_seconds=5,
         )
-        assert CapacityResponse.from_dict(cap.to_dict()) == cap
         assert "eta" not in str(cap.to_dict())
         body = error_body(ReasonCode.PRINCIPAL_ACTIVE_LIMIT, "busy", capacity=cap)
         assert body["code"] == "principal_active_limit" and body["error"] == "busy"

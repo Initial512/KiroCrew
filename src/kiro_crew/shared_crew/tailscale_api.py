@@ -6,7 +6,7 @@ Covers only what in-Crew invites need, against ``https://api.tailscale.com/api/v
 * ``GET /tailnet/-/keys/{keyId}`` to read the key's expiry;
 * ``POST /device/{deviceId}/device-invites`` (a JSON array of
   ``{email?, multiUse, allowExitNode}``), ``GET`` of the same path, and
-  ``GET`` / ``DELETE /device-invites/{id}`` plus ``POST .../resend``.
+  ``DELETE /device-invites/{id}`` plus ``POST .../resend``.
 
 The credential is a user-owned API access key. Tailscale refuses device-invite
 creation with an OAuth-client token, because a share belongs to a user. The key
@@ -287,9 +287,6 @@ class TailscaleApi:
         if not isinstance(body, list):
             raise TailscaleApiError(CODE_BAD_RESPONSE)
         return [parse_invite(r) for r in body]
-
-    async def get_invite(self, invite_id: str) -> DeviceInvite:
-        return parse_invite(await self._call("GET", f"/device-invites/{self._id(invite_id)}"))
 
     async def delete_invite(self, invite_id: str) -> None:
         await self._call("DELETE", f"/device-invites/{self._id(invite_id)}")

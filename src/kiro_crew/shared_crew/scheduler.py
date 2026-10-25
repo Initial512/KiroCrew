@@ -46,7 +46,7 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Callable, Iterable
+from typing import Callable
 
 from kiro_crew.shared_crew.admission import CapacityScope, ReasonCode, ScopeUsage
 
@@ -216,32 +216,6 @@ class FairScheduler:
                 self._forget_if_idle(ticket.budget_key)
             return ticket
 
-    def restore_queued(self, ticket: Ticket, *, parked: bool = False) -> None:
-        """Put back a ticket :meth:`cancel_queued` or :meth:`expire` took out.
-
-        For a terminal write that failed: the work is still queued, so its
-        ticket returns to its own place (by ``seq``) without a limit check, as
-        it was already counted. Nothing is dispatched here; the next release or
-        tick does that.
-        """
-        with self._lock:
-            if (
-                ticket.work_id in self._active
-                or ticket.work_id in self._queued
-                or ticket.work_id in self._parked
-            ):
-                return
-            p = self._principal(ticket.budget_key)
-            if parked:
-                self._parked[ticket.work_id] = ticket
-                p.parked += 1
-                return
-            index = sum(1 for t in p.queue if t.seq < ticket.seq)
-            p.queue.insert(index, ticket)
-            self._queued[ticket.work_id] = ticket
-            if ticket.budget_key not in self._ring:
-                self._ring.append(ticket.budget_key)
-
     def expire(self, now: float | None = None) -> tuple[Ticket, ...]:
         """Remove and return every queued ticket whose expiry has passed."""
         with self._lock:
@@ -332,14 +306,6 @@ class FairScheduler:
         with self._lock:
             return work_id in self._queued
 
-    def queue_position(self, work_id: str) -> int | None:
-        """0-based place in its principal's own queue, or None when not queued."""
-        with self._lock:
-            ticket = self._queued.get(work_id)
-            if ticket is None:
-                return None
-            return list(self._principals[ticket.budget_key].queue).index(ticket)
-
     def usage(self, budget_key: str) -> tuple[ScopeUsage, ScopeUsage]:
         """``(principal, crew)`` root usage with limits, for a capacity answer."""
         with self._lock:
@@ -358,11 +324,6 @@ class FairScheduler:
                 queue_limit=lim.crew_queue,
             )
             return principal, crew
-
-    def child_usage(self, budget_key: str) -> tuple[int, int]:
-        with self._lock:
-            p = self._principals.get(budget_key)
-            return (p.child_active if p else 0), self._crew_child_active
 
     def snapshot(self) -> dict[str, object]:
         """Counts for diagnostics. Principal ids are opaque digests already."""
@@ -387,10 +348,6 @@ class FairScheduler:
     def active_tickets(self) -> tuple[Ticket, ...]:
         with self._lock:
             return tuple(self._active.values())
-
-    def queued_tickets(self) -> tuple[Ticket, ...]:
-        with self._lock:
-            return tuple(sorted(self._queued.values(), key=lambda t: t.seq))
 
     # -- internals ----------------------------------------------------------
 
@@ -566,18 +523,6 @@ class FairScheduler:
             self._leave_ring(key)
 
 
-def starvation_bound_admissions(eligible_principals: int, quantum: int, max_weight: int) -> int:
-    """Admissions of others a continuously eligible principal can wait behind."""
-    return max(0, eligible_principals - 1) * (quantum + max_weight - 1)
-
-
-def tickets_by_principal(tickets: Iterable[Ticket]) -> dict[str, int]:
-    out: dict[str, int] = {}
-    for t in tickets:
-        out[t.budget_key] = out.get(t.budget_key, 0) + 1
-    return out
-
-
 __all__ = [
     "DEFAULT_QUANTUM",
     "Decision",
@@ -587,6 +532,4 @@ __all__ = [
     "SubmitResult",
     "Ticket",
     "WorkClass",
-    "starvation_bound_admissions",
-    "tickets_by_principal",
 ]

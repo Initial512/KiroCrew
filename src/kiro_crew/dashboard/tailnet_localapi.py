@@ -286,21 +286,9 @@ def status() -> Answer:
     return _ask("/localapi/v0/status?peers=false", ["status", "--json", "--peers=false"])
 
 
-def available_methods() -> list[str]:
-    """The methods this host could use right now, for diagnostics. No daemon call."""
-    methods: list[str] = []
-    if any(os.path.exists(p) and _root_owned_and_sealed(p) for p in _unix_socket_paths()):
-        methods.append(METHOD_LOCALAPI_UNIX)
-    if IS_MACOS and _macsys_port_and_token() is not None:
-        methods.append(METHOD_LOCALAPI_MACSYS)
-    methods.extend(method for _, method in cli_candidates())
-    return methods
-
-
 __all__ = [
     "Answer",
     "METHODS",
-    "available_methods",
     "cli_candidates",
     "status",
     "whois",

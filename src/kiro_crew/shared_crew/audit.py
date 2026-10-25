@@ -26,9 +26,12 @@ replaced them (:mod:`kiro_crew.shared_crew.memory_changes`).
 It never carries prompt text, message bodies, tool input, tokens or cookies,
 because :class:`ActionRecord` has no field for them.
 
-Causal join: ``action_id``, ``causal_action_id``, ``session_key``, ``turn_id``,
-``target`` (the work id for work actions) and the initiator id join a record to
-the accepted work and session it acted on; :func:`joins_work` checks that join.
+Causal join: ``action_id``, ``causal_action_id``, ``session_key``, ``target``
+(the work id for work actions) and the initiator id join a record to the
+accepted work and session it acted on. The actor side of that join is the
+record's own initiator, kept apart from the work's owner (``budget_key``): a
+collaborator may cancel work someone else started, and the record names who
+acted while the work names who started it.
 
 Write-failure rule: :func:`record_action` writes synchronously off the event
 loop with the log's fail-closed ``critical`` mode and returns whether the record
@@ -107,11 +110,8 @@ def new_action_record(
     initiator: ActorContext,
     outcome: ActionOutcome,
     target: str = "",
-    turn_id: str = "",
     responder: ActorContext | None = None,
-    runtime_ref: str = "",
     causal_action_id: str = "",
-    now: float | None = None,
     extra: dict[str, Any] | None = None,
 ) -> ActionRecord:
     """Build a record for an action *initiator* asked for.
@@ -130,30 +130,13 @@ def new_action_record(
         action_type=action_type,
         session_key=_clip(session_key),
         initiator=initiator.principal,
-        at=time.time() if now is None else now,
+        at=time.time(),
         outcome=outcome,
-        turn_id=_clip(turn_id),
         responder=None if responder is None else responder.principal,
-        runtime_ref=_clip(runtime_ref),
         causal_action_id=_clip(causal_action_id),
         correlation_id=_clip(initiator.correlation_id),
         target=_clip(target),
         extra=extra,
-    )
-
-
-def joins_work(record: ActionRecord, work: Any) -> bool:
-    """Whether *record* acted on accepted *work*: the same work id and session.
-
-    The actor side of the join is the record's own initiator, kept apart from
-    the work's owner (``budget_key``): a collaborator may cancel work someone
-    else started, and the record names who acted while the work names who
-    started it.
-    """
-    return (
-        bool(record.target)
-        and record.target == getattr(work, "work_id", None)
-        and record.session_key == getattr(work, "session_key", None)
     )
 
 

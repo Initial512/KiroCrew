@@ -149,12 +149,12 @@ def update_state(mutate: Any) -> dict[str, Any]:
 # ── display fields ──
 
 
-def clean_alias(raw: object) -> str:
-    """A display alias: printable, single-line, bounded. Never an identity."""
+def clean_alias(raw: object, limit: int = MAX_ALIAS_CHARS) -> str:
+    """Display text: printable, single-line, bounded to *limit*. Never an identity."""
     if not isinstance(raw, str):
         return ""
     text = "".join(ch for ch in raw if ch.isprintable()).strip()
-    return text[:MAX_ALIAS_CHARS]
+    return text[:limit]
 
 
 def email_hash(email: str) -> str:

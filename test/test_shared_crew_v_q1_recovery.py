@@ -58,7 +58,6 @@ async def test_cancelled_terminal_event_settles_cancelled(service, handler_admit
     [work] = await service.list_work(session_key="dashboard:stop-me")
     assert work.state is S.CANCELLED
     assert work.reason is ReasonCode.CANCELLED_BY_USER
-    assert work.release_allowed()
     assert service.capacity(work.budget_key).crew.active == 0
 
 

@@ -1,10 +1,9 @@
 """Which Shared Crew setup paths this Crew has, and what each reports.
 
 The People surface guides a person who has no shared-access path configured to
-one of the setup paths in :data:`SETUP_PATHS`. Each path reports the
-availability a source registered for it, and a path with no source reports
-``not_in_this_build``. :func:`note_tailnet` is the Tailscale source: the gateway
-calls it with the tailnet state it resolved at start.
+one of the setup paths in :data:`SETUP_PATHS`. Tailscale reports what
+:func:`note_tailnet` recorded from the tailnet state the gateway resolved at
+start; the other paths report ``not_in_this_build``.
 
 Every answer here is computed from state already in memory, so it is safe on
 the request path.
@@ -12,15 +11,11 @@ the request path.
 
 from __future__ import annotations
 
-import logging
 import threading
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 from kiro_crew.shared_crew.contracts import CapabilityState
-
-logger = logging.getLogger(__name__)
-
 
 # ── shared-access setup paths ──
 
@@ -32,7 +27,6 @@ SETUP_PATHS: tuple[str, ...] = (SETUP_TAILSCALE, SETUP_KIRO_LOGIN, SETUP_SYSTEMS
 REASON_NOT_IN_THIS_BUILD = "not_in_this_build"
 REASON_NOT_CONFIGURED = "not_configured"
 REASON_TAILNET_UNREACHABLE = "tailnet_unreachable"
-REASON_SOURCE_FAILED = "source_failed"
 #: Why a person reaching the Crew through ``tailscale serve`` cannot be named:
 #: the ``tailnet_proxy_proof.proof_support`` answers, mirrored here so this
 #: package does not import the dashboard. ``daemon_not_found`` is the one gap
@@ -58,31 +52,15 @@ class SetupPathState:
         return {"state": self.state.value, "reason": self.reason}
 
 
-SetupPathSource = Callable[[], SetupPathState]
-
-_SOURCES: dict[str, SetupPathSource] = {}
+_tailnet_answer: SetupPathState | None = None
 _LOCK = threading.Lock()
-
-
-def register_setup_path_source(path: str, source: SetupPathSource) -> None:
-    """Make *source* the answer for one setup path; a path registers once."""
-    if path not in SETUP_PATHS:
-        raise ValueError(f"unknown setup path {path!r}")
-    with _LOCK:
-        if path in _SOURCES:
-            raise ValueError(f"setup path {path!r} already has a source")
-        _SOURCES[path] = source
-
-
-def unregister_setup_path_source(path: str) -> None:
-    with _LOCK:
-        _SOURCES.pop(path, None)
 
 
 def _reset_setup_paths_for_tests() -> None:
     global _forwarded_attribution, _forwarded_inputs, _identity_config_unreadable, _direct_tailnet
+    global _tailnet_answer
     with _LOCK:
-        _SOURCES.clear()
+        _tailnet_answer = None
         _forwarded_attribution = ForwardedAttribution()
         _forwarded_inputs = (False, False)
         _identity_config_unreadable = False
@@ -159,12 +137,12 @@ def note_tailnet(
     read (``config.resolution.tailnet_identity_unknown``); ``crew_mode`` refuses
     team mode while it holds.
     """
-    global _forwarded_attribution, _forwarded_inputs, _identity_config_unreadable
+    global _forwarded_attribution, _forwarded_inputs, _identity_config_unreadable, _tailnet_answer
     answer = _tailnet_state(bool(enabled), str(host or ""), bool(identity_trust))
     gap = None if proof_gap is None else str(proof_gap)
     forwarded = _forwarded_state(bool(identity_trust), bool(loopback_only), gap)
     with _LOCK:
-        _SOURCES[SETUP_TAILSCALE] = lambda: answer
+        _tailnet_answer = answer
         _forwarded_attribution = forwarded
         _forwarded_inputs = (bool(identity_trust), bool(loopback_only))
         _identity_config_unreadable = bool(identity_config_unreadable)
@@ -238,24 +216,14 @@ def forwarded_attribution() -> ForwardedAttribution:
 
 
 def setup_paths_dict() -> dict[str, dict[str, str]]:
-    """Each setup path's availability, ``not_in_this_build`` when no source speaks."""
+    """Each setup path's availability; every path but Tailscale is ``not_in_this_build``."""
     with _LOCK:
-        sources = dict(_SOURCES)
-    out: dict[str, dict[str, str]] = {}
-    for path in SETUP_PATHS:
-        source = sources.get(path)
-        if source is None:
-            reason = REASON_NOT_CONFIGURED if path == SETUP_TAILSCALE else REASON_NOT_IN_THIS_BUILD
-            out[path] = SetupPathState(CapabilityState.UNAVAILABLE, reason).to_dict()
-            continue
-        try:
-            answer = source()
-            if not isinstance(answer, SetupPathState):
-                raise TypeError("setup path source returned a non-state")
-        except Exception:  # noqa: BLE001 -- a failed source claims nothing
-            logger.warning("setup path source %s failed", path, exc_info=True)
-            answer = SetupPathState(CapabilityState.UNAVAILABLE, REASON_SOURCE_FAILED)
-        out[path] = answer.to_dict()
+        tailnet = _tailnet_answer or SetupPathState(
+            CapabilityState.UNAVAILABLE, REASON_NOT_CONFIGURED
+        )
+    absent = SetupPathState(CapabilityState.UNAVAILABLE, REASON_NOT_IN_THIS_BUILD).to_dict()
+    out = {path: dict(absent) for path in SETUP_PATHS}
+    out[SETUP_TAILSCALE] = tailnet.to_dict()
     if tailnet_direct().active:
         # The direct tailnet listener is itself a Tailscale sharing path.
         out[SETUP_TAILSCALE] = SetupPathState(CapabilityState.AVAILABLE).to_dict()
@@ -272,9 +240,7 @@ __all__ = [
     "note_proof_gap",
     "note_tailnet",
     "note_tailnet_direct",
-    "register_setup_path_source",
     "setup_paths_dict",
     "tailnet_direct",
     "tailnet_identity_config_unreadable",
-    "unregister_setup_path_source",
 ]

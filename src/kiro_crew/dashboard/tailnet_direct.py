@@ -108,11 +108,7 @@ class DirectPeer:
     display_name: str
     node: str
     node_key: str
-    address: str
-    port: int
     tags: tuple[str, ...] = ()
-    shared_in: bool = False
-    method: str = tailnet_localapi.METHOD_NONE
     #: ``UserProfile.ProfilePicURL`` when it is a plain https URL; display only.
     profile_pic_url: str = ""
 
@@ -174,7 +170,7 @@ def _tailnet_ip(raw: object) -> str:
     return str(ip) if any(ip in net for net in _TAILNET_RANGES) else ""
 
 
-def parse_whois(data: object, address: str, port: int, method: str) -> DirectPeer | None:
+def parse_whois(data: object) -> DirectPeer | None:
     """The :class:`DirectPeer` in a daemon ``whois`` answer, or ``None``.
 
     The user is ``UserProfile`` (the node's owner); ``Node.Sharer`` only marks
@@ -209,11 +205,7 @@ def parse_whois(data: object, address: str, port: int, method: str) -> DirectPee
         display_name=_display(profile.get("DisplayName")) or login,
         node=name.rstrip(".").lower(),
         node_key=node_key,
-        address=address,
-        port=port,
         tags=tags,
-        shared_in=bool(_user_id(node.get("Sharer"))),
-        method=method,
         profile_pic_url=_picture(profile.get("ProfilePicURL")),
     )
 
@@ -253,16 +245,14 @@ def parse_status(data: object) -> SelfNode | None:
 
 
 def _split_allowlist(allowed: tuple[str, ...]) -> tuple[frozenset[str], frozenset[str]]:
+    """Allowlist entries as lower-cased logins and ``tag:<name>`` tags."""
     logins: set[str] = set()
     tags: set[str] = set()
     for entry in allowed:
-        value = entry.strip()
+        value = entry.strip().lower() if isinstance(entry, str) else ""
         if not value:
             continue
-        if value.lower().startswith("tag:"):
-            tags.add(value.lower())
-        else:
-            logins.add(value.lower())
+        (tags if value.startswith("tag:") else logins).add(value)
     return frozenset(logins), frozenset(tags)
 
 
@@ -294,11 +284,7 @@ def admission_refusal(
         if tags and any(t.lower() in tags for t in peer.tags):
             return None
         return REFUSE_TAGGED
-    if (
-        owner.user_id
-        and peer.user_id == owner.user_id
-        and peer.login.lower() == owner.login.lower()
-    ):
+    if is_owner(peer, owner):
         return None
     if login_allowed(peer.login, tuple(sorted(logins))):
         return None
@@ -370,7 +356,6 @@ class DirectGate:
     clock: Callable[[], float] = time.monotonic
     _cache: OrderedDict[tuple[str, int], _CacheEntry] = field(default_factory=OrderedDict)
     _lock: threading.Lock = field(default_factory=threading.Lock)
-    last_method: str = tailnet_localapi.METHOD_NONE
 
     @property
     def addresses(self) -> frozenset[str]:
@@ -391,12 +376,10 @@ class DirectGate:
                 return hit.peer, hit.reason or self._refusal(hit.peer)
             previous = hit.peer if hit is not None else None
         answer = self.whois_fn(f"{_host_for_whois(address)}:{port}")
-        peer = parse_whois(answer.data, address, port, answer.method)
+        peer = parse_whois(answer.data)
         reason = "" if peer is not None else REFUSE_WHOIS_FAILED
-        if peer is not None:
-            self.last_method = answer.method
-            if previous is not None and previous.node_key != peer.node_key:
-                peer, reason = None, REFUSE_NODE_CHANGED
+        if peer is not None and previous is not None and previous.node_key != peer.node_key:
+            peer, reason = None, REFUSE_NODE_CHANGED
         ttl = WHOIS_TTL_SECS if answer.data is not None else WHOIS_FAILURE_TTL_SECS
         with self._lock:
             self._cache[key] = _CacheEntry(self.clock() + ttl, peer, reason)
@@ -425,8 +408,6 @@ class DirectGate:
             or ""
         )
         if not reason:
-            if peer.user_id:
-                tailnet_live_allowlist.note_admitted(peer.login, peer.user_id)
             return ""
         if (
             reason == REFUSE_NOT_ALLOWED
@@ -571,7 +552,6 @@ class DirectResolution:
 
 def resolve(
     *,
-    enabled: bool,
     port: int,
     allowed_logins: tuple[str, ...],
     identity_unknown: bool,
@@ -579,8 +559,6 @@ def resolve(
     status_fn: Callable[[], tailnet_localapi.Answer] = tailnet_localapi.status,
 ) -> DirectResolution:
     """Read the daemon once and decide whether the direct listener runs. Blocking."""
-    if not enabled:
-        return DirectResolution(STATE_OFF, REASON_DISABLED)
     if governance_pinned:
         return DirectResolution(STATE_UNAVAILABLE, REASON_GOVERNANCE_PINNED)
     answer = status_fn()
@@ -599,7 +577,6 @@ def resolve(
         allowed_logins=allowed_logins,
         identity_unknown=identity_unknown,
     )
-    gate.last_method = answer.method
     return DirectResolution(STATE_ACTIVE, gate=gate, method=answer.method)
 
 

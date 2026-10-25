@@ -21,9 +21,7 @@ from kiro_crew.shared_crew.contracts import ActorContext, Principal
 @pytest.fixture
 def named_schedule(monkeypatch):
     monkeypatch.setattr(
-        trigger,
-        "_RESOLVERS",
-        {trigger.TRIGGER_SCHEDULED: lambda ref: "nightly-digest" if ref == "abc12345" else ""},
+        trigger, "_namer", lambda ref: "nightly-digest" if ref == "abc12345" else ""
     )
 
 
@@ -39,7 +37,6 @@ def test_cron_tab_and_catalog_name_the_schedule(key):
         "kind": "scheduled",
         "ref": "abc12345",
         "name": "nightly-digest",
-        "configured_by": None,
     }
     assert attribution.public_attribution_of_slot(slot).get("trigger") == expected
     assert attribution.public_attribution_from_meta({}, key=key).get("trigger") == expected
@@ -53,7 +50,6 @@ def test_cron_origin_without_a_job_ref_still_names_a_schedule():
         "kind": "scheduled",
         "ref": "",
         "name": "",
-        "configured_by": None,
     }
 
 

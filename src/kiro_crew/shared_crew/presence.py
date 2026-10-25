@@ -187,10 +187,6 @@ class PresenceRegistry:
             self._expire_locked(self._clock())
             return self._fold_locked(session_key)
 
-    def connection_count(self) -> int:
-        with self._lock:
-            return len(self._conns)
-
     def _expire_locked(self, now: float) -> list[str]:
         stale = [cid for cid, c in self._conns.items() if now - c.refreshed >= self._ttl]
         sessions = []

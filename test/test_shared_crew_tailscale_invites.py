@@ -444,7 +444,7 @@ async def test_accept_from_another_account_uses_the_accepting_login(fake, config
     assert "ann.personal@gmail.example" in _logins(config_file)
     assert "ann@work.example" not in _logins(config_file)
     assert tailnet.login_allowed("ann@work.example", (OWNER_LOGIN,)) is False
-    assert invites.member_for_login("ann.personal@gmail.example")["alias"] == "Ann"
+    assert invites.members_by_login()["ann.personal@gmail.example"]["alias"] == "Ann"
 
 
 @pytest.mark.asyncio

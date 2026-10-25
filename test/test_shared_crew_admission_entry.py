@@ -179,7 +179,7 @@ async def test_background_run_starts_now_or_is_refused_and_settles_by_probe(serv
     runs["r1"].status = "completed"
     assert (await service.tick())["children"] == 1
     assert (await service.current_work(adm.work.work_id)).state is S.COMPLETED
-    assert not service.holds_capacity(adm.work.work_id)
+    assert not service._scheduler.is_active(adm.work.work_id)
 
 
 def test_subagent_probe_reads_manager_then_queue():

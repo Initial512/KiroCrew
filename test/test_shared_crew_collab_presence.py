@@ -94,7 +94,7 @@ def test_entry_expires_without_refresh(registry, clock):
 
     clock.now += 1
     assert registry.entries("s1") == []
-    assert registry.connection_count() == 0
+    assert len(registry._conns) == 0
 
 
 def test_sweep_reports_the_sessions_it_emptied(registry, clock):
@@ -154,7 +154,7 @@ def test_registry_is_bounded_and_never_evicts_a_live_entry(clock):
     registry.report("tab-2", BOB, "s1", Activity.VIEWING)
     refused = registry.report("tab-3", BOB, "s1", Activity.VIEWING)
     assert refused.reason == REFUSED_FULL
-    assert registry.connection_count() == 2
+    assert len(registry._conns) == 2
 
 
 def test_frame_parser_reads_only_session_and_activity():

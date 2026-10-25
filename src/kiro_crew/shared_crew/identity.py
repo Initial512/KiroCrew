@@ -84,7 +84,6 @@ def tailnet_principal(
     node: str,
     provenance: Provenance,
     *,
-    user_id: str = "",
     display_name: str = "",
     tagged: bool = False,
 ) -> Principal:
@@ -93,9 +92,9 @@ def tailnet_principal(
     A person is keyed by their login, so every device, tab and transport they
     use maps to one id and one budget. The login is the one key both verified
     transports have: ``tailscale serve`` names only the login, while the direct
-    listener's ``whois`` also names a stable user id. *user_id* is therefore an
-    alias, never the key: keying by it would give one person a second budget on
-    the listener. The login is also the allowlist key. An ACL-tagged node reports the same
+    listener's ``whois`` also names a stable user id, which stays an alias and
+    is never read here, because keying by it would give one person a second
+    budget on the listener. The login is also the allowlist key. An ACL-tagged node reports the same
     ``tagged-devices`` login as every other tagged node, so it is a ``machine``
     keyed by its node name instead, and two tagged nodes never share a budget
     or a byline. A display name is a label only and never part of the key.
@@ -132,7 +131,6 @@ def direct_principal(peer: DirectPeer) -> Principal:
         peer.login,
         peer.node,
         Provenance.TAILSCALE_LISTENER,
-        user_id=peer.user_id,
         display_name=peer.display_name,
         tagged=peer.tagged,
     )

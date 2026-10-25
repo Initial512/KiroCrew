@@ -243,16 +243,7 @@ def _composer_locked_answer(
     body = typing_lease.refuse_if_locked(state, slot.key, actor_of(request).principal)
     if body is None:
         return None
-    return web.json_response(
-        {
-            "error": body["error"],
-            "code": body["code"],
-            "session_key": body["session_key"],
-            "holder": body["holder"],
-            "lease": body["lease"],
-        },
-        status=409,
-    )
+    return web.json_response(body, status=409)
 
 
 async def _settle_send_race(
@@ -281,17 +272,7 @@ async def _settle_send_race(
         idempotency_key=admission_entry.explicit_idempotency_key(request),
     )
     if isinstance(result, send_race.Conflict):
-        lost = send_race.conflict_body(result, session_key=slot.key)
-        return web.json_response(
-            {
-                "error": lost["error"],
-                "code": lost["code"],
-                "session_key": lost["session_key"],
-                "current_revision": lost["current_revision"],
-                "winner": lost["winner"],
-            },
-            status=409,
-        )
+        return web.json_response(send_race.conflict_body(result, session_key=slot.key), status=409)
     if isinstance(result, send_race.Replay):
         recorded = await admission_entry.chat_replay(
             request, session_key=effective_session_key(slot), slot_key=slot.key, message=message

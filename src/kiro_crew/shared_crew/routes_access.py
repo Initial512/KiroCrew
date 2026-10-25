@@ -23,7 +23,7 @@ from typing import Any
 from aiohttp import WSCloseCode, web
 
 from kiro_crew.shared_crew import access_set, host_power
-from kiro_crew.shared_crew.routes_invites import WS_ACTOR_KEY, _actor, _owner_refusal
+from kiro_crew.shared_crew.routes_invites import WS_ACTOR_KEY, _actor, _error, _owner_refusal
 
 logger = logging.getLogger(__name__)
 
@@ -33,10 +33,6 @@ APPROVE_PATH = f"{BASE}/waiting/{{user_id}}/approve"
 DISMISS_PATH = f"{BASE}/waiting/{{user_id}}/dismiss"
 APPROVED_PATH = f"{BASE}/approved/{{user_id}}"
 _USER_ID_RE = re.compile(r"\A[1-9][0-9]{0,19}\Z")
-
-
-def _error(status: int, code: str) -> web.Response:
-    return web.json_response({"error": code, "code": code}, status=status)
 
 
 def _user_id(request: web.Request) -> str:

@@ -559,17 +559,6 @@ class SliceManager:
                 names.append(name)
         return names
 
-    def stop(self, slice_name: str) -> bool:
-        """Stop *slice_name* (tests and cleanup). Its scopes stop with it."""
-        systemctl = self._bin()
-        self.forget(slice_name)
-        if systemctl is None:
-            return False
-        try:
-            return self._runner([systemctl, "--user", "stop", slice_name]).returncode == 0
-        except (OSError, subprocess.TimeoutExpired):
-            return False
-
 
 async def prepare_slices(
     slices: SliceManager | None, budget_key: str, lim: EffectiveLimits, report: ContainmentReport
@@ -639,10 +628,6 @@ def install_slice_manager(manager: SliceManager | None) -> None:
     _ACTIVE_SLICES = manager
 
 
-def current_scope_principal() -> str | None:
-    return _SCOPE_PRINCIPAL.get()
-
-
 @contextlib.contextmanager
 def principal_scope(principal_id: str | None) -> Iterator[None]:
     """Spawns made inside this block land in *principal_id*'s slice."""
@@ -709,7 +694,6 @@ __all__ = [
     "SliceManager",
     "classify_probe_reason",
     "create_task_in_scope",
-    "current_scope_principal",
     "install_slice_manager",
     "instance_slice_name",
     "principal_scope",

@@ -143,8 +143,6 @@ export type CapabilityReason =
 
 export type OperationKind =
   | 'chat_turn'
-  | 'session_start'
-  | 'resume'
   | 'subagent'
   | 'workflow'
   | 'task'

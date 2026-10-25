@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
-from typing import Any, Awaitable, Callable, Coroutine
+from typing import Any, Callable, Coroutine
 
 from kiro_crew.shared_crew import admission_gate as _gate
 from kiro_crew.shared_crew.admission import (
@@ -223,28 +223,6 @@ def admission_headers(admission: _gate.Admission) -> dict[str, str]:
     return {WORK_ID_HEADER: admission.work.work_id, WORK_STATE_HEADER: admission.work.state.value}
 
 
-async def run_admitted_turn(
-    admission: _gate.Admission,
-    coro: Coroutine[Any, Any, Any],
-    *,
-    revalidate: Callable[[], Awaitable[ReasonCode | None]] | None = None,
-    on_ended: Callable[[AcceptedWork], None] | None = None,
-) -> Any:
-    """Run a turn through its admission; an unstarted end is reported, not raised."""
-    try:
-        return await admission.run(coro, revalidate=revalidate)
-    except _gate.AdmissionEnded as ended:
-        logger.info(
-            "shared crew: turn %s ended before it ran (%s, %s)",
-            ended.work.work_id,
-            ended.work.state.value,
-            ended.work.reason.value if ended.work.reason else "",
-        )
-        if on_ended is not None:
-            on_ended(ended.work)
-        return None
-
-
 async def admitted_chat_turn(
     slot_key: str,
     admission: _gate.Admission,
@@ -266,9 +244,16 @@ async def admitted_chat_turn(
         return None if still_live() else ReasonCode.CANCELLED_BY_USER
 
     try:
-        return await run_admitted_turn(
-            admission, turn, revalidate=_revalidate, on_ended=lambda _w: on_ended()
+        return await admission.run(turn, revalidate=_revalidate)
+    except _gate.AdmissionEnded as ended:
+        logger.info(
+            "shared crew: turn %s ended before it ran (%s, %s)",
+            ended.work.work_id,
+            ended.work.state.value,
+            ended.work.reason.value if ended.work.reason else "",
         )
+        on_ended()
+        return None
     finally:
         mark_admission_pending(slot_key, False)
 
@@ -573,7 +558,6 @@ __all__ = [
     "admit_chat_turn",
     "admit_subagent",
     "mark_admission_pending",
-    "run_admitted_turn",
     "subagent_cancel",
     "subagent_probe",
 ]

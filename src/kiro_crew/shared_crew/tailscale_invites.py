@@ -278,11 +278,6 @@ def members_by_login() -> dict[str, dict[str, Any]]:
     }
 
 
-def member_for_login(login: str) -> Optional[dict[str, Any]]:
-    """The display record bound to *login*, for People rows."""
-    return members_by_login().get(login.strip().lower())
-
-
 # ── create, resend ──
 
 

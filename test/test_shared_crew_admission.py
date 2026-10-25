@@ -10,9 +10,11 @@ from __future__ import annotations
 import asyncio
 import subprocess
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
+from kiro_crew.config import sections_shared_crew
 from kiro_crew.config.sections_shared_crew import (
     SharedCrewConfig,
     effective_limits,
@@ -81,8 +83,10 @@ def _open(path: Path, clock: ManualClock) -> WorkStore:
 
 def _service(store, clock, *, report=None, liveness=None, child_probe=None, **cfg):
     raw = {"admission_enabled": True, "principal_concurrency": 2, "crew_concurrency": 3}
+    fixed = {k.upper(): cfg.pop(k) for k in list(cfg) if hasattr(sections_shared_crew, k.upper())}
     raw.update(cfg)
-    limits = effective_limits(shared_crew_config_from(raw), auto_crew_concurrency=8)
+    with patch.dict(sections_shared_crew.__dict__, fixed):
+        limits = effective_limits(shared_crew_config_from(raw), auto_crew_concurrency=8)
     runner = _Runner()
     svc = ag.AdmissionService(
         store,
@@ -151,12 +155,12 @@ async def test_admit_run_complete_release_and_durable_record(tmp_path, clock):
     runner = asyncio.ensure_future(adm.run(gate.body()))
     await _bounded(gate.started.wait())
     assert store.get_sync(adm.work.work_id).state is S.RUNNING
-    assert svc.holds_capacity(adm.work.work_id)
+    assert svc._scheduler.is_active(adm.work.work_id)
     gate.release.set()
     assert await _bounded(runner) == "done"
     final = store.get_sync(adm.work.work_id)
     assert final.state is S.COMPLETED and final.runtime.proven_stopped
-    assert not svc.holds_capacity(adm.work.work_id)
+    assert not svc._scheduler.is_active(adm.work.work_id)
     # The principal slice was sized off-loop before the work ran.
     assert any("set-property" in c for c in svc.runner.calls)
 
@@ -269,7 +273,7 @@ async def test_revalidation_refusal_cancels_before_start(tmp_path, clock):
         await _bounded(adm.run(gate.body(), revalidate=revoked))
     assert ended.value.work.state is S.CANCELLED
     assert ended.value.work.reason is ReasonCode.GRANT_REVOKED
-    assert gate.runs == 0 and not svc.holds_capacity(adm.work.work_id)
+    assert gate.runs == 0 and not svc._scheduler.is_active(adm.work.work_id)
 
 
 @pytest.mark.asyncio
@@ -317,12 +321,12 @@ async def test_cancel_queued_and_running_with_revision_checks(tmp_path, clock):
     current = svc.live_work(running.work.work_id)
     nxt = await svc.cancel(current.work_id, expected_revision=current.revision)
     assert nxt.state is S.CANCELLING
-    assert svc.holds_capacity(current.work_id)  # not freed until the run stopped
+    assert svc._scheduler.is_active(current.work_id)  # not freed until the run stopped
     with pytest.raises(asyncio.CancelledError):
         await _bounded(task)
     final = store.get_sync(current.work_id)
     assert final.state is S.CANCELLED and final.reason is ReasonCode.CANCELLED_BY_USER
-    assert not svc.holds_capacity(current.work_id)
+    assert not svc._scheduler.is_active(current.work_id)
     with pytest.raises(ag.InvalidTransition):
         await svc.cancel(current.work_id, expected_revision=final.revision)
 
@@ -343,7 +347,7 @@ async def test_run_deadline_cancels_and_releases(tmp_path, clock):
         await _bounded(task)
     final = store.get_sync(adm.work.work_id)
     assert (final.state, final.reason) == (S.CANCELLED, ReasonCode.RUN_DEADLINE)
-    assert not svc.holds_capacity(adm.work.work_id)
+    assert not svc._scheduler.is_active(adm.work.work_id)
 
 
 @pytest.mark.asyncio
@@ -483,10 +487,10 @@ async def test_children_inherit_initiator_and_hold_root_until_stopped(tmp_path, 
     await _bounded(task)
     # The root ended but its child still runs: the root's slot is not free yet.
     assert store.get_sync(root.work.work_id).state is S.COMPLETED
-    assert svc.holds_capacity(root.work.work_id)
+    assert svc._scheduler.is_active(root.work.work_id)
     states["sub1"] = S.COMPLETED
     assert (await svc.tick())["children"] == 1
-    assert not svc.holds_capacity(root.work.work_id)
+    assert not svc._scheduler.is_active(root.work.work_id)
     assert store.get_sync(child.work.work_id).state is S.COMPLETED
 
 

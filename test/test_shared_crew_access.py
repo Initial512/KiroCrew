@@ -11,14 +11,8 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from kiro_crew.shared_crew import access
 from kiro_crew.shared_crew import capabilities as caps_mod
-from kiro_crew.shared_crew.access import (
-    SetupPathState,
-    note_tailnet,
-    register_setup_path_source,
-    setup_paths_dict,
-)
+from kiro_crew.shared_crew.access import note_tailnet, setup_paths_dict
 from kiro_crew.shared_crew.capabilities import aggregate_capabilities
-from kiro_crew.shared_crew.contracts import CapabilityState
 from kiro_crew.shared_crew.routes_capabilities import CAPABILITIES_PATH, register
 
 
@@ -57,28 +51,6 @@ class TestSetupPaths:
         """``tailscale serve`` set up by hand plus an allowlist is sharing."""
         note_tailnet(enabled=False, host="", identity_trust=True)
         assert setup_paths_dict()["tailscale"] == {"state": "available", "reason": ""}
-
-    def test_a_registered_source_speaks_for_its_path(self) -> None:
-        register_setup_path_source("kiro_login", lambda: SetupPathState(CapabilityState.AVAILABLE))
-        assert setup_paths_dict()["kiro_login"] == {"state": "available", "reason": ""}
-        with pytest.raises(ValueError):
-            register_setup_path_source(
-                "kiro_login", lambda: SetupPathState(CapabilityState.AVAILABLE)
-            )
-        with pytest.raises(ValueError):
-            register_setup_path_source(
-                "carrier_pigeon", lambda: SetupPathState(CapabilityState.AVAILABLE)
-            )
-
-    def test_a_failing_source_claims_nothing(self) -> None:
-        def boom() -> SetupPathState:
-            raise RuntimeError("down")
-
-        register_setup_path_source("systems_manager", boom)
-        assert setup_paths_dict()["systems_manager"] == {
-            "state": "unavailable",
-            "reason": "source_failed",
-        }
 
 
 # ── the capabilities payload ──

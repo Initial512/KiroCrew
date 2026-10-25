@@ -26,11 +26,8 @@ from kiro_crew.shared_crew.codec import (
     enum_or,
     merge_extra,
     opt_float,
-    opt_int,
     opt_str,
     read_schema_version,
-    req_enum,
-    req_float,
     req_str,
     require_mapping,
     split_extra,
@@ -224,10 +221,8 @@ class Transport(str, enum.Enum):
     CHANNEL = "channel"
     CRON = "cron"
     SUBAGENT = "subagent"
-    TASKRUNNER = "taskrunner"
     WORKFLOW = "workflow"
     REMOTE = "remote"
-    CLI = "cli"
     INTERNAL = "internal"
 
 
@@ -250,16 +245,6 @@ class AuthSnapshot:
             "is_dashboard_user": self.is_dashboard_user,
             "pin_scope": self.pin_scope,
         }
-
-    @classmethod
-    def from_dict(cls, raw: object) -> AuthSnapshot:
-        data = require_mapping(raw, "auth")
-        return cls(
-            token_subject=opt_str(data, "token_subject") or "",
-            app=opt_str(data, "app") or "",
-            is_dashboard_user=data.get("is_dashboard_user") is True,
-            pin_scope=opt_str(data, "pin_scope") or "",
-        )
 
 
 @dataclass(frozen=True)
@@ -285,52 +270,13 @@ class ActorContext:
             "parent_execution_id": self.parent_execution_id,
         }
 
-    @classmethod
-    def from_dict(cls, raw: object) -> ActorContext:
-        data = require_mapping(raw, "actor")
-        read_schema_version(data)
-        return cls(
-            principal=Principal.from_dict(data.get("principal")),
-            request_id=req_str(data, "request_id"),
-            transport=req_enum(data, "transport", Transport),
-            correlation_id=opt_str(data, "correlation_id") or "",
-            auth=AuthSnapshot.from_dict(data.get("auth") or {}),
-            parent_execution_id=opt_str(data, "parent_execution_id") or "",
-        )
+    """Whether a session's creator is known."""
 
-
-@dataclass(frozen=True)
-class CrewIdentity:
-    """The Crew deployment as a workload, distinct from any human.
-
-    Fields are references, never credentials, so the record is safe in a
-    browser payload.
-    """
-
-    crew_id: str
-    workload_identity_ref: str = ""
-    synthetic_identity_ref: str = ""
-    profile_ref: str = ""
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "schema_version": SCHEMA_VERSION,
-            "crew_id": self.crew_id,
-            "workload_identity_ref": self.workload_identity_ref,
-            "synthetic_identity_ref": self.synthetic_identity_ref,
-            "profile_ref": self.profile_ref,
-        }
-
-    @classmethod
-    def from_dict(cls, raw: object) -> CrewIdentity:
-        data = require_mapping(raw, "crew")
-        read_schema_version(data)
-        return cls(
-            crew_id=req_str(data, "crew_id"),
-            workload_identity_ref=opt_str(data, "workload_identity_ref") or "",
-            synthetic_identity_ref=opt_str(data, "synthetic_identity_ref") or "",
-            profile_ref=opt_str(data, "profile_ref") or "",
-        )
+    RECORDED = "recorded"
+    #: The session predates attribution; the creator displays as Unattributed.
+    LEGACY_MISSING = "legacy_missing"
+    #: Attribution was on but no principal could be established at creation.
+    UNATTRIBUTED = "unattributed"
 
 
 class AttributionAvailability(str, enum.Enum):
@@ -422,7 +368,6 @@ class ActionType(str, enum.Enum):
     STEER = "steer"
     CANCEL = "cancel"
     RETRY = "retry"
-    CONTROL = "control"
     #: A lesson or preference write that replaced stored ones (newest wins).
     MEMORY_CHANGE = "memory_change"
 
@@ -489,27 +434,6 @@ class ActionRecord:
         }
         return merge_extra(body, self.extra)
 
-    @classmethod
-    def from_dict(cls, raw: object) -> ActionRecord:
-        data = require_mapping(raw, "action")
-        read_schema_version(data)
-        responder_raw = data.get("responder")
-        return cls(
-            action_id=req_str(data, "action_id"),
-            action_type=req_enum(data, "action_type", ActionType),
-            session_key=req_str(data, "session_key"),
-            initiator=principal_or_unknown(data.get("initiator")),
-            at=req_float(data, "at"),
-            outcome=req_enum(data, "outcome", ActionOutcome),
-            turn_id=opt_str(data, "turn_id") or "",
-            responder=None if responder_raw is None else principal_or_unknown(responder_raw),
-            runtime_ref=opt_str(data, "runtime_ref") or "",
-            causal_action_id=opt_str(data, "causal_action_id") or "",
-            correlation_id=opt_str(data, "correlation_id") or "",
-            target=opt_str(data, "target") or "",
-            extra=split_extra(data, cls._KNOWN),
-        )
-
 
 class CapabilityState(str, enum.Enum):
     AVAILABLE = "available"
@@ -571,33 +495,6 @@ class Capabilities:
             "remote_actions": self.remote_actions.value,
             "protocols": list(self.protocols),
         }
-
-    @classmethod
-    def from_dict(cls, raw: object) -> Capabilities:
-        data = require_mapping(raw, "capabilities")
-        read_schema_version(data)
-        unavailable = CapabilityState.UNAVAILABLE
-        link = opt_str(data, "membership_link") or ""
-        protocols = data.get("protocols", list(SUPPORTED_PROTOCOLS))
-        if not isinstance(protocols, list) or not all(
-            isinstance(p, int) and not isinstance(p, bool) for p in protocols
-        ):
-            raise ContractError("malformed_record", "protocols", "expected a list of integers")
-        return cls(
-            attribution=enum_or(data, "attribution", CapabilityState, unavailable),
-            presence=enum_or(data, "presence", CapabilityState, unavailable),
-            queueing=enum_or(data, "queueing", CapabilityState, unavailable),
-            containment=enum_or(data, "containment", CapabilityState, unavailable),
-            containment_level=enum_or(
-                data, "containment_level", EnforcementLevel, EnforcementLevel.NONE
-            ),
-            authoritative_directory=enum_or(
-                data, "authoritative_directory", CapabilityState, unavailable
-            ),
-            membership_link=link if link in MEMBERSHIP_LINKS else "",
-            remote_actions=enum_or(data, "remote_actions", CapabilityState, unavailable),
-            protocols=tuple(protocols),
-        )
 
 
 #: ``creator`` filter values besides a principal id.
@@ -688,17 +585,3 @@ class SessionPage:
             "hidden_by_filter": self.hidden_by_filter,
             "next_cursor": self.next_cursor,
         }
-
-    @classmethod
-    def from_dict(cls, raw: object) -> SessionPage:
-        data = require_mapping(raw, "page")
-        read_schema_version(data)
-        items = data.get("items")
-        if not isinstance(items, list) or not all(isinstance(i, Mapping) for i in items):
-            raise ContractError("malformed_record", "items", "expected a list of objects")
-        return cls(
-            items=tuple(items),
-            total_matching=opt_int(data, "total_matching") or 0,
-            hidden_by_filter=opt_int(data, "hidden_by_filter") or 0,
-            next_cursor=opt_str(data, "next_cursor") or "",
-        )

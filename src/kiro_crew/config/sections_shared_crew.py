@@ -22,21 +22,7 @@ logger = logging.getLogger("kiro_crew.config.loader")
 #: Bounds for every integer knob, ``(lo, hi)``. A value outside is clamped.
 SHARED_CREW_BOUNDS: dict[str, tuple[int, int]] = {
     "principal_concurrency": (1, 256),
-    "principal_child_limit": (1, 1024),
-    "principal_queue_depth": (0, 1024),
     "crew_concurrency": (0, 1024),
-    "crew_child_limit": (0, 4096),
-    "crew_queue_depth": (1, 8192),
-    "queue_expiry_seconds": (10, 86400),
-    "root_deadline_seconds": (60, 86400),
-    "child_deadline_seconds": (60, 86400),
-    "max_request_bytes": (1024, 64 * 1024 * 1024),
-    "session_creates_per_minute": (1, 10000),
-    "principal_storage_mb": (1, 1024 * 1024),
-    "principal_cpu_quota_percent": (0, 100000),
-    "principal_memory_max_mb": (0, 16 * 1024 * 1024),
-    "principal_tasks_max": (0, 4194304),
-    "crew_cpu_quota_percent": (0, 100000),
     "typing_idle_seconds": (3, 60),
 }
 
@@ -63,88 +49,12 @@ class SharedCrewConfig:
             "at once, across all tabs, devices and sessions.",
         ),
     )
-    principal_child_limit: int = field(
-        default=8,
-        metadata=_meta(
-            "Outstanding Subagents Per Person",
-            "Subagents one person may have running or queued at once, across every "
-            "session. A spawn past it is refused with principal_queue_full.",
-        ),
-    )
-    principal_queue_depth: int = field(
-        default=16,
-        metadata=_meta(
-            "Queue Depth Per Person",
-            "Root executions one person may have waiting. A send past it is refused "
-            "with principal_queue_full.",
-        ),
-    )
     crew_concurrency: int = field(
         default=0,
         metadata=_meta(
             "Active Work Crew-Wide",
             "Root executions the whole Crew runs at once. 0 uses the session start "
             "gate's automatic width for this host.",
-        ),
-    )
-    crew_child_limit: int = field(
-        default=0,
-        metadata=_meta(
-            "Outstanding Subagents Crew-Wide",
-            "Subagents running or queued across the Crew. 0 means twice the "
-            "Crew-wide active limit.",
-        ),
-    )
-    crew_queue_depth: int = field(
-        default=64,
-        metadata=_meta(
-            "Queue Depth Crew-Wide",
-            "Root executions waiting across the Crew. A send past it is refused with "
-            "crew_queue_full.",
-        ),
-    )
-    queue_expiry_seconds: int = field(
-        default=300,
-        metadata=_meta(
-            "Queue Expiry",
-            "Seconds a queued execution waits before it expires unstarted.",
-        ),
-    )
-    root_deadline_seconds: int = field(
-        default=1800,
-        metadata=_meta(
-            "Turn Deadline",
-            "Seconds a root execution may run before it is cancelled with run_deadline.",
-        ),
-    )
-    child_deadline_seconds: int = field(
-        default=600,
-        metadata=_meta(
-            "Subagent Deadline",
-            "Seconds a subagent or tool execution admitted through the gate may run.",
-        ),
-    )
-    max_request_bytes: int = field(
-        default=4 * 1024 * 1024,
-        metadata=_meta(
-            "Request Size Limit",
-            "Largest accepted execution request body, in bytes.",
-        ),
-    )
-    session_creates_per_minute: int = field(
-        default=30,
-        metadata=_meta(
-            "Session Creates Per Minute",
-            "Sessions one person may create per minute.",
-        ),
-    )
-    principal_storage_mb: int = field(
-        default=2048,
-        metadata=_meta(
-            "Accounted Storage Per Person",
-            "Megabytes of accepted request payload, uploads and logs charged to one "
-            "person before new work is refused with storage_limit. Application "
-            "accounting, not a filesystem quota.",
         ),
     )
     containment_enabled: bool = field(
@@ -164,34 +74,6 @@ class SharedCrewConfig:
             "user bus, or memory and pids delegation is missing, instead of running "
             "without per-person limits. Needs fair admission on: with fair admission "
             "off, no agent runtime starts. Off by default.",
-        ),
-    )
-    principal_cpu_quota_percent: int = field(
-        default=800,
-        metadata=_meta(
-            "CPU Per Person",
-            "CPUQuota of a person's slice, in percent of one core. 0 emits none.",
-        ),
-    )
-    principal_memory_max_mb: int = field(
-        default=24576,
-        metadata=_meta(
-            "Memory Per Person",
-            "MemoryMax of a person's slice, in megabytes. 0 emits none.",
-        ),
-    )
-    principal_tasks_max: int = field(
-        default=8192,
-        metadata=_meta(
-            "Processes Per Person",
-            "TasksMax of a person's slice. 0 emits none.",
-        ),
-    )
-    crew_cpu_quota_percent: int = field(
-        default=2400,
-        metadata=_meta(
-            "CPU Crew-Wide",
-            "CPUQuota of this Crew's agents slice, in percent of one core. 0 emits none.",
         ),
     )
     tailnet_direct: bool = field(
@@ -219,6 +101,21 @@ class SharedCrewConfig:
         ),
     )
 
+
+#: Fixed admission and slice limits. Tests change one with ``monkeypatch.setattr``.
+PRINCIPAL_CHILD_LIMIT = 8
+PRINCIPAL_QUEUE_DEPTH = 16
+CREW_QUEUE_DEPTH = 64
+QUEUE_EXPIRY_SECONDS = 300
+ROOT_DEADLINE_SECONDS = 1800
+CHILD_DEADLINE_SECONDS = 600
+MAX_REQUEST_BYTES = 4 * 1024 * 1024
+SESSION_CREATES_PER_MINUTE = 30
+PRINCIPAL_STORAGE_MB = 2048
+PRINCIPAL_CPU_QUOTA_PERCENT = 800
+PRINCIPAL_MEMORY_MAX_MB = 24576
+PRINCIPAL_TASKS_MAX = 8192
+CREW_CPU_QUOTA_PERCENT = 2400
 
 #: The boolean knobs; every other field is an integer bounded by SHARED_CREW_BOUNDS.
 SHARED_CREW_FLAGS = ("admission_enabled", "containment_enabled", "hard_limits")
@@ -290,31 +187,32 @@ def effective_limits(cfg: SharedCrewConfig, *, auto_crew_concurrency: int) -> Ef
     """Resolve *cfg* against the host's automatic Crew width.
 
     ``crew_concurrency == 0`` takes *auto_crew_concurrency* (the session start
-    gate's own automatic value), ``crew_child_limit == 0`` takes twice the
-    resolved Crew width, and a per-person limit is never wider than the Crew's.
+    gate's own automatic value), subagents get twice the resolved Crew width,
+    and a per-person limit is never wider than the Crew's. The limits that are
+    not knobs come from this module's constants.
     """
     crew_active = cfg.crew_concurrency or max(1, int(auto_crew_concurrency))
-    crew_children = cfg.crew_child_limit or 2 * crew_active
+    crew_children = 2 * crew_active
     return EffectiveLimits(
         enabled=cfg.admission_enabled,
         principal_active=min(cfg.principal_concurrency, crew_active),
-        principal_children=min(cfg.principal_child_limit, crew_children),
-        principal_queue=min(cfg.principal_queue_depth, cfg.crew_queue_depth),
+        principal_children=min(PRINCIPAL_CHILD_LIMIT, crew_children),
+        principal_queue=min(PRINCIPAL_QUEUE_DEPTH, CREW_QUEUE_DEPTH),
         crew_active=crew_active,
         crew_children=crew_children,
-        crew_queue=cfg.crew_queue_depth,
-        queue_expiry_seconds=cfg.queue_expiry_seconds,
-        root_deadline_seconds=cfg.root_deadline_seconds,
-        child_deadline_seconds=cfg.child_deadline_seconds,
-        max_request_bytes=cfg.max_request_bytes,
-        session_creates_per_minute=cfg.session_creates_per_minute,
-        principal_storage_bytes=cfg.principal_storage_mb * 1024 * 1024,
+        crew_queue=CREW_QUEUE_DEPTH,
+        queue_expiry_seconds=QUEUE_EXPIRY_SECONDS,
+        root_deadline_seconds=ROOT_DEADLINE_SECONDS,
+        child_deadline_seconds=CHILD_DEADLINE_SECONDS,
+        max_request_bytes=MAX_REQUEST_BYTES,
+        session_creates_per_minute=SESSION_CREATES_PER_MINUTE,
+        principal_storage_bytes=PRINCIPAL_STORAGE_MB * 1024 * 1024,
         containment_enabled=cfg.containment_enabled,
         hard_limits=cfg.hard_limits,
-        principal_cpu_quota_percent=cfg.principal_cpu_quota_percent,
-        principal_memory_max_mb=cfg.principal_memory_max_mb,
-        principal_tasks_max=cfg.principal_tasks_max,
-        crew_cpu_quota_percent=cfg.crew_cpu_quota_percent,
+        principal_cpu_quota_percent=PRINCIPAL_CPU_QUOTA_PERCENT,
+        principal_memory_max_mb=PRINCIPAL_MEMORY_MAX_MB,
+        principal_tasks_max=PRINCIPAL_TASKS_MAX,
+        crew_cpu_quota_percent=CREW_CPU_QUOTA_PERCENT,
     )
 
 
