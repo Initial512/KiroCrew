@@ -1821,6 +1821,24 @@ describe('chatSlice thunks', () => {
     expect(chat(store).activeSlot).toBe('below')
   })
 
+  // Crew Mode demo issue 6: closing a conductor never lands on one of its
+  // workers, which the person's list does not show, even when the sidebar
+  // order has no other row and the worker was visited last.
+  it('does not land on a hidden Crew Mode worker after closing its conductor', async () => {
+    apiMock.chatSlotDetail.mockResolvedValue({ messages: [], running: false })
+    const store = makeStore()
+    store.dispatch(addSlotOptimistic(slotRow('plain', { mode: 'dashboard', surface: 'dashboard' })))
+    store.dispatch(addSlotOptimistic(slotRow('root', { mode: 'dashboard', surface: 'dashboard', crew_mode_root: true })))
+    store.dispatch(addSlotOptimistic(slotRow('worker', { mode: 'dashboard', surface: 'dashboard', crew_root: 'root' })))
+    store.dispatch(setSidebarOrder(['root']))
+    await store.dispatch(switchSlot('plain'))
+    await store.dispatch(switchSlot('worker'))
+    await store.dispatch(switchSlot('root'))
+
+    await store.dispatch(deleteSlot('root'))
+    expect(chat(store).activeSlot).toBe('plain')
+  })
+
   // A remote-bound local session publishes `<instance_id>:<peer_key>` as its
   // sidebar row, not its slot key; it must still count as the row below.
   it('lands on a remote-bound session below, matched through its row identity', async () => {
