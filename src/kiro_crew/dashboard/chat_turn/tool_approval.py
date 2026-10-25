@@ -287,7 +287,12 @@ def _crew_root_own_worker_call(state: Any, slot: Any, event: Any) -> bool:
         return False
     if event.tool_name not in _CREW_ROOT_OWN_WORKER_VERBS:
         return False
-    target = (event.raw_tool_params or {}).get("target")
+    params = event.raw_tool_params or {}
+    # A deferred tool runs through tool_search's ``tool_call``: the real arguments
+    # sit under ``arguments``, named by a ``tool_id`` that must be this same tool.
+    if params.get("tool_id") == f"{event.mcp_server_name}::{event.tool_name}":
+        params = params.get("arguments") if isinstance(params.get("arguments"), dict) else {}
+    target = params.get("target")
     slots = getattr(state, "_slots", {}) or {}
     if not isinstance(target, str) or target == slot.key or target not in slots:
         return False

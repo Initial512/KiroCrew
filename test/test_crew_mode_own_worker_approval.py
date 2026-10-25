@@ -62,6 +62,23 @@ def test_conductor_call_to_its_own_worker_is_granted(tool: str) -> None:
     assert _crew_root_own_worker_call(state, state._slots["root-1"], _event(tool)) is True
 
 
+def test_a_deferred_tool_call_reads_the_target_from_its_arguments() -> None:
+    state = _state()
+    wrapped = {
+        "tool_id": "kirocrew-dashboard::session_send",
+        "arguments": {"target": "w-1", "message": "go"},
+    }
+    assert (
+        _crew_root_own_worker_call(state, state._slots["root-1"], _event(raw_tool_params=wrapped))
+        is True
+    )
+    other = {"tool_id": "kirocrew-dashboard::session_stop", "arguments": {"target": "w-1"}}
+    assert (
+        _crew_root_own_worker_call(state, state._slots["root-1"], _event(raw_tool_params=other))
+        is False
+    )
+
+
 @pytest.mark.parametrize(
     "caller, event",
     [
