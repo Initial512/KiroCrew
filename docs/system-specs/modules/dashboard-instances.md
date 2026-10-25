@@ -117,7 +117,7 @@ stays in the crew log; nothing here deletes or migrates it.
 
 `stale` covers two cases with different sentences: the template moved ahead of the copy,
 and the template left the registry. Nothing is missing from the copy in either case --
-it still renders -- which is exactly what the frame's stale band says.
+it still renders.
 
 Each state carries a `state_reason`: one sentence a surface can show a person. The four
 words are what a client BRANCHES on; a client cannot branch on prose and a person cannot
@@ -461,6 +461,50 @@ is never read; only a `builtin` template may name a helper. The profile's Notes 
 shows the same text (`GET /api/members/{slug}/briefing` `upkeep`). Decision:
 `rfc-crewmate-dashboard-upkeep-skill.md`.
 
+
+## A field that does not resolve is the mate's to fix, and only the mate is told
+
+The Dashboard frame (`dashboard_frame.compose`) draws NO band about field values, in any
+state: no "Some numbers are older" line, no `data-dashboard-stale` attribute. A cell
+whose value did not resolve keeps the last value the page drew and is dimmed through
+`data-dashboard-missing`; a cell that never resolved stays empty and dimmed. `missing`
+wins over presence on every fill, because a patch carries the fields it did not move
+forward from the read before it: a cell named in the patch's `missing` is dimmed even
+though its old value is still in `window.kirocrew.fields`. The person
+cannot fix a binding, so telling them about one only teaches them to ignore the page.
+`window.kirocrew.stale` stays in the read and is true only when the host could not
+serialize the read at all.
+
+`DashboardFeed.read` names each FOLD field that did not resolve in `FieldRead.unresolved`,
+with one of three reasons: `fold_unseen` (the fold has produced no value), `path_missing`
+(the fold has a value with nothing at the field's path) and `older_value` (the field
+resolved at an earlier read on this slot and not at this one, so a page that drew it
+still shows the older number). `older_value` is decided from a process-wide record of
+which fields resolved per slot (`dashboard_feed.remember_resolved`), because a tab is
+refilled from a fresh feed per request. It holds at most 256 slots and 256 names per
+slot, a read forgets every name the page in force no longer declares, and it is lost on
+a restart, which turns an older value into one of the other two reasons for the same
+binding. An agentic
+field never written is absent, not unresolved: it is in `missing` only, and its upkeep
+text already asks the mate to write it. A TREE-keyed fold has no bus scope, so the feed
+reports its fields unresolved and each reader that reads the tree
+(`LivePage._resolve_trees`, the turn block) takes them back out when they resolve.
+
+The mate hears about it in its `[DASHBOARD]` turn block. `build_member_section` passes the
+crew name to `turn_block`, which reads the page in force the way the tab does
+(`member_dashboard.read_fields`) and adds one line (`dashboard.unresolved` in
+`crewmate_prompts.json`) naming up to three fields with their reason and counting the
+rest, then saying what to do: check the folds with `dashboard_types`, then
+`dashboard_save` a page that binds a path that exists or drops the field, and
+`dashboard_apply` it. Only `path_missing` and `older_value` are named. `fold_unseen` is
+left out: a fold with no value yet is not a broken binding, and a fresh mate on its
+shipped page is in that state; once the fold has a value, a wrong path shows as
+`path_missing`. A `panel` field reads `fold_unseen` until the mate has published, since
+the empty record has none of a published record's paths. The line is absent when nothing
+fixable is left, so it leaves on the first turn after the fix. No read is made on a
+locked page or with `agent.crew_panel` off, where the mate cannot call the tools the line
+names; a read that fails adds nothing; and the apply reply, which builds the block
+without a crew name, makes no read.
 
 ## The preview link opens the Dashboard tab; the tab reads `?preview=1`
 
