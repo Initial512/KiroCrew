@@ -16188,7 +16188,7 @@
         "live_enabled_label": "Live-Ansicht im Chat anzeigen",
         "live_enabled_desc": "Wenn Kiro den Browser nutzt, zeigt der Zug eine Live-Karte. Klicke auf das Bild, um zu übernehmen.",
         "quality_label": "Qualität",
-        "quality_desc": "Auto passt Bildrate und Bild an deine Verbindung an: eine langsame Verbindung senkt zuerst das Bild, dann die Bildrate.",
+        "quality_desc": "Auto passt sich deiner Verbindung an: eine langsame Verbindung senkt zuerst die Bildrate, das Bild bleibt scharf.",
         "quality_auto": "Auto (nach Verbindung)",
         "quality_high": "Hoch",
         "quality_medium": "Mittel",

@@ -9,8 +9,12 @@ import { browserStageStore, stageTurnId, useBrowserStage } from '../../hooks/use
 import { useIsMobile } from '../../hooks/useIsMobile'
 import { useLanguageGeneration } from '../../i18n/useLanguageGeneration'
 import type { BrowserLiveCanvasHandle } from './BrowserLiveCardCanvas'
+import { clearTopOverlay, holdPinnedPromptAside } from './browserLiveClearance'
 import { BrowserLiveAllowView, BrowserLiveDoneRow, BrowserLiveLiveView, BrowserLiveStagedRow, hostOf } from './BrowserLiveCardViews'
 import BrowserLiveSheet from './BrowserLiveSheet'
+
+/** How long the takeover's grow animation takes to settle before the card re-checks its place. */
+const GROW_SETTLE_MS = 400
 
 /**
  * BrowserLiveCard: the agent's browser, in the chat, while it browses.
@@ -126,8 +130,19 @@ function BrowserLiveCard({ sessionKey, anchorKey, anchorTs, running, goTo }: Bro
   }, [sessionKey, instanceId, turnId])
 
   const inControl = turn?.state === 'in_control'
-  // Focus the frame the moment control arrives, so keys go to the page at once.
-  useEffect(() => { if (inControl) canvasRef.current?.focus() }, [inControl])
+  // Focus the frame the moment control arrives, so keys go to the page at once,
+  // and keep the grown card's header (who is in control, Hand back) visible: the
+  // pinned-prompt banner steps aside until the hand-back, and the card scrolls
+  // out from under the title row, once now and once the grow has settled.
+  useEffect(() => {
+    if (!inControl) return
+    canvasRef.current?.focus()
+    const releaseAside = holdPinnedPromptAside()
+    const clear = () => { if (rootRef.current) clearTopOverlay(rootRef.current) }
+    const raf = requestAnimationFrame(clear)
+    const settle = setTimeout(clear, GROW_SETTLE_MS)
+    return () => { cancelAnimationFrame(raf); clearTimeout(settle); releaseAside() }
+  }, [inControl])
 
   const claim = useCallback(() => { void browserLiveStore.claim(sessionKey) }, [sessionKey])
   const release = useCallback((said?: BrowserHandbackSaid) => { void browserLiveStore.release(sessionKey, said) }, [sessionKey])

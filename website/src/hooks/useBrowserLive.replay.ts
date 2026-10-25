@@ -43,6 +43,9 @@ export interface ReplayEvent {
   url: string
   status: 'ok' | 'error'
   actor: 'agent' | 'user'
+  /** The frame size `point` and `path` are in, when the gateway stamped it (it can differ from the frame shown). */
+  fw?: number
+  fh?: number
   /** A move a loop op (`reflex`) made inside itself; the step list folds a run of them. */
   loop: boolean
 }
@@ -158,6 +161,7 @@ export function readRecording(raw: unknown, sessionKey: string): Recording | nul
       status: r.status === 'error' ? 'error' : 'ok',
       actor: r.actor === 'user' ? 'user' : 'agent',
       loop: r.loop === true,
+      ...(num(r.fw) && num(r.fh) ? { fw: num(r.fw) as number, fh: num(r.fh) as number } : {}),
     })
   }
   events.sort((a, b) => a.ts - b.ts)
@@ -357,11 +361,20 @@ export function useRecording(sessionKey: string | null, turnId: string | null, m
   // The ring grows in place, so its length is part of the key.
   // eslint-disable-next-line react-hooks/exhaustive-deps -- ringLength stands for the ring's contents
   const fromMemory = useMemo(() => (memory ? recordingFromMemory(memory) : null), [memory, ringLength])
-  const server = q.data && q.data.frames.length > 0 ? q.data : null
-  if (server) return { recording: server, loading: false }
+  return pickRecording(q.data ?? null, fromMemory, q.isLoading)
+}
+
+/**
+ * Which recording the view shows: the gateway's when it has frames; the card's
+ * own when it has frames and the gateway has none yet; else the gateway's steps
+ * alone (a turn whose pictures were all dropped for an unknown mask).
+ */
+export function pickRecording(server: Recording | null, memory: Recording | null, loading: boolean): { recording: Recording | null; loading: boolean } {
+  if (server && server.frames.length > 0) return { recording: server, loading: false }
   // Wait for the gateway's first answer before falling back, so the view does not
   // play the card's frames for a moment and then jump to the recording.
-  if (q.isLoading) return { recording: null, loading: true }
-  if (fromMemory) return { recording: fromMemory, loading: false }
-  return { recording: null, loading: false }
+  if (loading) return { recording: null, loading: true }
+  if (memory && memory.frames.length > 0) return { recording: memory, loading: false }
+  if (server && server.events.length > 0) return { recording: server, loading: false }
+  return { recording: memory, loading: false }
 }

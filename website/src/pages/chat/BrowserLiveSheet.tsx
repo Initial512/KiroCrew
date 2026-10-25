@@ -35,8 +35,16 @@ export default function BrowserLiveSheet({ sessionKey }: { sessionKey: string })
       {open && stage && (
         <DialogContent
           maxWidth={100_000}
-          style={{ maxHeight: '100dvh', width: '100vw', height: '100dvh' }}
-          className="!rounded-none !border-0 bg-bg pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"
+          style={{
+            maxHeight: '100dvh',
+            width: '100vw',
+            height: '100dvh',
+            borderRadius: 0,
+            border: 0,
+            background: 'var(--bg)',
+            paddingTop: 'env(safe-area-inset-top)',
+            paddingBottom: 'env(safe-area-inset-bottom)',
+          }}
           data-testid="browser-live-sheet"
           // While the person holds the browser, Esc is the canvas's hand back; the
           // dialog listens in the capture phase, so it must stand aside here.

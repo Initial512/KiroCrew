@@ -12105,7 +12105,7 @@
         "note_label": "エージェントへのメモ",
         "note_placeholder": "何をしたかエージェントに伝える (任意)",
         "send": "このメモを添えて返す",
-        "what_happened": "どうなりましたか?"
+        "what_happened": "どうなりましたか？"
       }
     },
     "chatPage": {
@@ -15921,7 +15921,7 @@
         "origins_full": "最大 {{count}} 件。追加するには 1 件削除してください。",
         "origins_label": "プレビュータブが開けるローカルアドレス",
         "quality_auto": "自動（回線速度に合わせる）",
-        "quality_desc": "自動はフレームレートと画質を回線に合わせます。回線が遅いときは先に画質を、次にフレームレートを下げます。",
+        "quality_desc": "自動は回線に合わせます。回線が遅いときは先にフレームレートを下げ、画面は鮮明なまま保ちます。",
         "quality_high": "高",
         "quality_label": "画質",
         "quality_low": "低",

@@ -46,7 +46,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] =
     "id": "browser.quality",
     "label": "Quality",
     "labelKey": "pages.settings.browserPanel.quality_label",
-    "hint": "Auto adapts frame rate and picture to your link: a slow link lowers the picture first, then the frame rate.",
+    "hint": "Auto adapts to your link: a slow link lowers the frame rate first and keeps the picture sharp.",
     "tab": "browser",
     "type": "select",
     "occurrence": 1,

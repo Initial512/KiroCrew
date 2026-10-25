@@ -618,7 +618,9 @@ async def test_the_next_page_change_goes_back_to_the_ladder_picture() -> None:
     await _land_frame(stream, relay, make_jpeg(1280, 768))
     assert len(relay.methods("Page.startScreencast")) == starts
     clock.now += sc.SETTLE_GRACE_S + 0.1
+    seen = stream.controller.window.frames
     await _land_frame(stream, relay, make_jpeg(1280, 768))  # the page moved
+    assert stream.controller.window.frames == seen, "a sharp frame is never ladder evidence"
     last = relay.methods("Page.startScreencast")[-1][1]
     assert len(relay.methods("Page.startScreencast")) == starts + 1
     assert (last["quality"], last["maxWidth"]) == (40, 800)
@@ -642,7 +644,9 @@ async def test_no_settle_during_takeover_input_or_with_a_pinned_low_quality() ->
     stream._input_at = clock.now  # another keystroke just went out
     assert await stream.settle() is False
     clock.now += sc.SETTLE_S + 0.05
-    assert await stream.settle() is True  # the burst is over
+    assert await stream.settle() is False  # the person still holds the browser
+    await stream.set_takeover(False)
+    assert await stream.settle() is True  # handed back: the page may settle
 
     low, relay2, clock2, _s2 = make_stream(
         config=sc.LiveConfig(quality="low", mask_passwords=False)

@@ -371,8 +371,8 @@ answers a `startScreencast` with one frame of the current page, which is masked
 and sent like any frame and is not ladder evidence. A frame within 250 ms of that
 one still belongs to it; the next one after is a page change and restarts the
 cast at the ladder's picture. At most one settle per 2 s (a blinking text cursor
-changes the page every half second), none while takeover input went out in the
-last 400 ms, none with a fixed `medium` or `low` quality. `Page.captureScreenshot`
+changes the page every half second), none while the person holds the
+browser, none with a fixed `medium` or `low` quality. `Page.captureScreenshot`
 was measured and rejected for this: on Chromium it makes the running screencast
 emit two more frames at the ladder's picture, which would cover the sharp still.
 
@@ -869,7 +869,7 @@ that op's own refusals (a password field, a stale ref).
 | Part | What the code does | What the model answers |
 |---|---|---|
 | State | `grid` (+ `grid_items`): the walker's `cells(selector)` -- visible matches' short text and box centres, form fields skipped -- arranged into rows; an item goes to its nearest slot and a merge still animating keeps the higher number. Without `grid`, the outline (cut to 6,000 characters). `see: true` adds a masked frame under `browser_images` with the frame rules above | -- |
-| Request | one per step, `extra.kind = "reflex"`: Choice `next` over the live actions, Nouls `done`, `stuck`, `off_path`, and `risk_i` for at most 8 actions not yet judged (each action is judged once per call) | the four judgments |
+| Request | one per step, `extra.kind = "reflex"`: Choice `next` over the live actions, Nouls `done`, `stuck`, `off_path`, and `risk_i` for at most 8 actions not yet judged (each action is judged once per call; arrows, Tab, Escape, Home, End and the page keys are judged safe by code and never asked about) | the four judgments |
 | Stop | `done`/`stuck`/`off_path` above 0.7; an action whose risk is at least 0.5 is not offered, and a pick of one stops with `risk` and a `handoff` text asking for the person; `until_text` (`textPresent`) or `until_url` (substring of the href); `max_steps` (default 60, at most 300) and `max_seconds` (default 20, at most 45); a takeover (`in_control`, checked before each observe and each action); every action withdrawn (`no_actions_left`) | -- |
 | No-op withdrawal | an action after which the state's fingerprint (the grid, else the outline) did not change is not offered again until the state changes; a refused action (stale ref, unfocusable) is withdrawn the same way | -- |
 | Values | a `type` value must appear verbatim in the goal, a fact or the page outline read once before the loop, else the call is refused `bad_value` before anything runs | never writes text |

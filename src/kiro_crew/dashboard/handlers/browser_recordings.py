@@ -46,12 +46,14 @@ _NO_STORE = {
 }
 
 
-def _json(body: object, status: int = 200) -> web.Response:
-    return web.json_response(body, status=status, headers=_NO_STORE)
+def _json(body: object) -> web.Response:
+    return web.json_response(body, headers=_NO_STORE)
 
 
 def _not_found() -> web.Response:
-    return _json({"error": "not found", "code": "not_found"}, 404)
+    return web.json_response(
+        {"error": "not found", "code": "not_found"}, status=404, headers=_NO_STORE
+    )
 
 
 def _audit(request: web.Request, operation: str, outcome: str, error: str = "") -> None:
@@ -74,7 +76,11 @@ async def _gate(request: web.Request, operation: str) -> tuple[str | None, web.R
     """The owned slot key the path names, or the refusal to answer instead."""
     if request.get("internal_auth") is True:
         _audit(request, operation, "denied", "internal secret refused")
-        return None, _json({"error": "forbidden", "code": "internal_secret_required"}, 403)
+        return None, web.json_response(
+            {"error": "forbidden", "code": "internal_secret_required"},
+            status=403,
+            headers=_NO_STORE,
+        )
     refusal = await require_owner_dashboard_request(request, operation)
     if refusal is not None:
         return None, refusal

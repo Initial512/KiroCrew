@@ -71,6 +71,24 @@ STOP_NO_ACTIONS = "no_actions_left"
 STOP_DECISION = "decision_unavailable"
 STOP_REFUSED = "redirect_refused"
 
+#: Keys that only move focus, scroll or steer and never submit anything: judged
+#: safe by code, so no risk question is spent on them (Enter, Space and
+#: characters are still asked about, since they can press or submit).
+SAFE_KEYS = frozenset(
+    {
+        "ArrowLeft",
+        "ArrowUp",
+        "ArrowRight",
+        "ArrowDown",
+        "Tab",
+        "Escape",
+        "Home",
+        "End",
+        "PageUp",
+        "PageDown",
+    }
+)
+
 _SAFE_ID = re.compile(r"[^A-Za-z0-9_]+")
 
 
@@ -147,7 +165,13 @@ def parse(args: dict[str, Any]) -> Plan | dict[str, Any]:
             return _ops.refusal("bad_key", f"unknown key in `keys`: {key!r}")
         name = "Space" if key == " " else key
         actions.append(
-            Action(_option_id(f"press_{name}", taken), "press_key", {"key": key}, f"Press {name}")
+            Action(
+                _option_id(f"press_{name}", taken),
+                "press_key",
+                {"key": key},
+                f"Press {name}",
+                risky=0.0 if key in SAFE_KEYS else None,
+            )
         )
     for ref in _strings(args.get("click")):
         if not _ops._is_ref(ref):
@@ -319,12 +343,15 @@ class _Loop:
     async def decide(
         self, state: dict[str, Any], live: list[Action], frame: bytes | None
     ) -> dict[str, Any] | None:
-        unjudged = [a for a in self.plan.actions if a.risky is None][:RISK_PER_REQUEST]
+        unjudged = [a for a in live if a.risky is None][:RISK_PER_REQUEST]
+        # Only an action with a verdict, or one judged in this very request, may be
+        # picked: the rest wait for a later request and never run unjudged.
+        offered = [a for a in live if a.risky is not None or a in unjudged]
         started = time.monotonic()
         verdict = await _decide.reflex_step(
             self.session_key,
             state,
-            {a.id: a.label for a in live},
+            {a.id: a.label for a in offered},
             [a.label for a in unjudged],
             subject="grid" if self.plan.grid else "page",
             frame=frame,
@@ -443,6 +470,12 @@ class _Loop:
         while True:
             if await _ops._in_control(self.ctx):
                 return await self.finish(STOP_USER, state)
+            # The URL gate runs before the page is read or sent anywhere, so a redirect
+            # that landed after the last action (or a takeover navigation) is caught
+            # before its content reaches the decision provider or a terminal verdict.
+            refused = await self.landed_refusal()
+            if refused is not None:
+                return await self.finish(STOP_REFUSED, None, error=refused["error"])
             seen = await self.observe()
             if seen is None:
                 if self.decisions == 0:
@@ -482,7 +515,9 @@ class _Loop:
                 return await self.finish(STOP_STUCK, state)
             if verdict["off_path"] > _decide.YES:
                 return await self.finish(STOP_OFF_PATH, state)
-            action = next((a for a in live if a.id == verdict["pick"]), None)
+            action = next(
+                (a for a in live if a.id == verdict["pick"] and a.risky is not None), None
+            )
             if action is None:
                 return await self.finish(STOP_DECISION, state, why="no action picked")
             if (action.risky or 0.0) >= RISK_STOP:
@@ -497,9 +532,6 @@ class _Loop:
                 # A stale ref or an unfocusable field: withdraw it and go on.
                 self.dropped.add(action.id)
                 last_pick = None
-            refused = await self.landed_refusal()
-            if refused is not None:
-                return await self.finish(STOP_REFUSED, None, error=refused["error"])
             if plan.settle_s:
                 await self.ctx.sleep(plan.settle_s)
 

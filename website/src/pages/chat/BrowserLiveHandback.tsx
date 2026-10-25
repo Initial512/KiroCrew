@@ -23,11 +23,16 @@ import type { BrowserHandbackSaid } from '../../api/client/browserLive'
  */
 
 /** The card's own choices when the agent offered none. */
-export const DEFAULT_HANDBACK_CHOICES = ['done', 'didnt_work', 'wrong_site', 'stop'] as const
+export const DEFAULT_HANDBACK_CHOICES = [
+  'pages.chat.browserLiveHandback.choice_done',
+  'pages.chat.browserLiveHandback.choice_didnt_work',
+  'pages.chat.browserLiveHandback.choice_wrong_site',
+  'pages.chat.browserLiveHandback.choice_stop',
+] as const
 
 export function handbackChoices(offered: readonly string[]): string[] {
   if (offered.length) return offered.map(o => sanitizeLlmOutput(o).slice(0, 40)).filter(Boolean).slice(0, 4)
-  return DEFAULT_HANDBACK_CHOICES.map(id => i18nT(`pages.chat.browserLiveHandback.choice_${id}`))
+  return DEFAULT_HANDBACK_CHOICES.map(key => i18nT(key))
 }
 
 export function BrowserLiveHandbackBar({ offered, onHandBack, className }: {
@@ -59,13 +64,12 @@ export function BrowserLiveHandbackBar({ offered, onHandBack, className }: {
       onSubmit={onSubmit}
       data-testid="browser-live-handback"
     >
-      <div role="radiogroup" aria-label={i18nT('pages.chat.browserLiveHandback.what_happened')} className="flex flex-wrap items-center gap-1.5">
+      <div role="group" aria-label={i18nT('pages.chat.browserLiveHandback.what_happened')} className="flex flex-wrap items-center gap-1.5">
         {choices.map(c => (
           <button
             key={c}
             type="button"
-            role="radio"
-            aria-checked={choice === c}
+            aria-pressed={choice === c}
             onClick={() => setChoice(prev => (prev === c ? null : c))}
             className={`rounded-full border px-2.5 py-0.5 text-[12px] cursor-pointer transition-colors ${
               choice === c ? 'border-accent bg-accent-subtle text-accent font-semibold' : 'border-border bg-bg text-text hover:bg-bg-hover'

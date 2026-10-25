@@ -7,6 +7,7 @@ import {
 import { Btn } from '../../components/ui'
 import { i18nT } from '../../i18n/t'
 import { fmtNumber } from '../../i18n/format'
+import { useLanguageGeneration } from '../../i18n/useLanguageGeneration'
 import {
   SPEEDS, currentStep, durationOf, nextOffset, offsetOf, prevOffset,
   type Recording, type ReplayEvent, type ReplayOp, type ReplaySpeed,
@@ -159,6 +160,8 @@ export const ReplayTimeline = memo(function ReplayTimeline({ rec, player, live, 
   /** A marker was clicked: the host leaves live mode before seeking. */
   onSeekStep: (offset: number) => void
 }) {
+  // Re-render on a language switch: memo() would otherwise keep the old copy.
+  useLanguageGeneration()
   const { duration } = player
   const pct = (ms: number) => (duration > 0 ? (ms / duration) * 100 : 0)
   const trackRef = useRef<HTMLDivElement>(null)
@@ -239,12 +242,11 @@ export const ReplayTimeline = memo(function ReplayTimeline({ rec, player, live, 
           {i18nT('pages.chat.browserLiveStage.time_of', { at: clockLabel(player.t), total: clockLabel(duration) })}
         </span>
         <span className="flex-1" />
-        <div role="radiogroup" aria-label={i18nT('pages.chat.browserLiveStage.speed')} className="flex items-center gap-1">
+        <div role="group" aria-label={i18nT('pages.chat.browserLiveStage.speed')} className="flex items-center gap-1">
           {SPEEDS.map(s => (
             <Btn
               key={s}
-              role="radio"
-              aria-checked={player.speed === s}
+              aria-pressed={player.speed === s}
               onClick={() => player.setSpeed(s)}
               className={`!px-2 ${player.speed === s ? '!border-accent text-accent' : ''}`}
               data-testid={`browser-replay-speed-${s}`}
@@ -269,6 +271,7 @@ export const ReplayStepList = memo(function ReplayStepList({ rec, current, onSee
   onSeekStep: (offset: number) => void
   className?: string
 }) {
+  useLanguageGeneration()
   const listRef = useRef<HTMLOListElement>(null)
   useEffect(() => {
     const el = listRef.current?.querySelector<HTMLElement>('[aria-current="step"]')

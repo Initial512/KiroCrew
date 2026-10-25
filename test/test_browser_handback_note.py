@@ -77,7 +77,7 @@ async def test_release_carries_the_note_to_the_parked_op_once() -> None:
     )
     assert again["handed_back"] is None, "taken once"
     assert [(e["actor"], e["label"]) for e in rec.events] == [
-        ("user", "You handed back: Didn't work - It says wrong password")
+        ("user", "Didn't work - It says wrong password")
     ]
 
 
@@ -261,3 +261,59 @@ async def test_an_interrupted_op_still_tells_the_agent_what_the_person_said(monk
     parked = tool.browser("browser", {"op": "type", "args": {"text": "hi"}})
     text = parked.step()  # type: ignore[union-attr]
     assert text is not None and "interrupted" in text and '"note": "Done it"' in text
+
+
+async def test_a_parked_state_changing_op_is_not_run_behind_what_the_person_said(
+    monkeypatch,
+) -> None:
+    posted: list[str] = []
+    monkeypatch.setattr(
+        tool,
+        "_post_handback",
+        lambda *a, **k: (
+            200,
+            {"released": True, "handed_back": {"choice": "", "note": "Do not click"}},
+        ),
+    )
+    monkeypatch.setattr(
+        tool,
+        "_post_command",
+        lambda sk, op, *a, **k: posted.append(op)
+        or (
+            (200, {"ok": False, "code": "user_in_control", "hold": True})
+            if len(posted) == 1
+            else (200, _ok({}))
+        ),
+    )
+    monkeypatch.setattr(tool.mcp_core, "_post", lambda *a, **k: {})
+    parked = tool.browser("browser", {"op": "click", "args": {"ref": "e1"}})
+    text = parked.step()  # type: ignore[union-attr]
+    assert posted == ["click"], "the click was posted once, parked, and never re-posted"
+    assert text is not None and "was not run" in text and "Do not click" in text
+
+
+@pytest.mark.parametrize(
+    "action,reposted", [("new", False), ("switch", False), ("list", True), (None, True)]
+)
+async def test_tabs_resumes_after_a_note_only_when_it_lists(monkeypatch, action, reposted) -> None:
+    posted: list[str] = []
+    monkeypatch.setattr(
+        tool,
+        "_post_handback",
+        lambda *a, **k: (200, {"released": True, "handed_back": {"choice": "Stop", "note": ""}}),
+    )
+    monkeypatch.setattr(
+        tool,
+        "_post_command",
+        lambda sk, op, *a, **k: posted.append(op)
+        or (
+            (200, {"ok": False, "code": "user_in_control", "hold": True})
+            if len(posted) == 1
+            else (200, _ok({}))
+        ),
+    )
+    monkeypatch.setattr(tool.mcp_core, "_post", lambda *a, **k: {})
+    args = {"action": action, "url": "https://a.example/"} if action else {}
+    parked = tool.browser("browser", {"op": "tabs", "args": {k: v for k, v in args.items() if v}})
+    parked.step()  # type: ignore[union-attr]
+    assert (len(posted) == 2) is reposted

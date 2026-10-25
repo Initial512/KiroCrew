@@ -61,6 +61,8 @@ META_VERSION = 1
 MIN_FRAME_INTERVAL_MS = 200
 #: Events kept per turn; past it the log stops growing (the turn is ``truncated``).
 MAX_EVENTS_PER_TURN = 5000
+#: What a turn's meta.json and directory are counted as, so a turn with no frames still costs.
+TURN_META_BYTES = 1024
 #: Points kept on one recorded drag path.
 MAX_PATH_POINTS = 64
 #: Longest string kept for any one event arg; a URL gets more room.
@@ -330,7 +332,7 @@ class TurnInfo:
                 start_url=str(data.get("start_url") or ""),
                 frame_count=int(data.get("frame_count") or 0),
                 event_count=int(data.get("event_count") or 0),
-                bytes=int(data.get("bytes") or 0),
+                bytes=max(int(data.get("bytes") or 0), TURN_META_BYTES),
                 truncated=bool(data.get("truncated")),
                 last_ts=int(data.get("last_ts") or 0),
             )
@@ -526,6 +528,7 @@ class RecordingStore:
             self._ensure_dir(self._turn_dir(sdir, turn_id) / "frames")
             if info is None:
                 info = TurnInfo(session_key=session_key, turn_id=turn_id, started_ts=ts)
+                info.bytes = TURN_META_BYTES  # its meta.json counts against the caps
                 turns[turn_id] = info
             info.ended_ts = None
             if url and not info.start_url:
@@ -771,6 +774,9 @@ class _SessionRec:
     typed_ts: int = 0
     typed_url: str = ""
     started_ms: int = 0
+    #: Size of the latest frame the stream offered: the space a point drawn now is in.
+    frame_w: int = 0
+    frame_h: int = 0
 
 
 class LiveRecorder:
@@ -784,7 +790,8 @@ class LiveRecorder:
     def __init__(self, store: RecordingStore, *, clock_ms: Callable[[], int] = now_ms) -> None:
         self.store = store
         self._clock_ms = clock_ms
-        self._sessions: dict[str, _SessionRec] = {}
+        #: Per-slot writer state (not the session registry: no crumbs live here).
+        self._recs: dict[str, _SessionRec] = {}
 
     @property
     def enabled(self) -> bool:
@@ -794,10 +801,10 @@ class LiveRecorder:
         self.store.config = RecordingConfig.from_config(cfg)
 
     def _rec(self, session_key: str) -> _SessionRec:
-        rec = self._sessions.get(session_key)
+        rec = self._recs.get(session_key)
         if rec is None:
             rec = _SessionRec()
-            self._sessions[session_key] = rec
+            self._recs[session_key] = rec
         return rec
 
     def _submit(self, session_key: str, job: Callable[[], Any]) -> None:
@@ -831,9 +838,9 @@ class LiveRecorder:
 
     async def flush(self, session_key: str | None = None) -> None:
         """Wait for the queued writes (tests, and the session delete)."""
-        keys = [session_key] if session_key is not None else list(self._sessions)
+        keys = [session_key] if session_key is not None else list(self._recs)
         for key in keys:
-            rec = self._sessions.get(key)
+            rec = self._recs.get(key)
             if rec is None:
                 continue
             while rec.worker is not None and not rec.worker.done():
@@ -854,10 +861,13 @@ class LiveRecorder:
         rec.last_digest = b""
         ts = self._clock_ms()
         rec.started_ms = ts
+        # A size from the last turn is not this one's: a point before the first
+        # frame falls back to the shown frame's own size.
+        rec.frame_w = rec.frame_h = 0
         self._submit(session_key, lambda: self.store.start_turn(session_key, turn_id, ts, url))
 
     def turn_ended(self, session_key: str) -> None:
-        rec = self._sessions.get(session_key)
+        rec = self._recs.get(session_key)
         if rec is None or not rec.turn_id:
             return
         self._close(session_key, rec)
@@ -871,7 +881,7 @@ class LiveRecorder:
         self._submit(session_key, lambda: self.store.end_turn(session_key, turn_id, ts))
 
     def note_url(self, session_key: str, url: str) -> None:
-        rec = self._sessions.get(session_key)
+        rec = self._recs.get(session_key)
         if rec is None or not rec.turn_id or not url:
             return
         turn_id = rec.turn_id
@@ -879,15 +889,26 @@ class LiveRecorder:
 
     # ── frames ─────────────────────────────────────────────────────────────
 
+    def turn_open(self, session_key: str) -> bool:
+        """A turn of *session_key* is being recorded (so a hidden card keeps casting)."""
+        rec = self._recs.get(session_key)
+        return rec is not None and bool(rec.turn_id) and self.enabled
+
     def wants_frame(self, session_key: str) -> bool:
         """Whether a frame offered now would be kept (a turn is open, the 5 fps gate is).
 
         The stream asks before it spends a fresh password-box query on a frame.
         """
-        rec = self._sessions.get(session_key)
+        rec = self._recs.get(session_key)
         if rec is None or not rec.turn_id or not self.enabled:
             return False
         return self._clock_ms() - rec.last_kept_ms >= MIN_FRAME_INTERVAL_MS
+
+    def note_size(self, session_key: str, width: int, height: int) -> None:
+        """The size of the frame streaming now: the space a point placed now is in."""
+        rec = self._recs.get(session_key)
+        if rec is not None and rec.turn_id and width > 0 and height > 0:
+            rec.frame_w, rec.frame_h = width, height
 
     def frame(
         self,
@@ -905,7 +926,7 @@ class LiveRecorder:
         *age_s* backdates a frame the stream held and offers late (``flush_held``);
         it never lands before the last kept frame.
         """
-        rec = self._sessions.get(session_key)
+        rec = self._recs.get(session_key)
         if rec is None or not rec.turn_id or not self.enabled:
             return
         if not mask_ok:
@@ -963,12 +984,16 @@ class LiveRecorder:
 
     def event(self, session_key: str, event: dict[str, Any]) -> None:
         """One action, already shaped (:func:`agent_event` / the user helpers)."""
-        rec = self._sessions.get(session_key)
+        rec = self._recs.get(session_key)
         if rec is None or not rec.turn_id or not self.enabled:
             return
         self._flush_pending(session_key, rec)
         if event.get("actor") == "agent":
             self._flush_typing(session_key, rec)
+        if (event.get("point") or event.get("path")) and rec.frame_w > 0:
+            # A point is in the pixels of the frame size streaming now; the stream's
+            # size can change before the frame the replay shows (a settle frame).
+            event = {**event, "fw": rec.frame_w, "fh": rec.frame_h}
         turn_id = rec.turn_id
         self._submit(session_key, lambda: self.store.add_event(session_key, turn_id, event))
 
@@ -980,7 +1005,7 @@ class LiveRecorder:
         ``type`` event of ``chars`` when the typing stops (another action, the
         turn's end). A named key with no text (Enter, Tab) is a ``key`` event.
         """
-        rec = self._sessions.get(session_key)
+        rec = self._recs.get(session_key)
         if rec is None or not rec.turn_id or not self.enabled:
             return
         ts = self._clock_ms()
@@ -996,7 +1021,7 @@ class LiveRecorder:
                 rec.typed_chars += max(1, len(text))
                 return
             self._flush_typing(session_key, rec)
-            self.event(session_key, user_event("key", ts, url, label=f"Press {key}"[:40]))
+            self.event(session_key, user_event("key", ts, url, args={"key": key[:40]}))
             return
         x, y = int(getattr(event, "x", 0)), int(getattr(event, "y", 0))
         point = {"x": x, "y": y}
@@ -1044,7 +1069,7 @@ class LiveRecorder:
 
     async def delete_session(self, session_key: str) -> bool:
         """Forget the session and remove its recordings, after its queued writes."""
-        rec = self._sessions.pop(session_key, None)
+        rec = self._recs.pop(session_key, None)
         if rec is not None:
             rec.turn_id = ""
             rec.pending = None
@@ -1085,17 +1110,10 @@ def user_event(
     path: list[dict[str, int]] | None = None,
     args: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    default = {
-        "click": "You clicked",
-        "drag": "You dragged",
-        "scroll": "You scrolled",
-        "type": "You typed",
-        "key": "You pressed a key",
-    }.get(op, "You acted")
     return {
         "ts": ts,
         "op": op if op in EVENT_KINDS else "other",
-        "label": _label(label or default),
+        "label": _label(label),
         "args": dict(args or {}),
         "point": point,
         "path": path,

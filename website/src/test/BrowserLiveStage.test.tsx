@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
 import i18next from 'i18next'
@@ -95,6 +95,9 @@ beforeEach(() => {
   qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
 })
 afterEach(() => {
+  // Unmount before the store resets: their notify() would otherwise re-render the
+  // still-mounted card and stage outside act() (this hook runs before RTL's own cleanup).
+  cleanup()
   vi.useRealTimers()
   browserLiveStore.__setWritesForTests(restore)
   browserLiveStore.__resetForTests()
@@ -278,12 +281,33 @@ describe('the replay timeline', () => {
     expect(clock()).toBe(i18next.t('pages.chat.browserLiveStage.time_of', { at: '0:00', total: '0:10' }))
   })
 
+  it('keys pressed inside the turn menu leave the player alone; the picture is a labelled image', async () => {
+    await doneCardReplay()
+    fireEvent.click(screen.getByTestId('browser-replay-play'))  // pause at 0
+    const view = screen.getByTestId('browser-live-stage')
+    const canvas = screen.getByTestId('browser-replay-canvas')
+    expect(canvas).toHaveAttribute('aria-hidden', 'true')
+    expect(canvas.parentElement).toHaveAttribute('role', 'img')
+    const playing = screen.getByTestId('browser-replay-play').getAttribute('aria-pressed')
+    const menu = document.createElement('div')
+    menu.setAttribute('role', 'menu')
+    const item = document.createElement('div')
+    item.setAttribute('role', 'menuitem')
+    menu.appendChild(item)
+    view.appendChild(menu)
+    fireEvent.keyDown(item, { key: ' ' })
+    fireEvent.keyDown(item, { key: 'End' })
+    expect(screen.getByTestId('browser-replay-play')).toHaveAttribute('aria-pressed', playing ?? 'false')
+    expect(clock()).toBe(i18next.t('pages.chat.browserLiveStage.time_of', { at: '0:00', total: '0:10' }))
+    menu.remove()
+  })
+
   it('speed changes how fast the head moves', async () => {
     await doneCardReplay()
     fireEvent.click(screen.getByTestId('browser-replay-play'))  // pause
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
     fireEvent.click(screen.getByTestId('browser-replay-speed-4'))
-    expect(screen.getByTestId('browser-replay-speed-4')).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByTestId('browser-replay-speed-4')).toHaveAttribute('aria-pressed', 'true')
     fireEvent.click(screen.getByTestId('browser-replay-play'))
     act(() => { vi.advanceTimersByTime(TICK_MS * 10) })  // 500 ms of wall time at 4x
     expect(clock()).toBe(i18next.t('pages.chat.browserLiveStage.time_of', { at: '0:02', total: '0:10' }))

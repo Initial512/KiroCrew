@@ -356,6 +356,17 @@ def _error_text(code: str, detail: str) -> str:
 _HANDBACK_TEXT_CAP = 500
 
 
+#: Ops that only read the page: safe to run after a hand-back whatever the person said.
+_READ_ONLY_OPS = frozenset({"snapshot", "screenshot", "console", "wait_for"})
+
+
+def _reads_only(op: str, op_args: dict[str, Any]) -> bool:
+    """The op only reads the page (``tabs`` only when it lists)."""
+    if op == "tabs":
+        return str(op_args.get("action") or "list") == "list"
+    return op in _READ_ONLY_OPS
+
+
 def _handed_back_text(said: Any) -> str:
     """The line telling the agent what the person said as they handed back, or ''."""
     if not isinstance(said, dict):
@@ -457,6 +468,13 @@ class _HandbackWait(DeferredTool):
         said = _handed_back_text(payload.get("handed_back"))  # type: ignore[union-attr]
         if self.interrupted:
             return self.interrupted_text + said
+        if said and not _reads_only(self.op, self.op_args):
+            # The person's words may say not to do this: a state-changing op is not
+            # run behind them. The agent reads what was said and decides again.
+            return (
+                f"The browser {self.op} was not run: the user spoke as they handed the "
+                "browser back. Read it, then repeat the op only if it still fits." + said
+            )
         status, payload = _post_command(
             self.body_key, self.op, self.op_args, self.session_header, self.timeout_s
         )

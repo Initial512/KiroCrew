@@ -57,12 +57,12 @@ export default function PreviewTabBody({ sessionKey, active = true }: { sessionK
     <div className="flex flex-col h-full min-h-0" data-testid="preview-tab-body" data-mode={agent ? 'agent' : 'local'}>
       {showSwitch && (
         <div className="flex items-center gap-2 px-2 py-1.5 border-b border-border shrink-0">
-        <div role="radiogroup" aria-label={i18nT('components.previewTabBody.preview_mode')} className="flex items-center gap-1">
-          <button type="button" role="radio" aria-checked={agent} className={segBtn(agent)} onClick={agent ? undefined : showAgent} data-testid="preview-mode-agent">
+        <div role="group" aria-label={i18nT('components.previewTabBody.preview_mode')} className="flex items-center gap-1">
+          <button type="button" aria-pressed={agent} className={segBtn(agent)} onClick={agent ? undefined : showAgent} data-testid="preview-mode-agent">
             <Bot size={13} aria-hidden="true" />
             {i18nT('components.previewTabBody.agent_browser')}
           </button>
-          <button type="button" role="radio" aria-checked={!agent} className={segBtn(!agent)} onClick={agent ? bringBack : undefined} data-testid="preview-mode-local">
+          <button type="button" aria-pressed={!agent} className={segBtn(!agent)} onClick={agent ? bringBack : undefined} data-testid="preview-mode-local">
             <Globe size={13} aria-hidden="true" />
             {i18nT('components.previewTabBody.local_preview')}
           </button>

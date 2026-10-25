@@ -189,7 +189,8 @@ const BrowserLiveCardCanvas = forwardRef<BrowserLiveCanvasHandle, Props>(functio
     stop: stopReplay,
     show: (frame) => { stopReplay(); pendingRef.current = frame; void pump() },
     frameSize: () => sizeRef.current,
-    focus: () => canvasRef.current?.focus(),
+    // No scroll on focus: the card places itself (see `browserLiveClearance`).
+    focus: () => canvasRef.current?.focus({ preventScroll: true }),
   }), [pump, stopReplay])
 
   useEffect(() => () => { if (replayTimer.current) clearTimeout(replayTimer.current) }, [])

@@ -39,8 +39,15 @@ interface Walker {
   snapshot: () => { nodes: Array<{ ref?: string; role: string; state?: { password?: boolean } }> }
 }
 
-const evalWalker = (): Walker => (0, eval)(walkerSource()) as Walker
-const evalMask = (): number[][] => (0, eval)(maskSource()) as number[][]
+// Evaluated as the page evaluates it: one global expression, in this window's scope.
+const evaluate = (source: string): unknown => new Function(`return (${source})`)()
+const evalWalker = (): Walker => evaluate(walkerSource()) as Walker
+// The mask expression answers `{boxes, frames, partial, sx, sy}`: the password
+// boxes, the opaque embedded documents, whether the walk was cut short, and the
+// scroll it read the page at (the turn replay keeps a frame only at that scroll).
+type MaskReply = { boxes: number[][]; frames: number[][]; partial: boolean; sx: number; sy: number }
+const evalMaskReply = (): MaskReply => evaluate(maskSource()) as MaskReply
+const evalMask = (): number[][] => evalMaskReply().boxes
 
 function shadowLogin(): { host: HTMLElement; user: HTMLInputElement; pass: HTMLInputElement } {
   const host = document.createElement('div')
@@ -125,6 +132,7 @@ describe('the top-document case still works the same', () => {
     pass.focus()
     expect(evalWalker().activeField()).toEqual({ focused: true, password: true, tag: 'input' })
     expect(evalMask()).toEqual([[10, 20, 200, 24]])
+    expect(evalMaskReply()).toEqual({ boxes: [[10, 20, 200, 24]], frames: [], partial: false, sx: 0, sy: 0 })
   })
 
   it('nothing focused reads as no field', () => {

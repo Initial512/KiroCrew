@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 
 import {
   activeEvent, currentStep, durationOf, frameAt, nextOffset, offsetOf, prevOffset, readRecording,
-  readRecordingList, recordingFromMemory, scrollDirection, toPercent, OVERLAY_HOLD_MS, frameForAction, ACTION_FRAME_LEAD_MS,
+  readRecordingList, recordingFromMemory, pickRecording, scrollDirection, toPercent, OVERLAY_HOLD_MS, frameForAction, ACTION_FRAME_LEAD_MS,
 } from '../hooks/useBrowserLive.replay'
 import { browserLiveStore } from '../hooks/useBrowserLive'
 import { browserStageStore, stageTurnId } from '../hooks/useBrowserLive.stage'
@@ -227,5 +227,22 @@ describe('the frame an action is drawn on', () => {
 
   it('never goes back to an earlier frame', () => {
     expect(frameForAction(rec, 4300, 1)).toBe(3)
+  })
+})
+
+
+describe('which recording the view shows', () => {
+  const rec = (frames: number, events: number): Recording => ({
+    turnId: 't', startedTs: 0, endedTs: 1, live: false, width: 10, height: 10, source: 'server',
+    frames: Array.from({ length: frames }, (_, i) => ({ i, ts: i, w: 10, h: 10, src: `f${i}` })),
+    events: Array.from({ length: events }, (_, i) => ({ id: `e${i}`, ts: i, op: 'click', label: '', args: {}, point: null, path: null, url: '', status: 'ok', actor: 'agent', loop: false })),
+  }) as Recording
+  it('the gateway with frames, else the card with frames, else the gateway\'s steps alone', () => {
+    const server = rec(2, 1), memory = rec(3, 0), stepsOnly = rec(0, 2)
+    expect(pickRecording(server, memory, false).recording).toBe(server)
+    expect(pickRecording(stepsOnly, memory, false).recording).toBe(memory)
+    expect(pickRecording(stepsOnly, null, false).recording).toBe(stepsOnly)
+    expect(pickRecording(null, null, true)).toEqual({ recording: null, loading: true })
+    expect(pickRecording(rec(0, 0), null, false).recording).toBeNull()
   })
 })

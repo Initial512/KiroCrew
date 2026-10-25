@@ -443,6 +443,38 @@ async def test_a_hidden_card_keeps_the_cast_for_the_recorder_only() -> None:
     assert len(relay.methods("Page.startScreencast")) == 1  # never started twice
 
 
+async def test_hiding_a_settled_recorder_cast_puts_it_back_on_the_ladder_picture() -> None:
+    stream, relay, sink = probe_stream(mask_passwords=False)
+    await stream.start()
+    stream._settled = True  # the still page was sharpened (quality 85)
+    await stream.set_visible(False)
+    await stream.set_visible(True)
+    ladder = stream._cast_picture()
+    assert ladder.quality < 85
+    last = relay.methods("Page.startScreencast")[-1][1]
+    assert (last["quality"], last["maxWidth"]) == (ladder.quality, ladder.width)
+    assert stream._settled is False and stream.casting is True
+
+
+async def test_the_hub_sink_records_through_the_real_recorder(tmp_path: Path) -> None:
+    """The real recorder behind the hub's sink: ``records`` follows an open turn."""
+    from kiro_crew.browser_harness import live_hub
+
+    rec, store, _clock = make_recorder(tmp_path)
+    hub = SimpleNamespace(recorder=rec)
+    sink = live_hub._StreamSink(hub, live_hub.LiveSession(session_key=KEY))  # type: ignore[arg-type]
+    assert sink.records is False, "no turn open: a hidden card stops its cast"
+    rec.turn_started(KEY, TURN)
+    assert sink.records is True
+    sink.note_size(64, 40)
+    rec.event(KEY, rc.user_event("click", 1, "u", point={"x": 3, "y": 4}))
+    rec.turn_ended(KEY)
+    await rec.flush()
+    assert sink.records is False
+    (event,) = store.turn_detail(KEY, TURN)["events"]
+    assert (event["fw"], event["fh"]) == (64, 40)
+
+
 async def test_without_a_recorder_a_hidden_card_still_stops_the_cast() -> None:
     stream, relay, _clock, _sink = make_stream()
     await stream.start()
@@ -451,6 +483,13 @@ async def test_without_a_recorder_a_hidden_card_still_stops_the_cast() -> None:
 
 
 # ── events: agent ops, the person's input, secrets ─────────────────────────
+
+
+def test_a_person_event_carries_no_english_label_of_its_own() -> None:
+    """The card words it (and badges it as the person's); only the person's text is kept."""
+    assert rc.user_event("click", 1, "https://a.example/")["label"] == ""
+    said = rc.user_event("other", 2, "https://a.example/", label="Didn't work - wrong password")
+    assert said["label"] == "Didn't work - wrong password" and said["actor"] == "user"
 
 
 def test_agent_points_are_scaled_onto_the_frame() -> None:
@@ -593,6 +632,57 @@ async def test_the_persons_press_move_release_is_a_drag_or_a_click(tmp_path: Pat
     assert scroll["op"] == "scroll" and scroll["args"] == {"dx": 0, "dy": 120}
 
 
+async def test_a_named_key_keeps_the_key_not_an_english_label(tmp_path: Path) -> None:
+    rec, store, _clock = make_recorder(tmp_path)
+    rec.turn_started(KEY, TURN)
+    rec.user_input(KEY, parse_input_event({"type": "key", "key": "Enter"}), "u")
+    rec.turn_ended(KEY)
+    await rec.flush()
+    (event,) = store.turn_detail(KEY, TURN)["events"]
+    assert event["label"] == "" and event["args"] == {"key": "Enter"}
+
+
+async def test_a_point_carries_the_size_of_the_frame_it_was_drawn_in(tmp_path: Path) -> None:
+    rec, store, clock = make_recorder(tmp_path)
+    rec.turn_started(KEY, TURN)
+    rec.frame(KEY, jpeg(size=(128, 80)), 128, 80, [], mask_ok=True)
+    rec.note_size(KEY, 64, 40)  # the stream stepped down after the last kept frame
+    clock.now += 1000
+    click = rc.agent_event(
+        "click", {}, {"ok": True, "x": 8.0, "y": 4.0}, ts=1, label="", url="", scale=0.5
+    )
+    rec.event(KEY, click)
+    rec.event(KEY, rc.agent_event("snapshot", {}, {"ok": True}, ts=2, label="", url="", scale=0.5))
+    rec.turn_ended(KEY)
+    await rec.flush()
+    shot, snap = store.turn_detail(KEY, TURN)["events"]
+    assert (shot["fw"], shot["fh"]) == (64, 40) and shot["point"] == {"x": 4, "y": 2}
+    assert "fw" not in snap, "no point, no frame size"
+
+
+async def test_a_new_turn_forgets_the_last_turns_frame_size(tmp_path: Path) -> None:
+    rec, store, _clock = make_recorder(tmp_path)
+    rec.turn_started(KEY, "t1")
+    rec.note_size(KEY, 64, 40)
+    rec.turn_ended(KEY)
+    rec.turn_started(KEY, "t2")
+    rec.event(KEY, rc.user_event("click", 1, "u", point={"x": 3, "y": 4}))
+    rec.turn_ended(KEY)
+    await rec.flush()
+    (event,) = store.turn_detail(KEY, "t2")["events"]
+    assert "fw" not in event
+
+
+def test_turns_with_no_frames_still_count_against_the_cap(tmp_path: Path) -> None:
+    store = rc.RecordingStore(
+        lambda: tmp_path, rc.RecordingConfig(max_session_bytes=rc.TURN_META_BYTES * 3)
+    )
+    for i in range(10):
+        store.start_turn(KEY, f"t{i}", 100 + i)
+        store.end_turn(KEY, f"t{i}", 101 + i)
+    assert len(store.list_turns(KEY)) <= 3
+
+
 # ── caps and eviction ──────────────────────────────────────────────────────
 
 
@@ -605,7 +695,9 @@ def _fill(store: rc.RecordingStore, key: str, turn: str, ts: int, n: int = 3) ->
 
 def test_the_session_cap_evicts_the_oldest_finished_turn(tmp_path: Path) -> None:
     size = len(jpeg())
-    store = rc.RecordingStore(lambda: tmp_path, rc.RecordingConfig(max_session_bytes=size * 7))
+    store = rc.RecordingStore(
+        lambda: tmp_path, rc.RecordingConfig(max_session_bytes=size * 7 + rc.TURN_META_BYTES * 2)
+    )
     _fill(store, KEY, "t1", 100)
     _fill(store, KEY, "t2", 200)
     _fill(store, KEY, "t3", 300)
@@ -616,7 +708,9 @@ def test_the_session_cap_evicts_the_oldest_finished_turn(tmp_path: Path) -> None
 
 def test_the_global_cap_evicts_the_oldest_turn_of_any_session(tmp_path: Path) -> None:
     size = len(jpeg())
-    store = rc.RecordingStore(lambda: tmp_path, rc.RecordingConfig(max_total_bytes=size * 7))
+    store = rc.RecordingStore(
+        lambda: tmp_path, rc.RecordingConfig(max_total_bytes=size * 7 + rc.TURN_META_BYTES * 2)
+    )
     _fill(store, "chat-a", "t1", 100)
     _fill(store, "chat-b", "t2", 200)
     _fill(store, "chat-a", "t3", 300)
@@ -626,7 +720,9 @@ def test_the_global_cap_evicts_the_oldest_turn_of_any_session(tmp_path: Path) ->
 
 def test_a_running_turn_past_the_cap_stops_keeping_frames_not_events(tmp_path: Path) -> None:
     size = len(jpeg())
-    store = rc.RecordingStore(lambda: tmp_path, rc.RecordingConfig(max_session_bytes=size * 2))
+    store = rc.RecordingStore(
+        lambda: tmp_path, rc.RecordingConfig(max_session_bytes=size * 2 + rc.TURN_META_BYTES)
+    )
     store.start_turn(KEY, TURN, 1)
     kept = [store.add_frame(KEY, TURN, jpeg((i * 50, 0, 0)), 64, 40, [], True, i) for i in range(4)]
     assert kept[0] and not kept[-1]

@@ -344,7 +344,12 @@ class _StreamSink:
     @property
     def records(self) -> bool:
         rec = self._hub.recorder
-        return rec is not None and rec.enabled
+        return rec is not None and rec.turn_open(self._sess.session_key)
+
+    def note_size(self, width: int, height: int) -> None:
+        rec = self._hub.recorder
+        if rec is not None:
+            rec.note_size(self._sess.session_key, width, height)
 
     def wants_frame(self) -> bool:
         rec = self._hub.recorder
@@ -923,7 +928,7 @@ class LiveHub:
         try:
             rec.event(
                 sess.session_key,
-                user_event("other", now_ms(), sess.url, label=f"You handed back: {said}"),
+                user_event("other", now_ms(), sess.url, label=said),
             )
         except Exception:  # noqa: BLE001 - a replay event never fails the hand-back
             logger.debug("browser live: hand-back event not recorded", exc_info=True)

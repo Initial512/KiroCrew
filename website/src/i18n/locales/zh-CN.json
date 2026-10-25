@@ -15921,7 +15921,7 @@
         "origins_full": "最多 {{count}} 个地址。先移除一个才能再加。",
         "origins_label": "Preview 标签能打开的本地地址",
         "quality_auto": "自动（按网速）",
-        "quality_desc": "自动：按网速调帧率和画质。网慢时先降画质，再降帧率。",
+        "quality_desc": "自动：按网速调整。网慢时先降帧率，画面保持清晰。",
         "quality_high": "高",
         "quality_label": "画质",
         "quality_low": "低",

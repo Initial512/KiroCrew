@@ -284,7 +284,16 @@ def test_risk_is_asked_once_per_action(seam, tmp_path):
         sum(1 for q in call["questions"] if q.id.startswith("risk_"))
         for call in seam.provider.calls
     ]
-    assert risk_counts == [2, 0, 0, 0]
+    # Arrow keys are judged safe by code; only the click is asked about, once.
+    assert risk_counts == [0, 0, 0, 0]
+    seam.provider = Provider(judge(done_after=2))
+    _run({**GAME, "keys": ["ArrowLeft", "Enter"], "click": ["e2"]}, _ctx(Game(), tmp_path)[0])
+    first = seam.provider.calls[0]["questions"]
+    assert [q.prompt.split("'")[1] for q in first if q.id.startswith("risk_")] == [
+        "Press Enter",
+        "Click e2",
+    ]
+    assert not any(q.id.startswith("risk_") for q in seam.provider.calls[1]["questions"])
 
 
 @pytest.mark.parametrize("which,stop", [("stuck", "stuck"), ("off", "off_path")])
@@ -373,6 +382,26 @@ def test_a_refused_landing_url_stops_it_and_leaves_the_page(seam, tmp_path):
     ctx, _ = _ctx(game, tmp_path, url_allowed=lambda url: not url.startswith("http://10."))
     result = _run(GAME, ctx)
     assert result["stop"] == "redirect_refused" and game.href == "about:blank"
+
+
+def test_a_refused_page_is_never_read_or_sent_to_the_provider(seam, tmp_path):
+    seam.provider = Provider(judge())
+    game = Game()
+    game.href = "http://10.0.0.1/admin"
+    ctx, _ = _ctx(game, tmp_path, url_allowed=lambda url: not url.startswith("http://10."))
+    result = _run(GAME, ctx)
+    assert result["stop"] == "redirect_refused"
+    assert seam.provider.calls == [], "the URL gate runs before the page text leaves"
+
+
+def test_an_action_nobody_has_judged_is_never_offered(seam, tmp_path):
+    seam.provider = Provider(judge(pick="click_e12", done_after=1))
+    game = Game()
+    refs = [f"e{i}" for i in range(1, 13)]
+    result = _run({"goal": "Press them", "click": refs}, _ctx(game, tmp_path)[0])
+    first = next(q for q in seam.provider.calls[0]["questions"] if isinstance(q, Choice))
+    assert len(first.options) == reflex.RISK_PER_REQUEST and "click_e12" not in first.options
+    assert result["ok"] and (5.0, 5.0) in game.clicked  # it clicked what was judged
 
 
 def test_type_only_sends_a_value_it_can_point_to(seam, tmp_path):

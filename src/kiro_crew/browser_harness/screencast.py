@@ -589,6 +589,14 @@ _MASK_JS = (
     "input[autocomplete~=new-password],input[autocomplete~=one-time-code]';"
     "const OPAQUE={OBJECT:1,EMBED:1,FENCEDFRAME:1,PORTAL:1};"
     "const vis=b=>b.width>0&&b.height>0;"
+    "const plain=e=>{for(let n=e;n;n=n.parentElement||(n.getRootNode&&n.getRootNode().host)||null){"
+    "const c=getComputedStyle(n);"
+    "if((c.rotate&&c.rotate!=='none')||(c.scale&&c.scale!=='none'))return false;"
+    "const t=c.transform;if(t&&t!=='none'){"
+    "if(t.indexOf('matrix(')!==0)return false;"
+    "const v=t.slice(7,-1).split(',').map(Number);"
+    "if(Math.abs(v[0]-1)>.001||Math.abs(v[1])>.001||Math.abs(v[2])>.001||Math.abs(v[3]-1)>.001)return false;}}"
+    "return true;};"
     "const box=(b,ox,oy)=>[b.left+ox,b.top+oy,b.width,b.height];"
     "const walk=(root,d,ox,oy)=>{"
     "for(const e of root.querySelectorAll('input')){let s=e.matches(SEL);"
@@ -602,7 +610,7 @@ _MASK_JS = (
     "if(!isF&&!OPAQUE[tag])continue;const b=h.getBoundingClientRect();"
     "if(!vis(b))continue;let doc=null;"
     "if(isF){try{doc=h.contentDocument;}catch(_){doc=null;}}"
-    "const scaled=Math.abs(b.width-h.offsetWidth)>1||Math.abs(b.height-h.offsetHeight)>1;"
+    "const scaled=!plain(h)||Math.abs(b.width-h.offsetWidth)>1||Math.abs(b.height-h.offsetHeight)>1;"
     "if(doc&&!scaled){const cs=getComputedStyle(h);"
     "walk(doc,d+1,ox+b.left+h.clientLeft+(parseFloat(cs.paddingLeft)||0),"
     "oy+b.top+h.clientTop+(parseFloat(cs.paddingTop)||0));}"
@@ -857,11 +865,17 @@ class LiveStream:
         self.visible = visible
         if not self.running:
             return
+        was_settled = self._settled or self._settle_landing
         self._settled = self._settle_landing = False
-        if visible:
-            if not self.casting:
+        if visible and not self.casting:
+            await self._start_cast()
+        elif self.casting and was_settled:
+            # A recorder-only cast kept running at the settle picture: put it back
+            # on the ladder's picture, or it would stay sharp while the flag says not.
+            await self._stop_cast()
+            if visible or self._casts_hidden:
                 await self._start_cast()
-        elif self.casting and not self._casts_hidden:
+        elif self.casting and not visible and not self._casts_hidden:
             await self._stop_cast()
 
     def ack(self, seq: int) -> bool:
@@ -914,6 +928,9 @@ class LiveStream:
         self.metrics.last_frame_at = now
         self._input_pending = False
         settle_frame = self._settled
+        # Captured at the settle picture even when it ends the settle below, so it
+        # is never ladder evidence.
+        sharp = settle_frame
         if settle_frame and not self._settle_landing and now > self._settle_grace_until:
             # The page changed after the still: back to the ladder's picture. This
             # frame still goes out (it is current); the restart's frame follows.
@@ -926,6 +943,11 @@ class LiveStream:
         width, height = size
         self._note_scale(meta, width)
         records = self.records
+        if records:
+            note = getattr(self.sink, "note_size", None)
+            if callable(note):
+                # Every frame, not only kept ones: a point placed now uses this scale.
+                note(width, height)
         want = records and self._recorder_wants()
         scroll = frame_scroll(meta)
         boxes = await self._mask_rects(width, height, force=want, scroll=scroll)
@@ -965,7 +987,7 @@ class LiveStream:
             if self._settle_landing:
                 self._settle_landing = False
                 self._settle_grace_until = self._clock() + SETTLE_GRACE_S
-        else:
+        elif not sharp:
             self.controller.observe(len(jpeg), took)
         await self._paced_ack(params.get("sessionId"))
 
@@ -1116,7 +1138,9 @@ class LiveStream:
             return []
         now = self._clock()
         if not force and self._mask_at >= 0 and now - self._mask_at < MASK_MIN_INTERVAL_S:
-            return clip_mask_rects(self._mask_boxes, self.scale, width, height, limit=MASK_BOX_LIMIT)
+            return clip_mask_rects(
+                self._mask_boxes, self.scale, width, height, limit=MASK_BOX_LIMIT
+            )
         self._mask_at = now
         try:
             reply = await self.relay.send(
@@ -1126,7 +1150,9 @@ class LiveStream:
             )
         except Exception:
             # Keep the last boxes rather than unmask on a transient failure.
-            return clip_mask_rects(self._mask_boxes, self.scale, width, height, limit=MASK_BOX_LIMIT)
+            return clip_mask_rects(
+                self._mask_boxes, self.scale, width, height, limit=MASK_BOX_LIMIT
+            )
         value = ((reply.get("result") or {}).get("value")) if isinstance(reply, dict) else None
         frames: Any = []
         if isinstance(value, dict):
@@ -1136,7 +1162,9 @@ class LiveStream:
         if not isinstance(boxes, list) or not isinstance(frames, list):
             # An exception inside the page, or a reply of another shape: the boxes
             # are unknown, which is not the same as "no password field".
-            return clip_mask_rects(self._mask_boxes, self.scale, width, height, limit=MASK_BOX_LIMIT)
+            return clip_mask_rects(
+                self._mask_boxes, self.scale, width, height, limit=MASK_BOX_LIMIT
+            )
         self._mask_boxes = boxes
         rects = clip_mask_rects(boxes, self.scale, width, height, limit=MASK_BOX_LIMIT)
         partial = isinstance(value, dict) and bool(value.get("partial"))
@@ -1174,7 +1202,7 @@ class LiveStream:
         """Ask for one sharp frame of a page that has gone still.
 
         Fires once per still: after a ladder frame, :data:`SETTLE_S` with no newer
-        frame, the card visible, no takeover input in the last :data:`SETTLE_S`,
+        frame, the card visible, no takeover and no input in flight,
         at most one per :data:`SETTLE_MIN_INTERVAL_S`, and a quality that is not
         pinned below the sharpest picture. The
         screencast restarts at the settle picture; Chrome answers with one frame
@@ -1188,7 +1216,7 @@ class LiveStream:
         now = self._clock()
         if self.metrics.last_frame_at < 0 or now - self.metrics.last_frame_at < SETTLE_S:
             return False
-        if self._input_pending or (self._takeover and now - self._input_at < SETTLE_S):
+        if self._input_pending or self._takeover:
             return False
         if self._settle_at >= 0 and now - self._settle_at < SETTLE_MIN_INTERVAL_S:
             return False

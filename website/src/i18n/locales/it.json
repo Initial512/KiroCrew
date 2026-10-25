@@ -16461,7 +16461,7 @@
         "live_enabled_label": "Mostra la vista live nella chat",
         "live_enabled_desc": "Quando Kiro usa il browser, il turno mostra una scheda live. Fai clic sull’immagine per prendere il controllo.",
         "quality_label": "Qualità",
-        "quality_desc": "Auto adatta frame rate e immagine alla tua connessione: una connessione lenta abbassa prima l’immagine, poi il frame rate.",
+        "quality_desc": "Auto si adatta alla tua connessione: una connessione lenta abbassa prima il frame rate e l’immagine resta nitida.",
         "quality_auto": "Auto (in base alla connessione)",
         "quality_high": "Alta",
         "quality_medium": "Media",

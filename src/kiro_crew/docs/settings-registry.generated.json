@@ -35,7 +35,7 @@
       "label": "Quality",
       "tab": "browser",
       "route": "/settings/browser?highlight=key%3Abrowser.live.quality",
-      "hint": "Auto adapts frame rate and picture to your link: a slow link lowers the picture first, then the frame rate.",
+      "hint": "Auto adapts to your link: a slow link lowers the frame rate first and keeps the picture sharp.",
       "configKey": "browser.live.quality"
     },
     {

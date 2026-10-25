@@ -134,6 +134,8 @@ export default function BrowserLiveStage({ sessionKey, stage, active }: BrowserL
 
   const onKeyDown = useCallback((e: KeyboardEvent<HTMLDivElement>) => {
     if (inControl && mode === 'live') return
+    // The turn picker's menu (portalled, still in this React tree) owns its own keys.
+    if ((e.target as HTMLElement).closest?.('[role="menu"]')) return
     const tag = (e.target as HTMLElement).tagName
     if (tag === 'INPUT' && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) return
     if ((tag === 'BUTTON' || tag === 'INPUT') && e.key === ' ') return
@@ -180,7 +182,9 @@ export default function BrowserLiveStage({ sessionKey, stage, active }: BrowserL
   // canvas stretches every frame to the recording's last size. So the overlay is
   // placed in the showing frame's own space, which is a share of the same box.
   const shown = recording && frameIdx >= 0 ? recording.frames[frameIdx] : null
-  const overlaySpace = shown && shown.w > 0 && shown.h > 0 ? { w: shown.w, h: shown.h } : space
+  const ev = evIdx >= 0 && recording ? recording.events[evIdx] : null
+  const overlaySpace = ev?.fw && ev.fh ? { w: ev.fw, h: ev.fh }
+    : shown && shown.w > 0 && shown.h > 0 ? { w: shown.w, h: shown.h } : space
   const stepIdx = recording ? currentStep(recording, mode === 'live' ? player.duration : player.t) : -1
   const currentChoice = choices.findIndex(c => c.turnId === turnId)
   const showSteps = !!recording && !(inControl && mode === 'live')

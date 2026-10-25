@@ -67,22 +67,32 @@ export function PictureBox({ ratio, children, testId }: { ratio: number; childre
 }
 
 const imageCache = new Map<string, HTMLImageElement>()
+const imageLoading = new Map<string, Promise<HTMLImageElement>>()
 const IMAGE_CACHE_MAX = 120
 
+/** One request per URL: callers share the pending load, and a failed load is forgotten so a retry fetches again. */
 function loadImage(url: string): Promise<HTMLImageElement> {
   const hit = imageCache.get(url)
-  if (hit?.complete && hit.naturalWidth > 0) return Promise.resolve(hit)
-  return new Promise((resolve, reject) => {
-    const img = hit ?? new Image()
-    img.decoding = 'async'
-    img.onload = () => resolve(img)
-    img.onerror = () => reject(new Error('frame'))
-    if (!hit) {
-      img.src = url
+  if (hit) return Promise.resolve(hit)
+  const pending = imageLoading.get(url)
+  if (pending) return pending
+  const img = new Image()
+  img.decoding = 'async'
+  const load = new Promise<HTMLImageElement>((resolve, reject) => {
+    img.onload = () => {
+      imageLoading.delete(url)
       imageCache.set(url, img)
       if (imageCache.size > IMAGE_CACHE_MAX) imageCache.delete(imageCache.keys().next().value as string)
+      resolve(img)
     }
+    img.onerror = () => {
+      imageLoading.delete(url)
+      reject(new Error('frame'))
+    }
+    img.src = url
   })
+  imageLoading.set(url, load)
+  return load
 }
 
 /** Paints `rec.frames[index]` into a canvas sized to the recording. */
@@ -125,7 +135,11 @@ export function ReplayCanvas({ rec, index, label }: { rec: Recording; index: num
     }
     return () => { cancelled = true }
   }, [rec, index])
-  return <canvas ref={ref} role="img" aria-label={label} data-testid="browser-replay-canvas" data-frame-index={index} className="block w-full h-full bg-[var(--card)]" />
+  return (
+    <div role="img" aria-label={label} className="block w-full h-full">
+      <canvas ref={ref} aria-hidden="true" data-testid="browser-replay-canvas" data-frame-index={index} className="block w-full h-full bg-[var(--card)]" />
+    </div>
+  )
 }
 
 /** What an event says in a few words: its own label, else a description of its op. */

@@ -8648,7 +8648,7 @@
         "live_enabled_label": "Show the live view in chat",
         "live_enabled_desc": "When Kiro uses the browser, the turn shows a live card. Click the picture to take over.",
         "quality_label": "Quality",
-        "quality_desc": "Auto adapts frame rate and picture to your link: a slow link lowers the picture first, then the frame rate.",
+        "quality_desc": "Auto adapts to your link: a slow link lowers the frame rate first and keeps the picture sharp.",
         "quality_auto": "Auto (by link speed)",
         "quality_high": "High",
         "quality_medium": "Medium",

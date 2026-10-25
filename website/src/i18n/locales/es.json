@@ -16461,7 +16461,7 @@
         "live_enabled_label": "Mostrar la vista en vivo en el chat",
         "live_enabled_desc": "Cuando Kiro usa el navegador, el turno muestra una tarjeta en vivo. Haz clic en la imagen para tomar el control.",
         "quality_label": "Calidad",
-        "quality_desc": "Auto adapta la tasa de fotogramas y la imagen a tu conexión: una conexión lenta baja primero la imagen y luego la tasa.",
+        "quality_desc": "Auto se adapta a tu conexión: una conexión lenta baja primero la tasa de fotogramas y la imagen sigue nítida.",
         "quality_auto": "Auto (según la conexión)",
         "quality_high": "Alta",
         "quality_medium": "Media",

@@ -21,22 +21,23 @@ import type { BrowserLiveLoop } from '../../hooks/useBrowserLive'
 export const LOOP_STEPS_SHOWN = 3
 
 /** The stop tokens with a sentence of their own; any other says only that it stopped. */
-const STOP_KEYS: Record<string, string> = {
-  done: 'stop_done',
-  until: 'stop_until',
-  stuck: 'stop_stuck',
-  risk: 'stop_risk',
-  budget: 'stop_budget',
-  user_in_control: 'stop_user_in_control',
-  off_path: 'stop_off_path',
-  no_actions_left: 'stop_no_actions_left',
-  decision_unavailable: 'stop_decision_unavailable',
-  redirect_refused: 'stop_redirect_refused',
-}
+const STOP_KEYS = {
+  done: 'pages.chat.browserLiveLoop.stop_done',
+  until: 'pages.chat.browserLiveLoop.stop_until',
+  stuck: 'pages.chat.browserLiveLoop.stop_stuck',
+  risk: 'pages.chat.browserLiveLoop.stop_risk',
+  budget: 'pages.chat.browserLiveLoop.stop_budget',
+  user_in_control: 'pages.chat.browserLiveLoop.stop_user_in_control',
+  off_path: 'pages.chat.browserLiveLoop.stop_off_path',
+  no_actions_left: 'pages.chat.browserLiveLoop.stop_no_actions_left',
+  decision_unavailable: 'pages.chat.browserLiveLoop.stop_decision_unavailable',
+  redirect_refused: 'pages.chat.browserLiveLoop.stop_redirect_refused',
+} as const
 
 /** The sentence for a loop's stop token. */
 export function stopSentence(stop: string): string {
-  return i18nT(`pages.chat.browserLiveLoop.${STOP_KEYS[stop] ?? 'stop_other'}`)
+  const key = Object.prototype.hasOwnProperty.call(STOP_KEYS, stop) ? STOP_KEYS[stop as keyof typeof STOP_KEYS] : 'pages.chat.browserLiveLoop.stop_other'
+  return i18nT(key)
 }
 
 /** How much of its budget the loop has used, 0..1: the larger of steps and time; null when neither is known. */

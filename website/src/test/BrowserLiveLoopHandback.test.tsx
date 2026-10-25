@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import i18next from 'i18next'
 import '../i18n/all'
 
@@ -62,6 +62,9 @@ beforeEach(() => {
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null)
 })
 afterEach(() => {
+  // Unmount before the store reset: its notify() would otherwise re-render the
+  // still-mounted card outside act() (this hook runs before RTL's own cleanup).
+  cleanup()
   browserLiveStore.__setWritesForTests(restore)
   browserLiveStore.__resetForTests()
   vi.unstubAllGlobals()
@@ -210,7 +213,7 @@ describe('reflex steps on the replay timeline', () => {
 
 describe('the hand-back bar', () => {
   it('offers the card\'s own four choices, or the agent\'s', () => {
-    expect(handbackChoices([])).toEqual(DEFAULT_HANDBACK_CHOICES.map(id => i18next.t(`pages.chat.browserLiveHandback.choice_${id}`)))
+    expect(handbackChoices([])).toEqual(DEFAULT_HANDBACK_CHOICES.map(key => i18next.t(key)))
     expect(handbackChoices(['I signed in', 'Not signed in'])).toEqual(['I signed in', 'Not signed in'])
   })
 
@@ -224,7 +227,7 @@ describe('the hand-back bar', () => {
   it('a choice and a note go with the hand-back on Enter', async () => {
     live({ state: 'in_control' })
     render(card())
-    fireEvent.click(screen.getByRole('radio', { name: "Didn't work" }))
+    fireEvent.click(screen.getByRole('button', { name: "Didn't work" }))
     const note = screen.getByTestId('browser-live-handback-note')
     fireEvent.change(note, { target: { value: '  It says the password is wrong  ' } })
     await act(async () => { fireEvent.submit(note.closest('form')!) })
