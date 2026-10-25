@@ -8,12 +8,24 @@ Shape, from the measured relay spike (RFC "Live browser in chat", section 3):
 * **Pacing.** Chrome is acked only after the card has acked the frame's ``seq``
   (or :data:`CARD_ACK_TIMEOUT_S` passed), on a fixed time grid, so transit time
   counts toward the frame interval instead of adding to it.
-* **Ladder.** Once a second :class:`AdaptiveController` picks one of the eight
-  :data:`LADDER` rungs: down at once when more than 20% of frames arrive late or
-  the link cannot carry the rung, as far as the measured rate needs; up after two
-  calm seconds, straight to the best rung the link covers with 30% headroom. An
-  fps change is pacing only; a quality or width change restarts the screencast
-  on the same session.
+* **Ladder.** Once a second :class:`AdaptiveController` picks a frame rate
+  (:data:`FPS_STEPS`) and a picture (:data:`PICTURES`) as two separate axes. A
+  slow link costs frame rate first: fps drops at once when more than 20% of
+  frames arrive late or the link cannot carry it, and that is pacing only, with
+  no restart. The picture drops only when, at the lowest fps, one frame has taken
+  over :data:`PICTURE_DOWN_DELIVERY_S` to land for :data:`PICTURE_DOWN_WINDOWS`
+  windows in a row, and climbs back one step after :data:`PICTURE_UP_CALM`
+  windows with room; a picture change restarts the screencast on the same
+  session. A window with no frame (a still page) is no evidence and
+  changes nothing.
+* **Link memory.** A stream starts where the previous stream of the same card on
+  the same relay left off (a new turn, a tab switch), within
+  :data:`LINK_MEMORY_S`, so a slow link is not re-learned on every step.
+* **Settle frame.** When no frame has come for :data:`SETTLE_S`, the screencast is
+  restarted once at :data:`SETTLE_QUALITY` and the sharpest picture's width;
+  Chrome answers with one frame of the still page, masked like every frame.
+  The next real change goes back to the ladder's picture. Not during takeover
+  input, and not with a fixed ``medium`` or ``low`` quality.
 * **Off screen, off.** :meth:`LiveStream.set_visible` stops the screencast while
   the card is hidden and starts it again when it shows.
 * **Watchdog.** Input sent with no frame for :data:`WATCHDOG_S` restarts the
@@ -37,6 +49,7 @@ import logging
 import secrets
 import struct
 import time
+import weakref
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -71,20 +84,41 @@ class Rung:
         return int(self.width * 0.6)
 
 
-#: The eight rungs from the RFC, best first. Index 0 is the 60 fps target.
-LADDER: tuple[Rung, ...] = (
-    Rung(60, 60, 1280),
-    Rung(45, 55, 1280),
-    Rung(30, 50, 1280),
-    Rung(30, 45, 960),
-    Rung(20, 40, 960),
-    Rung(15, 40, 800),
-    Rung(10, 35, 640),
-    Rung(5, 30, 640),
+@dataclass(frozen=True)
+class Picture:
+    """JPEG quality and frame width: what the person sees, apart from motion."""
+
+    quality: int
+    width: int
+
+
+#: Frame rates, fastest first. Changing between them is pacing only.
+FPS_STEPS: tuple[int, ...] = (60, 45, 30, 20, 15, 10, 5)
+
+#: Pictures, sharpest first. Changing between them restarts the screencast.
+PICTURES: tuple[Picture, ...] = (
+    Picture(60, 1280),
+    Picture(45, 960),
+    Picture(40, 800),
+    Picture(30, 640),
 )
 
-#: The lowest rung whose fps is at most 15: the stream's rate during takeover.
-TAKEOVER_RUNG = next(i for i, r in enumerate(LADDER) if r.fps <= 15)
+#: Every (picture, fps) pair as one index, ``picture * len(FPS_STEPS) + fps``:
+#: the ``rung`` the hub reports. Index 0 is 60 fps at the sharpest picture.
+LADDER: tuple[Rung, ...] = tuple(
+    Rung(fps, pic.quality, pic.width) for pic in PICTURES for fps in FPS_STEPS
+)
+
+
+def rung_index(picture: int, fps_step: int) -> int:
+    """The :data:`LADDER` index of a picture and a frame-rate step."""
+    return picture * len(FPS_STEPS) + fps_step
+
+
+#: The frame-rate step of 15 fps: the stream's ceiling during takeover.
+TAKEOVER_FPS_STEP = FPS_STEPS.index(15)
+#: The rung a takeover lands on from the top: 15 fps, picture unchanged.
+TAKEOVER_RUNG = rung_index(0, TAKEOVER_FPS_STEP)
 
 #: Seconds without a frame after an input before the screencast is restarted.
 WATCHDOG_S = 3.0
@@ -98,8 +132,30 @@ MASK_MIN_INTERVAL_S = 0.25
 LATE_PERIODS = 1.5
 #: Share of late frames in one window that steps the ladder down.
 LATE_SHARE_DOWN = 0.2
-#: Calm windows (no step-down trigger) before the ladder may step up.
+#: Calm windows (no step-down trigger) before the frame rate may step up.
 CALM_WINDOWS_UP = 2
+#: Seconds one frame may take to reach the card at the lowest fps before the
+#: picture counts as too heavy for the link (under 2 frames a second).
+PICTURE_DOWN_DELIVERY_S = 0.5
+#: Windows in a row with too heavy a picture before it drops a step.
+PICTURE_DOWN_WINDOWS = 2
+#: Windows in a row with room for the sharper picture before it climbs a step.
+PICTURE_UP_CALM = 5
+#: Seconds a card's last ladder position is kept for its next stream.
+LINK_MEMORY_S = 600.0
+#: Seconds with no frame before the settle frame is asked for.
+SETTLE_S = 0.4
+#: JPEG quality of the settle frame.
+SETTLE_QUALITY = 85
+#: Shortest interval between two settle frames: a page that changes every half
+#: second (a blinking text cursor) gets one sharp frame per interval, not per blink.
+SETTLE_MIN_INTERVAL_S = 2.0
+#: Seconds after the settle frame lands in which another frame still counts as
+#: part of the settle restart rather than as a page change.
+SETTLE_GRACE_S = 0.25
+#: Interval of the control loop: the settle check runs on every step, the ladder
+#: tick every ``TICK_S``.
+CONTROL_STEP_S = 0.2
 #: Headroom the measured link must have over a higher rung's need to climb to it.
 UP_HEADROOM = 1.3
 #: A rung is kept only while its need stays under this share of the link rate.
@@ -142,16 +198,26 @@ class LiveConfig:
             mask_passwords=bool(getattr(live, "mask_passwords", True)),
         )
 
+    def fps_floor(self) -> int:
+        """The fastest :data:`FPS_STEPS` step ``max_fps`` admits."""
+        return next(i for i, fps in enumerate(FPS_STEPS) if fps <= self.max_fps)
+
+    def picture_floor(self) -> int:
+        """The sharpest :data:`PICTURES` step ``quality`` admits."""
+        return _QUALITY_FLOORS[self.quality]
+
+    @property
+    def settles(self) -> bool:
+        """Whether a still page gets the sharp settle frame (``auto`` and ``high``)."""
+        return self.picture_floor() == 0
+
     def best_rung(self) -> int:
         """The highest rung this config admits: the ``max_fps`` and ``quality`` floors."""
-        rung = 0
-        while rung < len(LADDER) - 1 and LADDER[rung].fps > self.max_fps:
-            rung += 1
-        return max(rung, _QUALITY_FLOORS[self.quality])
+        return rung_index(self.picture_floor(), self.fps_floor())
 
 
-#: ``browser.live.quality`` as the rung a fixed quality pins the ladder's top to.
-_QUALITY_FLOORS: dict[str, int] = {"auto": 0, "high": 0, "medium": 3, "low": 5}
+#: ``browser.live.quality`` as the picture a fixed quality pins the ladder's top to.
+_QUALITY_FLOORS: dict[str, int] = {"auto": 0, "high": 0, "medium": 1, "low": 2}
 
 
 def encode_frame(header: Mapping[str, Any], jpeg: bytes) -> bytes:
@@ -290,14 +356,28 @@ class TickStats:
 
 
 class AdaptiveController:
-    """The pure ladder decision: measurements in, rung out. No I/O, no clock."""
+    """The pure ladder decision: measurements in, frame rate and picture out. No I/O, no clock.
 
-    def __init__(self, *, floor: int = 0, ceiling: int = len(LADDER) - 1) -> None:
-        self.rung = max(0, min(floor, ceiling))
-        self.floor = floor
-        self.ceiling = ceiling
+    Two axes. ``fps_step`` indexes :data:`FPS_STEPS` and moves freely, since it is
+    pacing only. ``picture`` indexes :data:`PICTURES` and moves rarely, since a
+    change restarts the screencast and the person sees the picture go soft or
+    sharp (see :meth:`_pick_picture`). ``rung`` folds the two into one
+    :data:`LADDER` index for the hub.
+    """
+
+    def __init__(self, *, fps_floor: int = 0, picture_floor: int = 0) -> None:
+        self.fps_floor = max(0, min(fps_floor, len(FPS_STEPS) - 1))
+        self.picture_floor = max(0, min(picture_floor, len(PICTURES) - 1))
+        self.fps_step = self.fps_floor
+        self.picture = self.picture_floor
         self.calm = 0
+        self.squeezed = 0
+        self.roomy = 0
         self.window = _Window()
+
+    @property
+    def rung(self) -> int:
+        return rung_index(self.picture, self.fps_step)
 
     def observe(self, nbytes: int, delivery_s: float) -> None:
         """Record one frame: its size and the time from send to the card's ack."""
@@ -308,26 +388,27 @@ class AdaptiveController:
         if delivery_s > LATE_PERIODS * LADDER[self.rung].period:
             w.late += 1
 
-    def set_bounds(self, *, floor: int | None = None, ceiling: int | None = None) -> int:
-        """Narrow or widen the rungs in play; the current rung is clamped into them."""
-        if floor is not None:
-            self.floor = max(0, min(floor, len(LADDER) - 1))
-        if ceiling is not None:
-            self.ceiling = max(0, min(ceiling, len(LADDER) - 1))
-        if self.floor > self.ceiling:
-            self.floor = self.ceiling
-        self.rung = max(self.floor, min(self.rung, self.ceiling))
+    def set_floors(self, *, fps_floor: int | None = None, picture_floor: int | None = None) -> int:
+        """Move the fastest fps and the sharpest picture in play; the position is clamped."""
+        if fps_floor is not None:
+            self.fps_floor = max(0, min(fps_floor, len(FPS_STEPS) - 1))
+            self.fps_step = max(self.fps_step, self.fps_floor)
+        if picture_floor is not None:
+            self.picture_floor = max(0, min(picture_floor, len(PICTURES) - 1))
+            self.picture = max(self.picture, self.picture_floor)
+        return self.rung
+
+    def restore(self, picture: int, fps_step: int) -> int:
+        """Start from a remembered position, clamped into the floors."""
+        self.picture = max(self.picture_floor, min(picture, len(PICTURES) - 1))
+        self.fps_step = max(self.fps_floor, min(fps_step, len(FPS_STEPS) - 1))
         return self.rung
 
     def tick(self) -> TickStats:
-        """Close the window and pick the next rung. Returns what it measured."""
+        """Close the window and pick the next position. Returns what it measured."""
         w, self.window = self.window, _Window()
-        cur = LADDER[self.rung]
         n = max(w.frames, 1)
         per_frame = w.bytes / n
-        # Link rate: bytes the card took divided by the time it took to take them.
-        # A window with no measurable delivery time is a link faster than we can see.
-        link_rate = w.bytes / w.delivery_s if w.delivery_s > 1e-3 and w.bytes else float("inf")
         late_share = w.late / n if w.frames else 0.0
         stats = TickStats(
             rung=self.rung,
@@ -336,32 +417,119 @@ class AdaptiveController:
             late_share=round(late_share, 3),
             kb_per_frame=round(per_frame / 1024, 1),
         )
+        if not w.frames:
+            # A still page sends nothing: no evidence about the link either way.
+            return stats
+        # Link rate: bytes the card took divided by the time it took to take them.
+        # A window with no measurable delivery time is a link faster than we can see.
+        link = w.bytes / w.delivery_s if w.delivery_s > 1e-3 and w.bytes else float("inf")
+        cur = PICTURES[self.picture]
 
-        def _need(r: Rung) -> float:
-            return per_frame * (r.quality / cur.quality) * (r.width / cur.width) ** 2 * r.fps
+        def need(picture: int, fps_step: int) -> float:
+            p = PICTURES[picture]
+            scale = (p.quality / cur.quality) * (p.width / cur.width) ** 2
+            return per_frame * scale * FPS_STEPS[fps_step]
 
-        if w.frames and (late_share > LATE_SHARE_DOWN or _need(cur) > link_rate * DOWN_UTILISATION):
+        bottom = len(FPS_STEPS) - 1
+        if (
+            late_share > LATE_SHARE_DOWN
+            or need(self.picture, self.fps_step) > link * DOWN_UTILISATION
+        ):
             self.calm = 0
-            target = self.rung + 1
-            while target < self.ceiling:
-                if _need(LADDER[target]) <= link_rate * DOWN_TARGET_UTILISATION:
-                    break
+            # Frame rate first: the slowest step still needed, at least one down.
+            target = min(self.fps_step + 1, bottom)
+            while target < bottom and need(self.picture, target) > link * DOWN_TARGET_UTILISATION:
                 target += 1
-            self.rung = min(target, self.ceiling)
+            self.fps_step = max(target, self.fps_floor)
         else:
             self.calm += 1
-            if self.calm >= CALM_WINDOWS_UP and self.rung > self.floor:
-                best = self.rung
-                for r in range(self.rung - 1, self.floor - 1, -1):
-                    if _need(LADDER[r]) * UP_HEADROOM <= link_rate:
-                        best = r
+            if self.calm >= CALM_WINDOWS_UP:
+                best = self.fps_step
+                for step in range(self.fps_step - 1, self.fps_floor - 1, -1):
+                    if need(self.picture, step) * UP_HEADROOM <= link:
+                        best = step
                     else:
                         break
-                if best != self.rung:
-                    self.calm = 0
-                    self.rung = best
+                self.fps_step = best
+        self._pick_picture(w.delivery_s / w.frames, at_bottom=self.fps_step == bottom)
         stats.rung = self.rung
         return stats
+
+    def _pick_picture(self, delivery: float, *, at_bottom: bool) -> None:
+        """The picture axis: judged on how long one frame takes to land.
+
+        Frames are acked one at a time, so a high round trip alone only slows
+        the frame rate; a smaller picture would barely help it. The picture gives
+        way only when one frame takes longer than :data:`PICTURE_DOWN_DELIVERY_S`
+        at the lowest fps, :data:`PICTURE_DOWN_WINDOWS` windows in a row, and
+        climbs one step after :data:`PICTURE_UP_CALM` windows in a row in which
+        the sharper picture's frame (scaled by its size) would land in time with
+        :data:`UP_HEADROOM` to spare.
+        """
+        cur = PICTURES[self.picture]
+
+        def size_ratio(picture: int) -> float:
+            p = PICTURES[picture]
+            return (p.quality / cur.quality) * (p.width / cur.width) ** 2
+
+        if at_bottom and delivery > PICTURE_DOWN_DELIVERY_S:
+            self.roomy = 0
+            self.squeezed += 1
+            if self.squeezed >= PICTURE_DOWN_WINDOWS and self.picture < len(PICTURES) - 1:
+                self.squeezed = 0
+                pic = self.picture + 1
+                while (
+                    pic < len(PICTURES) - 1 and delivery * size_ratio(pic) > PICTURE_DOWN_DELIVERY_S
+                ):
+                    pic += 1
+                self.picture = pic
+            return
+        self.squeezed = 0
+        if (
+            self.picture > self.picture_floor
+            and delivery * size_ratio(self.picture - 1) * UP_HEADROOM <= PICTURE_DOWN_DELIVERY_S
+        ):
+            self.roomy += 1
+            if self.roomy >= PICTURE_UP_CALM:
+                self.roomy = 0
+                self.picture -= 1
+        else:
+            self.roomy = 0
+
+
+class LinkMemory:
+    """Where each card's ladder stood when its last stream ticked or stopped.
+
+    Keyed on the relay (weakly: a closed browser drops its entries) and then on
+    the card's session key, so a new turn or a tab switch on the same card
+    starts from the measured link instead of the top rung.
+    """
+
+    def __init__(self) -> None:
+        self._by_relay: weakref.WeakKeyDictionary[Any, dict[str, tuple[float, int, int]]]
+        self._by_relay = weakref.WeakKeyDictionary()
+
+    def remember(self, relay: Any, key: str, at: float, picture: int, fps_step: int) -> None:
+        if not key:
+            return
+        try:
+            self._by_relay.setdefault(relay, {})[key] = (at, picture, fps_step)
+        except TypeError:
+            # A relay that cannot be weakly referenced: no memory, as before.
+            return
+
+    def recall(self, relay: Any, key: str, now: float) -> tuple[int, int] | None:
+        try:
+            entry = self._by_relay.get(relay, {}).get(key)
+        except TypeError:
+            return None
+        if entry is None or now - entry[0] > LINK_MEMORY_S or now < entry[0]:
+            return None
+        return entry[1], entry[2]
+
+
+#: The process-wide memory a stream uses unless it is handed its own.
+LINK_MEMORY = LinkMemory()
 
 
 class FrameSink(Protocol):
@@ -490,6 +658,7 @@ class _Metrics:
     seq: int = 0
     last_frame_at: float = field(default=-1.0)
     restarts: int = 0
+    settles: int = 0
 
 
 class LiveStream:
@@ -498,8 +667,9 @@ class LiveStream:
     ``relay``, ``target_id`` and ``sink`` are the contract; ``session_key`` names
     the card. ``clock`` and ``sleep`` default to the real monotonic clock and
     ``asyncio.sleep`` and are the only time the class reads. With
-    ``auto_control=False`` the once-a-second tick is the caller's to drive
-    (tests, or a hub that ticks every stream from one timer).
+    ``auto_control=False`` the once-a-second tick and the settle check are the
+    caller's to drive (tests, or a hub that ticks every stream from one timer).
+    ``link_memory`` defaults to the process-wide :data:`LINK_MEMORY`.
     """
 
     def __init__(
@@ -514,6 +684,7 @@ class LiveStream:
         sleep: Sleep = asyncio.sleep,
         auto_control: bool = True,
         on_tick: Callable[[TickStats], Awaitable[None]] | None = None,
+        link_memory: LinkMemory | None = None,
     ) -> None:
         self.relay = relay
         self.target_id = target_id
@@ -524,7 +695,13 @@ class LiveStream:
         self._sleep = sleep
         self._auto_control = auto_control
         self._on_tick = on_tick
-        self.controller = AdaptiveController(floor=self.config.best_rung())
+        self.controller = AdaptiveController(
+            fps_floor=self.config.fps_floor(), picture_floor=self.config.picture_floor()
+        )
+        self._memory = LINK_MEMORY if link_memory is None else link_memory
+        remembered = self._memory.recall(relay, session_key, clock())
+        if remembered is not None:
+            self.controller.restore(*remembered)
         self.session_id = ""
         #: Names this stream on every frame header; the card scopes acks to it.
         self.stream_id = secrets.token_hex(4)
@@ -539,8 +716,11 @@ class LiveStream:
         self._acks: dict[int, asyncio.Event] = {}
         self._input_at = -1.0
         self._input_pending = False
+        self._takeover = False
         self._mask_at = -1.0
-        self._mask: list[list[int]] = []
+        #: Last password boxes the page reported, in viewport CSS pixels; scaled
+        #: per frame so a frame at another width is masked at its own scale.
+        self._mask_boxes: list[Any] = []
         #: The recorder's mask for the frame in hand (see :meth:`_mask_rects`): a
         #: frame whose boxes did not come from its own answered query is never kept.
         self._mask_ok = False
@@ -552,6 +732,15 @@ class LiveStream:
         self._rec_last: list[list[int]] | None = None
         self._rec_last_size: tuple[int, int] = (0, 0)
         self._control_task: asyncio.Task[None] | None = None
+        #: The screencast runs at the settle picture (one sharp frame of a still page).
+        self._settled = False
+        #: The settle restart's own frame has not finished landing yet.
+        self._settle_landing = False
+        #: Until when a frame still belongs to the settle restart.
+        self._settle_grace_until = -1.0
+        #: ``metrics.seq`` of the last ladder frame a settle already answered.
+        self._settled_after = -1
+        self._settle_at = -1.0
 
     @property
     def records(self) -> bool:
@@ -589,6 +778,7 @@ class LiveStream:
         if not self.running:
             return
         self.running = False
+        self._remember()
         task, self._control_task = self._control_task, None
         if task is not None:
             task.cancel()
@@ -608,8 +798,15 @@ class LiveStream:
             except Exception:
                 logger.debug("live stream detach failed", exc_info=True)
 
-    async def _start_cast(self) -> None:
+    def _cast_picture(self) -> Rung:
+        """What the screencast runs at: the ladder's rung, or the settle picture."""
         r = LADDER[self.controller.rung]
+        if self._settled:
+            return Rung(r.fps, SETTLE_QUALITY, PICTURES[0].width)
+        return r
+
+    async def _start_cast(self) -> None:
+        r = self._cast_picture()
         await self.relay.send(
             "Page.startScreencast",
             {
@@ -627,14 +824,24 @@ class LiveStream:
         self.casting = False
         await self.relay.send("Page.stopScreencast", {}, self.session_id)
 
-    async def restart(self) -> None:
-        """Stop and start the screencast on the same session (quality/size change, watchdog)."""
+    async def restart(self, *, settle: bool = False) -> None:
+        """Stop and start the screencast on the same session.
+
+        For a picture change or the watchdog the cast comes back at the ladder's
+        rung; with ``settle`` it comes back at the settle picture.
+        """
         if not self.running or not self.visible:
             return
         self.metrics.restarts += 1
+        self._settled = settle
+        self._settle_landing = settle
         if self.casting:
             await self._stop_cast()
         await self._start_cast()
+
+    def _remember(self) -> None:
+        c = self.controller
+        self._memory.remember(self.relay, self.session_key, self._clock(), c.picture, c.fps_step)
 
     # ── card-side signals ──────────────────────────────────────────────────
 
@@ -650,6 +857,7 @@ class LiveStream:
         self.visible = visible
         if not self.running:
             return
+        self._settled = self._settle_landing = False
         if visible:
             if not self.casting:
                 await self._start_cast()
@@ -670,12 +878,13 @@ class LiveStream:
         self._input_pending = True
 
     async def set_takeover(self, active: bool) -> None:
-        """Cap the stream at the takeover rung while the person holds input."""
+        """Cap the frame rate at 15 fps while the person holds input; the picture stays."""
+        self._takeover = bool(active)
         before = self.controller.rung
+        fps_floor = self.config.fps_floor()
         if active:
-            after = self.controller.set_bounds(floor=max(TAKEOVER_RUNG, self.config.best_rung()))
-        else:
-            after = self.controller.set_bounds(floor=self.config.best_rung())
+            fps_floor = max(TAKEOVER_FPS_STEP, fps_floor)
+        after = self.controller.set_floors(fps_floor=fps_floor)
         if after != before:
             await self._apply_rung(before, after)
 
@@ -704,6 +913,12 @@ class LiveStream:
         now = self._clock()
         self.metrics.last_frame_at = now
         self._input_pending = False
+        settle_frame = self._settled
+        if settle_frame and not self._settle_landing and now > self._settle_grace_until:
+            # The page changed after the still: back to the ladder's picture. This
+            # frame still goes out (it is current); the restart's frame follows.
+            settle_frame = False
+            await self.restart()
         meta = params.get("metadata") or {}
         size = jpeg_size(jpeg)
         if size is None:
@@ -743,7 +958,15 @@ class LiveStream:
         took = self._clock() - t0
         self.metrics.frames += 1
         self.metrics.bytes += len(jpeg)
-        self.controller.observe(len(jpeg), took)
+        if settle_frame:
+            # A settle frame is bigger than the ladder's picture by design; it says
+            # nothing about whether the rung fits.
+            self._settled_after = seq
+            if self._settle_landing:
+                self._settle_landing = False
+                self._settle_grace_until = self._clock() + SETTLE_GRACE_S
+        else:
+            self.controller.observe(len(jpeg), took)
         await self._paced_ack(params.get("sessionId"))
 
     def _recorder_wants(self) -> bool:
@@ -880,6 +1103,10 @@ class LiveStream:
         *scroll* offset, the query read the page at that same offset (within
         :data:`MASK_SCROLL_TOLERANCE_PX`); ``_rec_boxes`` are the password boxes
         plus every opaque (cross-origin) iframe's box, in frame pixels.
+
+        The page's boxes are kept in CSS pixels and scaled per frame, so a frame
+        at another width (a picture change, the settle frame) is masked at its
+        own scale, never at the previous frame's.
         """
         self._mask_ok = False
         self._rec_boxes = []
@@ -889,7 +1116,7 @@ class LiveStream:
             return []
         now = self._clock()
         if not force and self._mask_at >= 0 and now - self._mask_at < MASK_MIN_INTERVAL_S:
-            return list(self._mask)
+            return clip_mask_rects(self._mask_boxes, self.scale, width, height, limit=MASK_BOX_LIMIT)
         self._mask_at = now
         try:
             reply = await self.relay.send(
@@ -899,7 +1126,7 @@ class LiveStream:
             )
         except Exception:
             # Keep the last boxes rather than unmask on a transient failure.
-            return list(self._mask)
+            return clip_mask_rects(self._mask_boxes, self.scale, width, height, limit=MASK_BOX_LIMIT)
         value = ((reply.get("result") or {}).get("value")) if isinstance(reply, dict) else None
         frames: Any = []
         if isinstance(value, dict):
@@ -909,9 +1136,9 @@ class LiveStream:
         if not isinstance(boxes, list) or not isinstance(frames, list):
             # An exception inside the page, or a reply of another shape: the boxes
             # are unknown, which is not the same as "no password field".
-            return list(self._mask)
+            return clip_mask_rects(self._mask_boxes, self.scale, width, height, limit=MASK_BOX_LIMIT)
+        self._mask_boxes = boxes
         rects = clip_mask_rects(boxes, self.scale, width, height, limit=MASK_BOX_LIMIT)
-        self._mask = rects
         partial = isinstance(value, dict) and bool(value.get("partial"))
         if (
             len(boxes) + len(frames) <= MASK_BOX_LIMIT
@@ -929,14 +1156,49 @@ class LiveStream:
     # ── control ────────────────────────────────────────────────────────────
 
     async def _control_loop(self) -> None:
+        per_tick = max(1, round(TICK_S / CONTROL_STEP_S))
+        step = 0
         while self.running:
-            await self._sleep(TICK_S)
+            await self._sleep(CONTROL_STEP_S)
             if not self.running:
                 return
+            step += 1
             try:
-                await self.tick()
+                await self.settle()
+                if step % per_tick == 0:
+                    await self.tick()
             except Exception:
-                logger.debug("live stream tick failed", exc_info=True)
+                logger.debug("live stream control step failed", exc_info=True)
+
+    async def settle(self) -> bool:
+        """Ask for one sharp frame of a page that has gone still.
+
+        Fires once per still: after a ladder frame, :data:`SETTLE_S` with no newer
+        frame, the card visible, no takeover input in the last :data:`SETTLE_S`,
+        at most one per :data:`SETTLE_MIN_INTERVAL_S`, and a quality that is not
+        pinned below the sharpest picture. The
+        screencast restarts at the settle picture; Chrome answers with one frame
+        of the current page, which ``_frame`` masks and sends like any other.
+        Returns whether it restarted.
+        """
+        if not (self.running and self.visible and self.casting) or self._settled:
+            return False
+        if not self.config.settles or self.metrics.seq <= self._settled_after:
+            return False
+        now = self._clock()
+        if self.metrics.last_frame_at < 0 or now - self.metrics.last_frame_at < SETTLE_S:
+            return False
+        if self._input_pending or (self._takeover and now - self._input_at < SETTLE_S):
+            return False
+        if self._settle_at >= 0 and now - self._settle_at < SETTLE_MIN_INTERVAL_S:
+            return False
+        if self._frame_lock.locked():
+            return False
+        self._settle_at = now
+        self._settled_after = self.metrics.seq
+        self.metrics.settles += 1
+        await self.restart(settle=True)
+        return True
 
     async def tick(self) -> TickStats:
         """One controller window: pick the rung, run the watchdog, report."""
@@ -944,6 +1206,7 @@ class LiveStream:
         stats = self.controller.tick()
         if stats.rung != before:
             stats.restarted = await self._apply_rung(before, stats.rung)
+        self._remember()
         if await self._watchdog():
             stats.restarted = True
         try:
@@ -957,7 +1220,9 @@ class LiveStream:
     async def _apply_rung(self, before: int, after: int) -> bool:
         """Apply a rung change: fps is pacing only; quality or width restarts the cast."""
         old, new = LADDER[before], LADDER[after]
-        if (old.quality, old.width) == (new.quality, new.width):
+        if (old.quality, old.width) == (new.quality, new.width) or self._settled:
+            # Pacing only; or the cast is showing the settle frame, and the next
+            # page change restarts it at the new picture anyway.
             return False
         if self.running and self.visible:
             await self.restart()
@@ -978,14 +1243,22 @@ class LiveStream:
 __all__ = [
     "AdaptiveController",
     "CARD_ACK_TIMEOUT_S",
+    "FPS_STEPS",
     "FRAME_HEADER_TYPE",
     "FrameSink",
     "LADDER",
+    "LINK_MEMORY",
+    "LinkMemory",
     "LiveConfig",
     "LiveStream",
     "MASK_MIN_INTERVAL_S",
+    "PICTURES",
+    "Picture",
     "Relay",
     "Rung",
+    "SETTLE_QUALITY",
+    "SETTLE_S",
+    "TAKEOVER_FPS_STEP",
     "TAKEOVER_RUNG",
     "TickStats",
     "WATCHDOG_S",
@@ -994,4 +1267,5 @@ __all__ = [
     "encode_frame",
     "frame_header",
     "jpeg_size",
+    "rung_index",
 ]

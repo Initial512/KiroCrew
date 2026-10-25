@@ -341,37 +341,56 @@ at cap 60 on macOS (53.5 under ack-after-sleep; headed Chrome tops out near 95
 fps on a 120 Hz display, headless Chromium's compositor is clocked at 60, and
 lifting the cap reaches 81-84 fps at about 450% CPU, so the product does not).
 
-Once a second the stream picks a rung of the ladder:
+Once a second the stream picks a frame rate and a picture, as two axes:
 
-| Rung | fps | quality | width |
-|---|---|---|---|
-| 0 | 60 | 60 | 1280 |
-| 1 | 45 | 55 | 1280 |
-| 2 | 30 | 50 | 1280 |
-| 3 | 30 | 45 | 960 |
-| 4 | 20 | 40 | 960 |
-| 5 | 15 | 40 | 800 |
-| 6 | 10 | 35 | 640 |
-| 7 | 5 | 30 | 640 |
+| Axis | Steps | Changing it |
+|---|---|---|
+| fps | 60, 45, 30, 20, 15, 10, 5 | pacing only, Chrome untouched |
+| picture (quality / width) | 60 / 1280, 45 / 960, 40 / 800, 30 / 640 | restarts the screencast on the same session |
 
-It steps down at once when more than 20% of frames arrive later than 1.5
-periods or the link cannot carry the rung, as far as the measured rate needs;
-it steps up after 2 calm seconds to the best rung the link covers with 30%
-headroom. An fps change is free; a quality or size change restarts the
-screencast on the same session. An off-screen or collapsed card stops the
-screencast (the card reports visibility), unless the turn replay records: then
-the cast keeps running for the recorder only (see Turn replay). Input sent with no frame for 3 s
-restarts it. While the person holds the browser the stream is pinned to the
-15 fps rung. `browser.live.*` holds the knobs: `enabled`, `quality`
-(`auto|high|medium|low`), `max_fps` (15|30|60), `mask_passwords`; `max_fps` and a
-fixed `quality` set the ladder's top rung. They are read per stream start from the
+A slow link costs frame rate first. The fps drops at once when more than 20% of
+frames arrive later than 1.5 periods or the link cannot carry it, as far as the
+measured rate needs, and climbs after 2 calm seconds to the best step the link
+covers with 30% headroom. The picture drops one step (or as far as the measured
+frame time needs) only when, at 5 fps, one frame has taken over 0.5 s to reach
+the card for 2 windows in a row; it climbs one step after 5 windows in a row in
+which the sharper picture's frame would land in time with 30% to spare. Frames are
+acked one at a time, so a high round trip alone only slows the frame rate: on
+2 Mbit/s with a 150 ms round trip the stream runs at about 2.5 fps and keeps the
+1280-wide picture. A window with no frame (a still page, the agent thinking) is no
+evidence and changes nothing. The hub's `rung` is `picture * 7 + fps step`.
+
+**Link memory.** A stream starts where the last stream of the same card on the
+same relay stood when it ticked or stopped, within 10 minutes, so a new turn or a
+tab switch does not re-learn a slow link from the top. The memory is weakly keyed
+on the relay, so a closed browser forgets it.
+
+**Settle frame.** When no frame has come for 400 ms (and none since the last
+settle), the screencast restarts once at JPEG quality 85 and 1280 wide; Chrome
+answers a `startScreencast` with one frame of the current page, which is masked
+and sent like any frame and is not ladder evidence. A frame within 250 ms of that
+one still belongs to it; the next one after is a page change and restarts the
+cast at the ladder's picture. At most one settle per 2 s (a blinking text cursor
+changes the page every half second), none while takeover input went out in the
+last 400 ms, none with a fixed `medium` or `low` quality. `Page.captureScreenshot`
+was measured and rejected for this: on Chromium it makes the running screencast
+emit two more frames at the ladder's picture, which would cover the sharp still.
+
+An off-screen or collapsed card stops the screencast (the card reports
+visibility), unless the turn replay records: then the cast keeps running for
+the recorder only (see Turn replay). Input sent with no frame for 3 s restarts it. While the person holds
+the browser the frame rate is capped at 15 fps; the picture stays. `browser.live.*` holds the knobs: `enabled`, `quality`
+(`auto|high|medium|low`), `max_fps` (15|30|60), `mask_passwords`; `max_fps` caps the
+fps axis and a fixed `quality` caps the picture axis. They are read per stream start from the
 live config snapshot, so a Settings change applies to the next turn, never to a
 cast under the person's hands. With `mask_passwords` (default on) the page is
 asked, at most every 250 ms, for the boxes of visible `input[type=password]`
 (a read-only `querySelectorAll` + `getBoundingClientRect` on the relay's own
 session, walking open shadow roots to the same depth the snapshot walker does),
 scaled from CSS to frame pixels; a failed query keeps the last boxes rather than
-unmasking. Every clock read and sleep is injected, so the ladder is
+unmasking. The boxes are kept in CSS pixels and scaled per frame, so a frame at
+another width (a picture change, the settle frame) is masked at its own scale.
+Every clock read and sleep is injected, so the ladder and the settle frame are
 tested on a fake clock.
 
 **Wire.** Owner websockets only. State changes are the JSON event
@@ -433,8 +452,8 @@ drag and hold keys; without it a mouse event with a `button` is a click and one
 without is a move; a move carries `clicks: 0` and the held button, so a drag
 stays a drag), every field bounded before it is sent (`InputEventError`
 `invalid_input_event` otherwise). CDP takes viewport CSS pixels and the JPEG is
-narrower than the viewport at every rung but the top (and always during takeover,
-which floors at the 15 fps rung), so the stream keeps `frame width /
+narrower than the viewport whenever the picture is below the top one, so the
+stream keeps `frame width /
 deviceWidth` from each frame's metadata and positions and wheel deltas are
 divided by it at the one place the event becomes CDP. A hand back the gateway
 refuses puts the card back in control with the gateway's text in an inline

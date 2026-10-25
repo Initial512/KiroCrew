@@ -4815,7 +4815,7 @@
       "sensitive": false,
       "tags": [],
       "label": "Quality",
-      "help": "`auto` adapts frame rate and picture quality to your link, lowering the picture first and the frame rate second when the link is slow. A fixed value pins the picture quality and leaves only the frame rate adaptive.",
+      "help": "`auto` adapts frame rate and picture quality to your link, lowering the frame rate first and the picture only when even the lowest frame rate does not fit; a still page gets one sharp frame. A fixed value pins the picture quality and leaves only the frame rate adaptive.",
       "hasChildren": false,
       "enumValues": [
         "auto",

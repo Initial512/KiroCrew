@@ -57,18 +57,19 @@ def test_jpeg_size_reads_the_first_sof_segment() -> None:
     assert sc.jpeg_size(b"\xff\xd8\xff\xd9") is None
 
 
-def test_the_ladder_is_the_rfc_table() -> None:
-    assert [(r.fps, r.quality, r.width) for r in sc.LADDER] == [
-        (60, 60, 1280),
-        (45, 55, 1280),
-        (30, 50, 1280),
-        (30, 45, 960),
-        (20, 40, 960),
-        (15, 40, 800),
-        (10, 35, 640),
-        (5, 30, 640),
+def test_the_ladder_is_fps_steps_times_pictures() -> None:
+    assert sc.FPS_STEPS == (60, 45, 30, 20, 15, 10, 5)
+    assert [(p.quality, p.width) for p in sc.PICTURES] == [
+        (60, 1280),
+        (45, 960),
+        (40, 800),
+        (30, 640),
     ]
-    assert sc.LADDER[sc.TAKEOVER_RUNG].fps == 15
+    assert len(sc.LADDER) == len(sc.FPS_STEPS) * len(sc.PICTURES)
+    assert sc.LADDER[0] == sc.Rung(60, 60, 1280)
+    assert sc.LADDER[sc.rung_index(2, 6)] == sc.Rung(5, 40, 800)
+    # Takeover caps the frame rate only: the picture is the sharpest one.
+    assert sc.LADDER[sc.TAKEOVER_RUNG] == sc.Rung(15, 60, 1280)
 
 
 def test_live_config_reads_browser_live_with_defaults() -> None:
@@ -80,10 +81,12 @@ def test_live_config_reads_browser_live_with_defaults() -> None:
     )
     live = sc.LiveConfig.from_config(cfg)
     assert live == sc.LiveConfig(enabled=False, quality="low", max_fps=30, mask_passwords=False)
-    # max_fps 30 alone would start at rung 2; quality "low" pins the top to rung 5.
-    assert live.best_rung() == 5
-    assert sc.LiveConfig(max_fps=30).best_rung() == 2
-    assert sc.LiveConfig(max_fps=15).best_rung() == 5
+    # max_fps 30 floors the frame rate at its step; quality "low" floors the picture.
+    assert (live.fps_floor(), live.picture_floor()) == (2, 2)
+    assert live.best_rung() == sc.rung_index(2, 2) and live.settles is False
+    assert sc.LiveConfig(max_fps=15).fps_floor() == sc.TAKEOVER_FPS_STEP
+    assert sc.LiveConfig().settles and sc.LiveConfig(quality="high").settles
+    assert not sc.LiveConfig(quality="medium").settles
     bad = SimpleNamespace(browser=SimpleNamespace(live=SimpleNamespace(max_fps=7, quality="x")))
     assert sc.LiveConfig.from_config(bad) == sc.LiveConfig()
 
@@ -103,59 +106,131 @@ def test_controller_holds_the_top_rung_on_a_fast_link() -> None:
     assert stats.rung == 0 and stats.fps == 60 and stats.late_share == 0
 
 
-def test_controller_steps_down_when_more_than_a_fifth_arrive_late() -> None:
+def test_late_frames_on_a_fast_link_lower_the_fps_one_step_and_keep_the_picture() -> None:
     ctrl = sc.AdaptiveController()
     period = sc.LADDER[0].period
-    # 15 of 60 late (25%) on a link that is otherwise fast: one rung down.
+    # 15 of 60 late (25%) on a link that is otherwise fast: one fps step down.
     _feed(ctrl, 45, 40_000, 0.002)
     _feed(ctrl, 15, 40_000, period * 2)
-    assert ctrl.tick().rung == 1
+    ctrl.tick()
+    assert (ctrl.picture, ctrl.fps_step) == (0, 1)
     # 10 of 60 late (17%): calm, holds.
     _feed(ctrl, 50, 40_000, 0.002)
     _feed(ctrl, 10, 40_000, period * 3)
-    assert ctrl.tick().rung == 1
-
-
-def test_controller_jumps_as_far_down_as_the_measured_link_needs() -> None:
-    ctrl = sc.AdaptiveController()
-    # 40 kB frames taking 0.2 s each: a 200 kB/s link. Rung 0 needs 2.4 MB/s.
-    _feed(ctrl, 5, 40_000, 0.2)
-    stats = ctrl.tick()
-    assert stats.rung > 1
-    need = 40_000 * (sc.LADDER[stats.rung].quality / 60) * (sc.LADDER[stats.rung].width / 1280) ** 2
-    assert need * sc.LADDER[stats.rung].fps <= 200_000 * sc.DOWN_TARGET_UTILISATION
-
-
-def test_controller_steps_up_after_two_calm_windows_with_headroom() -> None:
-    ctrl = sc.AdaptiveController()
-    ctrl.rung = 4
-    # Frames at rung 4 (q40, 960) of 15 kB delivered in 1 ms: a very fast link.
-    _feed(ctrl, 20, 15_000, 0.001)
-    assert ctrl.tick().rung == 4  # calm 1
-    _feed(ctrl, 20, 15_000, 0.001)
-    assert ctrl.tick().rung == 0  # calm 2: straight to the best rung the link covers
-
-
-def test_controller_climbs_only_to_the_rung_the_link_covers() -> None:
-    ctrl = sc.AdaptiveController()
-    ctrl.rung = 5
-    # 10 kB frames taking 10 ms: a 1 MB/s link. Rung 0 would need about 6 MB/s.
-    _feed(ctrl, 15, 10_000, 0.01)
     ctrl.tick()
-    _feed(ctrl, 15, 10_000, 0.01)
-    after = ctrl.tick().rung
-    assert 0 < after < 5
+    assert (ctrl.picture, ctrl.fps_step) == (0, 1)
 
 
-def test_controller_bounds_clamp_the_current_rung() -> None:
+def test_a_slow_link_costs_frame_rate_and_leaves_the_picture() -> None:
     ctrl = sc.AdaptiveController()
-    assert ctrl.set_bounds(floor=sc.TAKEOVER_RUNG) == sc.TAKEOVER_RUNG
-    _feed(ctrl, 15, 10_000, 0.001)
+    # 40 kB frames taking 50 ms each: an 800 kB/s link. 60 fps would need 2.4 MB/s.
+    _feed(ctrl, 5, 40_000, 0.05)
     ctrl.tick()
-    _feed(ctrl, 15, 10_000, 0.001)
-    assert ctrl.tick().rung == sc.TAKEOVER_RUNG  # never climbs past the floor
-    assert ctrl.set_bounds(floor=0) == sc.TAKEOVER_RUNG
-    assert ctrl.set_bounds(ceiling=2) == 2
+    assert ctrl.picture == 0
+    assert sc.FPS_STEPS[ctrl.fps_step] == 15  # 600 kB/s fits 80% of the link; 20 fps would not
+
+
+def test_a_bursty_high_rtt_link_never_changes_the_picture() -> None:
+    """The remote case: every agent step is a burst of frames over a 150 ms link.
+
+    Each burst is late at any rate the ack round trip cannot carry, and each
+    pause between steps is a window with no frame. The frame rate settles low;
+    the picture never moves, so nothing restarts and nothing goes soft.
+    """
+    ctrl = sc.AdaptiveController()
+    pictures = set()
+    for _step in range(20):
+        # A 2 Mbit/s link with 150 ms round trip: a 40 kB frame takes ~0.31 s.
+        _feed(ctrl, 3, 40_000, 0.15 + 40_000 / 250_000)
+        ctrl.tick()
+        pictures.add(ctrl.picture)
+        for _idle in range(3):  # the agent thinks: no frames at all
+            ctrl.tick()
+            pictures.add(ctrl.picture)
+    assert pictures == {0}
+    assert sc.FPS_STEPS[ctrl.fps_step] == 5
+
+
+def test_an_idle_window_is_no_evidence_and_changes_nothing() -> None:
+    ctrl = sc.AdaptiveController()
+    ctrl.restore(1, 5)
+    for _ in range(10):
+        stats = ctrl.tick()
+        assert stats.frames == 0
+    assert (ctrl.picture, ctrl.fps_step, ctrl.calm) == (1, 5, 0)
+
+
+def test_the_picture_drops_only_after_two_heavy_windows_at_the_lowest_fps() -> None:
+    ctrl = sc.AdaptiveController()
+    # 40 kB frames taking 0.8 s each: under 2 frames a second even at 5 fps.
+    _feed(ctrl, 2, 40_000, 0.8)
+    ctrl.tick()
+    # Frame rate first; one heavy window at the bottom is not enough to move the picture.
+    assert (ctrl.picture, sc.FPS_STEPS[ctrl.fps_step]) == (0, 5)
+    _feed(ctrl, 2, 40_000, 0.8)
+    ctrl.tick()
+    assert ctrl.picture > 0  # the second in a row: the picture gives way
+
+
+def test_one_burst_between_good_windows_does_not_move_the_picture() -> None:
+    ctrl = sc.AdaptiveController()
+    ctrl.restore(0, len(sc.FPS_STEPS) - 1)
+    for _ in range(5):
+        _feed(ctrl, 2, 40_000, 0.8)  # squeezed
+        ctrl.tick()
+        _feed(ctrl, 2, 40_000, 0.05)  # fits again
+        ctrl.tick()
+    assert ctrl.picture == 0
+
+
+def test_fps_climbs_after_two_calm_windows_and_the_picture_after_five() -> None:
+    ctrl = sc.AdaptiveController()
+    ctrl.restore(1, 5)
+    # Very fast link: 15 kB in 1 ms.
+    _feed(ctrl, 10, 15_000, 0.001)
+    ctrl.tick()
+    assert (ctrl.picture, ctrl.fps_step) == (1, 5)  # calm 1
+    _feed(ctrl, 10, 15_000, 0.001)
+    ctrl.tick()
+    assert (ctrl.picture, ctrl.fps_step) == (1, 0)  # calm 2: fps straight up
+    for _ in range(sc.PICTURE_UP_CALM - 2):
+        _feed(ctrl, 10, 15_000, 0.001)
+        ctrl.tick()
+    assert ctrl.picture == 0  # calm 5: one picture step
+
+
+def test_fps_climbs_only_as_far_as_the_link_covers() -> None:
+    ctrl = sc.AdaptiveController()
+    ctrl.restore(0, 6)
+    # 20 kB frames taking 20 ms: a 1 MB/s link. With 30% headroom it covers 30 fps.
+    for _ in range(2):
+        _feed(ctrl, 5, 20_000, 0.02)
+        ctrl.tick()
+    assert sc.FPS_STEPS[ctrl.fps_step] == 30
+
+
+def test_controller_floors_clamp_the_position() -> None:
+    ctrl = sc.AdaptiveController()
+    assert ctrl.set_floors(fps_floor=sc.TAKEOVER_FPS_STEP) == sc.TAKEOVER_RUNG
+    for _ in range(2):
+        _feed(ctrl, 15, 10_000, 0.001)
+        ctrl.tick()
+    assert ctrl.rung == sc.TAKEOVER_RUNG  # never climbs past the floor
+    assert ctrl.set_floors(fps_floor=0) == sc.TAKEOVER_RUNG
+    assert ctrl.set_floors(picture_floor=2) == sc.rung_index(2, sc.TAKEOVER_FPS_STEP)
+    assert ctrl.restore(0, 0) == sc.rung_index(2, 0)
+
+
+def test_link_memory_is_per_relay_and_card_and_expires() -> None:
+    mem = sc.LinkMemory()
+    relay_a, relay_b = FakeRelay(), FakeRelay()
+    mem.remember(relay_a, "chat-1", 100.0, 1, 6)
+    assert mem.recall(relay_a, "chat-1", 101.0) == (1, 6)
+    assert mem.recall(relay_a, "chat-2", 101.0) is None
+    assert mem.recall(relay_b, "chat-1", 101.0) is None
+    assert mem.recall(relay_a, "chat-1", 100.0 + sc.LINK_MEMORY_S + 1) is None
+    mem.remember(relay_a, "", 100.0, 1, 6)  # a stream with no card is not remembered
+    assert mem.recall(relay_a, "", 100.0) is None
 
 
 # ── the stream against a fake relay and clock ──────────────────────────────
@@ -222,11 +297,9 @@ async def test_backpressure_a_card_that_never_acks_makes_frames_late_and_steps_d
     starts_before = len(relay.methods("Page.startScreencast"))
     stats = await stream.tick()
     assert stats.late_share == 1.0 and stats.rung >= 1
-    # Rung 0 -> 1 changes quality, so the screencast restarted on the same session.
-    assert stats.restarted is True
-    assert len(relay.methods("Page.stopScreencast")) == 1
-    assert len(relay.methods("Page.startScreencast")) == starts_before + 1
-    assert relay.methods("Page.startScreencast")[-1][1]["quality"] == sc.LADDER[stats.rung].quality
+    # A late frame costs frame rate: pacing only, Chrome is not restarted.
+    assert stats.restarted is False and stream.controller.picture == 0
+    assert len(relay.methods("Page.startScreencast")) == starts_before
 
 
 @pytest.mark.asyncio
@@ -241,23 +314,46 @@ async def test_a_late_card_ack_is_still_accepted_once_the_frame_moved_on() -> No
 
 
 @pytest.mark.asyncio
-async def test_only_a_quality_or_size_change_restarts_the_screencast() -> None:
+async def test_only_a_picture_change_restarts_the_screencast() -> None:
     stream, relay, _clock, _sink = make_stream(config=sc.LiveConfig(mask_passwords=False))
     await stream.start()
     starts = len(relay.methods("Page.startScreencast"))
-    # Same (quality, width): pacing only, Chrome is not touched.
-    assert await stream._apply_rung(3, 3) is False
+    # 60 -> 5 fps at the same picture: pacing only, Chrome is not touched.
+    assert await stream._apply_rung(0, sc.rung_index(0, 6)) is False
     assert len(relay.methods("Page.startScreencast")) == starts
-    # q60 -> q55 at the same width: a restart on the same session.
-    stream.controller.rung = 1
-    assert await stream._apply_rung(0, 1) is True
+    # The next picture: a restart on the same session at its quality and width.
+    stream.controller.restore(1, 0)
+    assert await stream._apply_rung(0, stream.rung) is True
     assert len(relay.methods("Page.stopScreencast")) == 1
     last = relay.methods("Page.startScreencast")[-1]
-    assert last[2] == SESSION and last[1]["quality"] == 55 and last[1]["maxWidth"] == 1280
-    # 1280 -> 960 is a size change: another restart.
-    stream.controller.rung = 3
-    assert await stream._apply_rung(2, 3) is True
-    assert relay.methods("Page.startScreencast")[-1][1]["maxWidth"] == 960
+    assert last[2] == SESSION and last[1]["quality"] == 45 and last[1]["maxWidth"] == 960
+
+
+@pytest.mark.asyncio
+async def test_a_bursty_late_link_lowers_fps_without_a_restart_end_to_end() -> None:
+    """Agent steps over a slow link: frames late, fps lowered, picture and cast untouched."""
+    stream, relay, clock, sink = make_stream(
+        ack_on_arrival=False, config=sc.LiveConfig(mask_passwords=False)
+    )
+
+    async def slow_card(header: dict, blob: bytes) -> None:
+        # 150 ms round trip plus the frame's bytes at 2 Mbit/s.
+        clock.now += 0.15 + len(blob) / 250_000
+        stream.ack(header["seq"])
+
+    sink.frame = slow_card  # type: ignore[method-assign]
+    await stream.start()
+    starts = len(relay.methods("Page.startScreencast"))
+    for _step in range(6):
+        for _ in range(3):
+            await relay.on_event(frame_event(make_jpeg(1280, 768, payload=40_000)))
+        await stream.tick()
+        clock.now += 3  # the agent thinks
+        await stream.tick()
+    assert stream.controller.picture == 0
+    assert sc.FPS_STEPS[stream.controller.fps_step] < 60
+    assert len(relay.methods("Page.startScreencast")) == starts
+    assert stream.metrics.restarts == 0
 
 
 @pytest.mark.asyncio
@@ -350,9 +446,12 @@ async def test_takeover_caps_the_stream_at_fifteen_fps_and_releases_after() -> N
     await stream.start()
     await stream.set_takeover(True)
     assert stream.rung == sc.TAKEOVER_RUNG
-    assert relay.methods("Page.startScreencast")[-1][1]["maxWidth"] == 800
+    # Frame rate only: the picture the person works on stays sharp, no restart.
+    assert len(relay.methods("Page.startScreencast")) == 1
     await stream.set_takeover(False)
-    assert stream.controller.floor == 0 and stream.rung == sc.TAKEOVER_RUNG  # climbs by measurement
+    assert (
+        stream.controller.fps_floor == 0 and stream.rung == sc.TAKEOVER_RUNG
+    )  # climbs by measurement
 
 
 @pytest.mark.asyncio
@@ -433,3 +532,134 @@ async def test_each_frame_carries_the_stream_id_and_the_scale_follows_the_rung()
     assert {h["stream"] for h, _ in sink.frames} == {stream.stream_id}
     other, _r, _c, _s = make_stream()
     assert other.stream_id != stream.stream_id
+
+
+# ── link memory across streams ─────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_the_next_stream_of_the_card_starts_where_the_last_one_stood() -> None:
+    mem = sc.LinkMemory()
+    stream, relay, clock, _sink = make_stream(link_memory=mem)
+    await stream.start()
+    stream.controller.restore(1, 6)
+    await stream.tick()
+    await stream.stop()
+    nxt = sc.LiveStream(
+        relay,
+        "target-2",
+        _sink,
+        session_key="chat-1",
+        clock=clock,
+        sleep=clock.sleep,
+        auto_control=False,
+        link_memory=mem,
+    )
+    assert (nxt.controller.picture, nxt.controller.fps_step) == (1, 6)
+    await nxt.start()
+    first = relay.methods("Page.startScreencast")[-1][1]
+    assert (first["quality"], first["maxWidth"]) == (45, 960)  # not the top rung
+    other = sc.LiveStream(
+        relay,
+        "t3",
+        _sink,
+        session_key="chat-2",
+        clock=clock,
+        sleep=clock.sleep,
+        auto_control=False,
+        link_memory=mem,
+    )
+    assert other.rung == 0
+
+
+# ── the settle frame ───────────────────────────────────────────────────────
+
+
+async def _land_frame(stream: sc.LiveStream, relay: FakeRelay, jpeg: bytes) -> None:
+    await relay.on_event(frame_event(jpeg))
+
+
+@pytest.mark.asyncio
+async def test_a_still_page_gets_one_sharp_settle_frame_masked() -> None:
+    stream, relay, clock, sink = make_stream()
+    relay.answers["Runtime.evaluate"] = {"result": {"value": [[100, 50, 200, 30]]}}
+    stream.controller.restore(2, 6)  # a squeezed link: 5 fps at q40, 800 wide
+    await stream.start()
+    await _land_frame(stream, relay, make_jpeg(800, 480))
+    assert await stream.settle() is False  # not still long enough yet
+    clock.now += sc.SETTLE_S + 0.05
+    assert await stream.settle() is True
+    start = relay.methods("Page.startScreencast")[-1][1]
+    assert (start["quality"], start["maxWidth"]) == (sc.SETTLE_QUALITY, sc.PICTURES[0].width)
+    # Chrome answers the restart with one frame of the still page: masked at its scale.
+    clock.now += 1
+    await _land_frame(stream, relay, make_jpeg(1280, 768))
+    header, _ = sink.frames[-1]
+    assert header["w"] == 1280 and header["mask"] == [[100, 50, 201, 31]]
+    # Once per still: no second settle while nothing changed.
+    clock.now += 10
+    assert await stream.settle() is False
+    assert stream.metrics.settles == 1
+    # The settle frame is not ladder evidence.
+    assert stream.controller.window.frames == 1
+
+
+@pytest.mark.asyncio
+async def test_the_next_page_change_goes_back_to_the_ladder_picture() -> None:
+    stream, relay, clock, sink = make_stream(config=sc.LiveConfig(mask_passwords=False))
+    stream.controller.restore(2, 6)
+    await stream.start()
+    await _land_frame(stream, relay, make_jpeg(800, 480))
+    clock.now += sc.SETTLE_S + 0.05
+    await stream.settle()
+    await _land_frame(stream, relay, make_jpeg(1280, 768))  # the still
+    starts = len(relay.methods("Page.startScreencast"))
+    # A frame inside the grace window still belongs to the settle restart.
+    await _land_frame(stream, relay, make_jpeg(1280, 768))
+    assert len(relay.methods("Page.startScreencast")) == starts
+    clock.now += sc.SETTLE_GRACE_S + 0.1
+    await _land_frame(stream, relay, make_jpeg(1280, 768))  # the page moved
+    last = relay.methods("Page.startScreencast")[-1][1]
+    assert len(relay.methods("Page.startScreencast")) == starts + 1
+    assert (last["quality"], last["maxWidth"]) == (40, 800)
+    # A new still after the change is settled again, after the minimum interval.
+    await _land_frame(stream, relay, make_jpeg(800, 480))
+    clock.now += sc.SETTLE_S + 0.05
+    clock.now += sc.SETTLE_MIN_INTERVAL_S
+    assert await stream.settle() is True
+
+
+@pytest.mark.asyncio
+async def test_no_settle_during_takeover_input_or_with_a_pinned_low_quality() -> None:
+    stream, relay, clock, _sink = make_stream(config=sc.LiveConfig(mask_passwords=False))
+    await stream.start()
+    await stream.set_takeover(True)
+    await _land_frame(stream, relay, make_jpeg(1280, 768))
+    stream.note_input()
+    clock.now += sc.SETTLE_S / 2
+    await _land_frame(stream, relay, make_jpeg(1280, 768))
+    clock.now += sc.SETTLE_S / 2
+    stream._input_at = clock.now  # another keystroke just went out
+    assert await stream.settle() is False
+    clock.now += sc.SETTLE_S + 0.05
+    assert await stream.settle() is True  # the burst is over
+
+    low, relay2, clock2, _s2 = make_stream(
+        config=sc.LiveConfig(quality="low", mask_passwords=False)
+    )
+    await low.start()
+    await _land_frame(low, relay2, make_jpeg(800, 480))
+    clock2.now += 5
+    assert await low.settle() is False
+
+
+@pytest.mark.asyncio
+async def test_no_settle_while_hidden_or_before_any_frame() -> None:
+    stream, relay, clock, _sink = make_stream(config=sc.LiveConfig(mask_passwords=False))
+    await stream.start()
+    clock.now += 5
+    assert await stream.settle() is False  # nothing shown yet
+    await _land_frame(stream, relay, make_jpeg(1280, 768))
+    await stream.set_visible(False)
+    clock.now += 5
+    assert await stream.settle() is False

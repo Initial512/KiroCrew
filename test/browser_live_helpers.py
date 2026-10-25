@@ -99,6 +99,7 @@ def make_stream(
     ack_on_arrival: bool = True,
     config: sc.LiveConfig | None = None,
     session_key: str = "chat-1",
+    link_memory: sc.LinkMemory | None = None,
 ) -> tuple[sc.LiveStream, FakeRelay, FakeClock, RecordingSink]:
     relay = FakeRelay()
     clock = FakeClock()
@@ -113,6 +114,8 @@ def make_stream(
         clock=clock,
         sleep=clock.sleep,
         auto_control=False,
+        # Each stream its own memory unless a test shares one on purpose.
+        link_memory=link_memory if link_memory is not None else sc.LinkMemory(),
     )
     ref["stream"] = stream
     return stream, relay, clock, sink

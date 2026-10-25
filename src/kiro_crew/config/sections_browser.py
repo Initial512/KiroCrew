@@ -32,6 +32,7 @@ BROWSER_CHOICES = (BROWSER_CHOICE_AUTO, "user_chrome", "kiro_chromium", "headles
 #: Stream quality of the live view. ``auto`` lets the adaptive ladder in
 #: ``browser_harness/screencast.py`` pick a rung from the measured link; a fixed
 #: value pins the JPEG quality and scale and leaves only the frame rate adaptive.
+#: ``auto`` and ``high`` also send one sharp settle frame when the page goes still.
 LIVE_QUALITY_AUTO = "auto"
 LIVE_QUALITIES = (LIVE_QUALITY_AUTO, "high", "medium", "low")
 
@@ -144,8 +145,9 @@ class BrowserLiveConfig:
         metadata=_meta(
             "Quality",
             "`auto` adapts frame rate and picture quality to your link, lowering the "
-            "picture first and the frame rate second when the link is slow. A fixed "
-            "value pins the picture quality and leaves only the frame rate adaptive.",
+            "frame rate first and the picture only when even the lowest frame rate "
+            "does not fit; a still page gets one sharp frame. A fixed value pins the "
+            "picture quality and leaves only the frame rate adaptive.",
             enum=list(LIVE_QUALITIES),
         ),
     )
