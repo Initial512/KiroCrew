@@ -782,11 +782,6 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
         # No agent on slot, no agent in request — nothing to enforce.
         pass
 
-    if _send_writes_persona(body):
-        slot.color_theme = color_theme
-        slot.theme_consent = theme_consent
-        slot.theme_consent_sha = theme_consent_sha
-
     if not message:
         # One guard, above every dispatch branch. An empty wire text reaches
         # here only from programmatic callers (app tokens, curl, integrations)
@@ -818,6 +813,11 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
     _race_answer = await _settle_send_race(request, state, slot, body, message)
     if _race_answer is not None:
         return _race_answer
+
+    if _send_writes_persona(body):
+        slot.color_theme = color_theme
+        slot.theme_consent = theme_consent
+        slot.theme_consent_sha = theme_consent_sha
 
     from kiro_crew.dashboard import responsive_chat
 

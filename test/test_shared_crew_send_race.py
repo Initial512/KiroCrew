@@ -471,6 +471,23 @@ async def test_send_now_enters_admission_and_queues_without_steering(dash_state,
 
 
 @pytest.mark.asyncio
+async def test_a_losing_send_leaves_the_session_persona_alone(dash_state):
+    slot = dash_state.get_or_create_slot("s1")
+    reg = send_race.send_race_for(dash_state)
+    granted = await reg.claim("s1", principal=ALICE, base_revision=0)
+    assert isinstance(granted, Granted)
+    reg.commit(granted.claim)
+    async with _client(dash_state) as client:
+        status, body = await _post(
+            client,
+            "bob",
+            {"slot": "s1", "message": "x", "base_revision": 0, "color_theme": "custom-bob"},
+        )
+    assert status == 409 and body["code"] == "send_race"
+    assert slot.color_theme != "custom-bob"
+
+
+@pytest.mark.asyncio
 async def test_a_losing_steer_never_steers(dash_state):
     slot = dash_state.get_or_create_slot("s1")
     reg = send_race.send_race_for(dash_state)
