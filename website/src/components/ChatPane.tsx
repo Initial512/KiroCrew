@@ -184,7 +184,7 @@ export default function ChatPane({
   // closed conductor turns its composer off. A pane holding the conductor keeps
   // its approval cards (edge review R3 G3, Z1).
   const paneCrewRoot = paneSlot?.crew_root || ''
-  const { rootClosed: paneCrewRootClosedRaw, rootTitle: paneCrewRootTitle } = useCrewRoot(paneCrewRoot)
+  const { rootClosed: paneCrewRootClosedRaw } = useCrewRoot(paneCrewRoot)
   const paneCrewRootClosed = !!paneCrewRoot && paneCrewRootClosedRaw
   const noSend = useCallback(() => {}, [])
   // A stop is under way on this pane's turn: the stream state's own `stopping`
@@ -1007,7 +1007,7 @@ export default function ChatPane({
           onSend={paneCrewRootClosed ? noSend : doSend}
           slotApprovalChrome={crewApprovalDecidableHere(paneSlot, 'worker_split_pane')}
           disabled={paneCrewRootClosed}
-          lockedPlaceholder={paneCrewRootClosed ? i18nT('components.crewMode.worker_root_closed_composer', { name: paneCrewRootTitle }) : undefined}
+          lockedPlaceholder={paneCrewRootClosed ? '' : undefined}
           terminalCommands={!paneSlot ? 'pending' : paneSlot.executor === 'remote' ? 'remote' : 'local'}
           hiddenCommands={paneHiddenCommands}
           isRunning={composerBusy}
