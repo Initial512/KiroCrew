@@ -440,24 +440,22 @@ async def remove_approval(user_id: str, actor: str) -> dict[str, Any]:
             row = state["approvals"].pop(user_id, None)
             if not isinstance(row, dict):
                 raise AccessError(CODE_NOT_APPROVED)
-            login = _norm(str(row.get("login") or ""))
-
-            def _mark(s: dict[str, Any]) -> None:
-                # An invite they accepted would let them in again after a restart.
-                for m in s["members"].values():
-                    if m.get("user_id") == user_id or (
-                        login and _norm(str(m.get("login") or "")) == login
-                    ):
-                        m["removed"] = True
-
-            store.update_state(_mark)
             _save(state)
             tailnet_live_allowlist.revoke_user_id(user_id)
-            tailnet_live_allowlist.revoke(login)
-            rebuild()
+            tailnet_live_allowlist.revoke(str(row.get("login") or ""))
             return row
 
     row = await asyncio.to_thread(_drop)
+    login = _norm(str(row.get("login") or ""))
+
+    def _mark(s: dict[str, Any]) -> None:
+        # An invite they accepted would let them in again after a restart.
+        for m in s["members"].values():
+            if m.get("user_id") == user_id or (login and _norm(str(m.get("login") or "")) == login):
+                m["removed"] = True
+
+    await asyncio.to_thread(store.update_state, _mark)
+    await asyncio.to_thread(rebuild)
     result = await stop_access(str(row.get("login") or ""), frozenset({user_id}), actor=actor)
     return {"removed": user_id, **result}
 

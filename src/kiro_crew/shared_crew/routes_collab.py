@@ -26,7 +26,7 @@ from kiro_crew.shared_crew.send_race import send_race_for
 from kiro_crew.shared_crew.typing_lease import typing_lease_for
 
 
-def _read(body: Callable[[Any, str], dict[str, Any]]) -> Callable[[web.Request], Any]:
+def _session_read(body: Callable[[Any, str], dict[str, Any]]) -> Callable[[web.Request], Any]:
     """A GET handler that refuses a non-dashboard caller, reads ``session_key``, then answers *body*."""
 
     async def handler(request: web.Request) -> web.Response:
@@ -44,18 +44,18 @@ def _read(body: Callable[[Any, str], dict[str, Any]]) -> Callable[[web.Request],
     return handler
 
 
-api_shared_crew_presence = _read(
+api_shared_crew_presence = _session_read(
     lambda state, key: presence_frame(key, presence_for(state).entries(key))
 )
-api_shared_crew_decisions = _read(
+api_shared_crew_decisions = _session_read(
     lambda state, key: {
         "schema_version": SCHEMA_VERSION,
         "items": [d.to_public_dict() for d in decisions_for(state).for_session(key)],
     }
 )
-api_shared_crew_send_state = _read(lambda state, key: send_race_for(state).state(key))
+api_shared_crew_send_state = _session_read(lambda state, key: send_race_for(state).state(key))
 #: Who holds the session's typing lease now (the ``shared_crew.typing_lease`` body).
-api_shared_crew_typing_lease = _read(lambda state, key: typing_lease_for(state).state(key))
+api_shared_crew_typing_lease = _session_read(lambda state, key: typing_lease_for(state).state(key))
 
 
 def register(app: web.Application) -> None:
