@@ -16290,6 +16290,7 @@
         "commits_behind_many": "{{count}} commits atrás",
         "commits_behind_other": "{{count}} commits atrás",
         "updates_managed_by_policy": "As atualizações desta instalação são gerenciadas por uma política de atualização definida pelo operador. Novas versões chegam por esse mecanismo.",
+        "updates_managed_by_policy_desktop": "Uma política neste computador gerencia as atualizações deste app. As novas versões chegam por meio dessa política, então {{productName}} não as verifica. Peça a quem a configurou para alterar, ou edite security_policy.json.",
         "updates_managed_externally": "As atualizações desta instalação são gerenciadas por um gerenciador de pacotes externo. Use esse gerenciador de pacotes para obter novas versões.",
         "updates_managed_externally_by": "As atualizações desta instalação são gerenciadas por {{managedBy}}. Use-o para obter novas versões.",
         "updates_managed_lane": "As atualizações desta instalação são gerenciadas por um gerenciador de pacotes externo. Para atualizar manualmente, execute o comando abaixo em um terminal.",
@@ -16304,7 +16305,9 @@
         "automatic_updates": "Atualizar o gateway automaticamente",
         "gateway_auto_update_unknown_hint": "Dá para saber se este botão vale aqui após a primeira verificação de atualizações, logo após a inicialização.",
         "gateway_auto_update_mandatory_note": "Uma política exige uma versão mais recente que esta; quando houver uma disponível, ela é instalada independentemente desta opção.",
-        "gateway_auto_update_description": "Instala uma nova versão quando não há trabalho em andamento e reinicia o gateway, se esta instalação puder se atualizar sozinha.",
+        "gateway_auto_update_description": "Reinicia o gateway para instalar uma nova versão quando nenhum trabalho está em execução. Quando desativado, permanece na versão atual.",
+        "gateway_updates_heading": "Atualizações do gateway",
+        "gateway_auto_update_desktop_context": "O gateway executa seus agentes e chats. É instalado separadamente do {{productName}}, então este interruptor o atualiza, não este app. Ele só reinicia quando nenhum trabalho está ativo.",
         "automatic_updates_are_unavailable_in_this_build": "As atualizações automáticas não estão disponíveis nesta compilação",
         "automatic_updates_unavailable_dev_build": "As atualizações automáticas não estão disponíveis nesta compilação (compilação de desenvolvimento).",
         "automatic_updates_unavailable_channel": "As atualizações automáticas não estão disponíveis porque este canal de lançamento ainda não tem builds para a sua plataforma. Troque de canal acima para receber atualizações.",
@@ -16430,7 +16433,8 @@
         "app_lane_title": "O app de desktop que você instalou. Sua própria versão, separada do serviço abaixo.",
         "gateway_lane_label": "Gateway",
         "gateway_lane_title": "O serviço em segundo plano que executa seus agentes e serve este painel. Os chips de branch e commit são o build dele.",
-        "update_refused_dirty_worktree": "A atualização foi interrompida para proteger suas edições locais: sua pasta do {{productName}} tem alterações não confirmadas ({{changed}}). Faça commit ou stash delas e pressione Atualizar agora de novo. Para guardar tudo com stash, execute o comando abaixo em um terminal na sua pasta do {{productName}}."
+        "update_refused_dirty_worktree": "A atualização foi interrompida para proteger suas edições locais: sua pasta do {{productName}} tem alterações não confirmadas ({{changed}}). Faça commit ou stash delas e pressione Atualizar agora de novo. Para guardar tudo com stash, execute o comando abaixo em um terminal na sua pasta do {{productName}}.",
+        "app_updates_heading": "Atualizações do app"
       },
       "botChannelPanel": {
         "allowed_user_ids": "IDs de usuário permitidos",

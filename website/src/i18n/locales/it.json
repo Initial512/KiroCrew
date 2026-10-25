@@ -16290,6 +16290,7 @@
         "commits_behind_many": "{{count}} commit indietro",
         "commits_behind_other": "{{count}} commit indietro",
         "updates_managed_by_policy": "Gli aggiornamenti di questa installazione sono gestiti da una politica di aggiornamento definita dall'operatore. Le nuove versioni arrivano tramite quel meccanismo.",
+        "updates_managed_by_policy_desktop": "Una policy su questo computer gestisce gli aggiornamenti di questa app. Le nuove versioni arrivano tramite quella policy, quindi {{productName}} non le verifica. Chiedi a chi l'ha configurata di modificarla, o modifica security_policy.json.",
         "updates_managed_externally": "Gli aggiornamenti di questa installazione sono gestiti da un gestore di pacchetti esterno. Usa quel gestore di pacchetti per ottenere le nuove versioni.",
         "updates_managed_externally_by": "Gli aggiornamenti di questa installazione sono gestiti da {{managedBy}}. Usalo per ottenere le nuove versioni.",
         "updates_managed_lane": "Gli aggiornamenti di questa installazione sono gestiti da un gestore di pacchetti esterno. Per aggiornare manualmente, eseguire il comando seguente in un terminale.",
@@ -16304,7 +16305,9 @@
         "automatic_updates": "Aggiorna automaticamente il gateway",
         "gateway_auto_update_unknown_hint": "Si saprà se questo interruttore vale qui dopo il primo controllo degli aggiornamenti, poco dopo l’avvio.",
         "gateway_auto_update_mandatory_note": "Una policy richiede una versione più recente di questa; quando ce n’è una disponibile, viene installata qualunque sia questa impostazione.",
-        "gateway_auto_update_description": "Installa una nuova versione quando non ci sono attività in corso e riavvia il gateway, se questa installazione può aggiornarsi da sola.",
+        "gateway_auto_update_description": "Riavvia il gateway per installare una nuova versione quando non ci sono lavori in esecuzione. Disattivato, rimane sulla versione attuale.",
+        "gateway_updates_heading": "Aggiornamenti gateway",
+        "gateway_auto_update_desktop_context": "Il gateway esegue i tuoi agenti e le chat. È installato separatamente da {{productName}}, quindi questo interruttore aggiorna il gateway, non l'app. Si riavvia solo quando non c'è lavoro attivo.",
         "automatic_updates_are_unavailable_in_this_build": "Gli aggiornamenti automatici non sono disponibili in questa build",
         "automatic_updates_unavailable_dev_build": "Gli aggiornamenti automatici non sono disponibili in questa build (build di sviluppo).",
         "automatic_updates_unavailable_channel": "Gli aggiornamenti automatici non sono disponibili perché questo canale di rilascio non ha ancora build per la tua piattaforma. Cambia canale qui sopra per ricevere gli aggiornamenti.",
@@ -16430,7 +16433,8 @@
         "app_lane_title": "L'app desktop che hai installato. La sua versione, separata dal servizio qui sotto.",
         "gateway_lane_label": "Gateway",
         "gateway_lane_title": "Il servizio in background che esegue i tuoi agenti e serve questa dashboard. I chip di branch e commit indicano la sua build.",
-        "update_refused_dirty_worktree": "L'aggiornamento è stato interrotto per proteggere le tue modifiche locali: la tua cartella di {{productName}} ha modifiche non sottoposte a commit ({{changed}}). Esegui il commit o lo stash, poi premi di nuovo Aggiorna ora. Per mettere tutto in stash, esegui il comando qui sotto in un terminale nella tua cartella di {{productName}}."
+        "update_refused_dirty_worktree": "L'aggiornamento è stato interrotto per proteggere le tue modifiche locali: la tua cartella di {{productName}} ha modifiche non sottoposte a commit ({{changed}}). Esegui il commit o lo stash, poi premi di nuovo Aggiorna ora. Per mettere tutto in stash, esegui il comando qui sotto in un terminale nella tua cartella di {{productName}}.",
+        "app_updates_heading": "Aggiornamenti app"
       },
       "botChannelPanel": {
         "allowed_user_ids": "ID utente consentiti",

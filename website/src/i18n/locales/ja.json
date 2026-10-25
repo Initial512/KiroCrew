@@ -15760,6 +15760,7 @@
         "commits_ahead_other": "{{count}} コミット先行",
         "commits_behind_other": "{{count}} コミット遅れ",
         "updates_managed_by_policy": "このインストールの更新は、運用者が定義した更新ポリシーで管理されています。新しいバージョンはその仕組みで届きます。",
+        "updates_managed_by_policy_desktop": "このコンピューターのポリシーがこのアプリの更新を管理しています。新しいバージョンはそのポリシーを通じて届くため、{{productName}} は確認しません。変更するには設定した人に確認するか、security_policy.json を編集してください。",
         "updates_managed_externally": "このインストールの更新は外部のパッケージマネージャーが管理しています。新しいバージョンはそのパッケージマネージャーで取得してください。",
         "updates_managed_externally_by": "このインストールの更新は {{managedBy}} が管理しています。新しいバージョンはそれで取得してください。",
         "updates_managed_lane": "このインストールの更新は外部パッケージマネージャーによって管理されています。手動で更新するには、端末で以下のコマンドを実行してください。",
@@ -15774,7 +15775,9 @@
         "automatic_updates": "ゲートウェイを自動で更新",
         "gateway_auto_update_unknown_hint": "このスイッチがここで有効かどうかは、起動直後の最初の更新確認のあとでわかります。",
         "gateway_auto_update_mandatory_note": "ポリシーによりこれより新しいバージョンが必須です。利用可能になると、このスイッチの設定にかかわらずインストールされます。",
-        "gateway_auto_update_description": "実行中の作業がないときに新しいリリースをインストールし、ゲートウェイを再起動します。自身で更新できるインストール形態でのみ動作します。",
+        "gateway_auto_update_description": "作業が実行されていないときにゲートウェイを再起動して新しいリリースをインストールします。オフの場合、現在のバージョンのままになります。",
+        "gateway_updates_heading": "ゲートウェイの更新",
+        "gateway_auto_update_desktop_context": "ゲートウェイはあなたのエージェントとチャットを実行します。{{productName}}とは別にインストールされているため、このスイッチはアプリではなくゲートウェイを更新します。作業がアクティブでない場合にのみ再起動します。",
         "automatic_updates_are_unavailable_in_this_build": "このビルドでは自動更新を利用できません",
         "automatic_updates_unavailable_dev_build": "このビルドでは自動更新を利用できません（開発ビルド）。",
         "automatic_updates_unavailable_channel": "このリリースチャネルにはお使いのプラットフォーム向けのビルドがまだないため、自動更新は利用できません。上でチャネルを切り替えると更新を受け取れます。",
@@ -15900,7 +15903,8 @@
         "app_lane_title": "インストールしたデスクトップアプリ。下のサービスとは別の独自のバージョンです。",
         "gateway_lane_label": "ゲートウェイ",
         "gateway_lane_title": "エージェントを実行し、このダッシュボードを提供するバックグラウンドサービス。ブランチとコミットのチップはそのビルドです。",
-        "update_refused_dirty_worktree": "ローカルの編集を守るため、更新を停止しました。{{productName}} フォルダーにコミットされていない変更があります（{{changed}}）。コミットするか stash してから、もう一度「今すぐ更新」を押してください。すべてを stash するには、{{productName}} フォルダーで開いたターミナルで下のコマンドを実行してください。"
+        "update_refused_dirty_worktree": "ローカルの編集を守るため、更新を停止しました。{{productName}} フォルダーにコミットされていない変更があります（{{changed}}）。コミットするか stash してから、もう一度「今すぐ更新」を押してください。すべてを stash するには、{{productName}} フォルダーで開いたターミナルで下のコマンドを実行してください。",
+        "app_updates_heading": "アプリのアップデート"
       },
       "botChannelPanel": {
         "allowed_user_ids": "許可されたユーザー ID",

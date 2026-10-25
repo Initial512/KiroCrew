@@ -182,6 +182,7 @@ function harness({
   wslOwner = { fake: "wsl-owner" },
   wslGatewayLocal = true,
   primaryPortOwner = "kirocrew",
+  isCurrentBundleGateway = true,
   crashScan,
   revealThrows = false,
   openPathResult = "",
@@ -356,6 +357,10 @@ function harness({
     probePrimaryPortOwner: recordGateway(
       "probePrimaryPortOwner",
       Promise.resolve(primaryPortOwner),
+    ),
+    isCurrentBundleGateway: recordGateway(
+      "isCurrentBundleGateway",
+      Promise.resolve(isCurrentBundleGateway),
     ),
   };
   const logs = [];
@@ -1364,7 +1369,10 @@ test("registerUpdater owns six handlers and preserves lazy gateway hooks", async
 
   assert.strictEqual(h.registerUpdater(h.registrar), updater);
   assert.deepEqual([...h.handlers.keys()].sort(), UPDATE_HANDLES);
-  assert.equal(h.listeners.size, 0);
+  // One listener: update:notify-policy-governed (ipcMain.on, not ipcMain.handle).
+  assert.equal(h.listeners.size, 1);
+  assert.equal(h.listeners.has("update:notify-policy-governed"), true,
+    "registerUpdater must install the update:notify-policy-governed listener");
   assert.equal(initCalls, 1);
   assert.strictEqual(deps.app, h.electron.app);
   assert.strictEqual(deps.autoUpdater, h.updaterPackage.autoUpdater);
@@ -1385,7 +1393,7 @@ test("registerUpdater owns six handlers and preserves lazy gateway hooks", async
   ]);
 
   deps.onUpdateState({ phase: "available" });
-  assert.deepEqual(h.sentUpdates, [["update-state", { phase: "available" }]]);
+  assert.deepEqual(h.sentUpdates, [["update-state", { phase: "available", policyGoverned: false }]]);
 
   deps.notifyUpdateFound("3.0.0", { autoDownload: true });
   assert.equal(h.notifications.length, 1);
@@ -1397,11 +1405,101 @@ test("registerUpdater owns six handlers and preserves lazy gateway hooks", async
     version: "2.0.0",
     packaged: true,
     disabled: "test-disabled",
+    policyGoverned: false,
   });
   assert.deepEqual(h.handlers.get("update:check")(), { ok: true });
   assert.deepEqual(h.handlers.get("update:download")(), { ok: true });
   assert.deepEqual(await h.handlers.get("update:install")(), { ok: true });
   assert.deepEqual(updater.calls, ["check", "download", "install"]);
+
+  // The policy-governed listener wires isPolicyGoverned in initAutoUpdate.
+  // It must be a function (not a static boolean) so the lane re-checks each call.
+  assert.strictEqual(typeof deps.isPolicyGoverned, "function",
+    "isPolicyGoverned must be a live function, not a captured boolean");
+  assert.equal(deps.isPolicyGoverned(), false, "governance must start false");
+
+  // Build a minimal fake event that satisfies assertLocalDashboard's three gates.
+  // The harness's windows mock already returns true for isGatewayLocalForWindow
+  // and resolves "kirocrew" from probePrimaryPortOwner.
+  let nextId = 1;
+  const makeEvent = (url = "http://localhost:5476/") => {
+    const id = nextId++;
+    const destroyedListeners = [];
+    const sender = {
+      id,
+      getURL: () => url,
+      once: (event, fn) => { if (event === "destroyed") destroyedListeners.push(fn); },
+    };
+    return {
+      sender,
+      senderFrame: { url },
+      _destroy: () => destroyedListeners.forEach(fn => fn()),
+    };
+  };
+
+  // Basic set/clear from the same origin.
+  const ev1 = makeEvent();
+  await h.listeners.get("update:notify-policy-governed")(ev1, true);
+  assert.equal(deps.isPolicyGoverned(), true, "listener must update the closure");
+  await h.listeners.get("update:notify-policy-governed")(ev1, false);
+  assert.equal(deps.isPolicyGoverned(), false);
+
+  // A sender from a different origin must NOT set governance.
+  const evForeign = makeEvent("http://other-host:5476/");
+  await h.listeners.get("update:notify-policy-governed")(evForeign, true);
+  assert.equal(deps.isPolicyGoverned(), false, "foreign origin must not set governance");
+
+  // Destroying the source window must clear governance even without an explicit false.
+  const ev2 = makeEvent();
+  await h.listeners.get("update:notify-policy-governed")(ev2, true);
+  assert.equal(deps.isPolicyGoverned(), true, "governance set before destroy");
+  ev2._destroy();
+  assert.equal(deps.isPolicyGoverned(), false, "destroyed source window must clear governance");
+
+  // Multi-window: closing one window must NOT clear governance while another window
+  // is still governed. This is the bug where `governanceSourceId` was a single id.
+  const evA = makeEvent();
+  const evB = makeEvent();
+  await h.listeners.get("update:notify-policy-governed")(evA, true);
+  await h.listeners.get("update:notify-policy-governed")(evB, true);
+  assert.equal(deps.isPolicyGoverned(), true, "both windows governed");
+  evB._destroy(); // close the second window
+  assert.equal(deps.isPolicyGoverned(), true,
+    "closing one window must not clear governance while another remains governed");
+  evA._destroy(); // close the first window too
+  assert.equal(deps.isPolicyGoverned(), false, "governance clears when all windows close");
+
+  // Remote-gateway gate: a harness that simulates a non-kirocrew port owner
+  // (SSH tunnel holding the primary port) must reject governance via gate 3.
+  {
+    let remoteDeps;
+    const remoteUpdater = updaterHandle();
+    const hRemote = harness({
+      primaryPortOwner: "ssh-tunnel",
+      initAutoUpdate(options) { remoteDeps = options; return remoteUpdater; },
+    });
+    assert.strictEqual(hRemote.registerUpdater(hRemote.registrar), remoteUpdater);
+    const evRemote = makeEvent();
+    await hRemote.listeners.get("update:notify-policy-governed")(evRemote, true);
+    assert.equal(remoteDeps.isPolicyGoverned(), false,
+      "SSH tunnel on primary port must not set governance (gate 3 rejection)");
+  }
+
+  // Different-bundle gate: a harness that simulates a gateway from another
+  // desktop bundle (isCurrentBundleGateway = false) must reject governance.
+  {
+    let otherDeps;
+    const otherUpdater = updaterHandle();
+    const hOther = harness({
+      isCurrentBundleGateway: false,
+      initAutoUpdate(options) { otherDeps = options; return otherUpdater; },
+    });
+    assert.strictEqual(hOther.registerUpdater(hOther.registrar), otherUpdater);
+    const evOther = makeEvent();
+    await hOther.listeners.get("update:notify-policy-governed")(evOther, true);
+    assert.equal(otherDeps.isPolicyGoverned(), false,
+      "gateway from another desktop bundle must not set governance (gate 4 rejection)");
+  }
 
   assert.deepEqual(h.handlers.get("update:set-channel")({}, "nightly"), {
     ok: false,
@@ -1434,6 +1532,7 @@ test("updater initialization is fail-open and still installs all IPC", async () 
     version: "9.8.7",
     packaged: true,
     disabled: "init-failed",
+    policyGoverned: false,
   });
   assert.deepEqual(h.handlers.get("update:check")(), { ok: true });
   assert.deepEqual(h.handlers.get("update:download")(), { ok: true });

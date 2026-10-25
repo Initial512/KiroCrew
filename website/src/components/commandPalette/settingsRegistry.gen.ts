@@ -26,7 +26,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] =
     "id": "about.update-the-gateway-automatically",
     "label": "Update the gateway automatically",
     "labelKey": "pages.settings.aboutPanel.automatic_updates",
-    "description": "Installs a new release once no work is running and restarts the gateway, on installs that can update themselves.",
+    "description": "Restarts the gateway to install a new release once no work is running. When off, it stays on its current version.",
     "tab": "about",
     "type": "toggle",
     "occurrence": 1,

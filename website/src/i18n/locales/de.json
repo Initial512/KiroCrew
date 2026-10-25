@@ -16025,6 +16025,7 @@
         "commits_behind_one": "{{count}} Commit zurück",
         "commits_behind_other": "{{count}} Commits zurück",
         "updates_managed_by_policy": "Updates für diese Installation werden über eine vom Betreiber definierte Update-Richtlinie verwaltet. Neue Versionen kommen über diesen Mechanismus an.",
+        "updates_managed_by_policy_desktop": "Eine Richtlinie auf diesem Computer verwaltet Updates für diese App. Neue Versionen kommen über diese Richtlinie, daher prüft {{productName}} nicht selbst. Wende dich an denjenigen, der dies eingerichtet hat, oder bearbeite security_policy.json.",
         "updates_managed_externally": "Updates für diese Installation werden von einem externen Paketmanager verwaltet. Beziehen Sie neue Versionen über diesen Paketmanager.",
         "updates_managed_externally_by": "Updates für diese Installation werden von {{managedBy}} verwaltet. Beziehen Sie neue Versionen darüber.",
         "updates_managed_lane": "Die Updates dieser Installation werden von einem externen Paketmanager verwaltet. Um manuell zu aktualisieren, führe den folgenden Befehl in einem Terminal aus.",
@@ -16039,7 +16040,9 @@
         "automatic_updates": "Gateway automatisch aktualisieren",
         "gateway_auto_update_unknown_hint": "Ob dieser Schalter hier wirkt, zeigt sich nach der ersten Aktualisierungsprüfung kurz nach dem Start.",
         "gateway_auto_update_mandatory_note": "Eine Richtlinie verlangt eine neuere Version als diese; sobald eine verfügbar ist, wird sie unabhängig von diesem Schalter installiert.",
-        "gateway_auto_update_description": "Installiert eine neue Version, sobald keine Arbeit läuft, und startet das Gateway neu, sofern sich diese Installation selbst aktualisieren kann.",
+        "gateway_auto_update_description": "Startet das Gateway neu, um eine neue Version zu installieren, wenn keine Arbeit läuft. Wenn deaktiviert, bleibt es auf der aktuellen Version.",
+        "gateway_updates_heading": "Gateway-Updates",
+        "gateway_auto_update_desktop_context": "Das Gateway führt deine Agenten und Chats aus. Es ist unabhängig von {{productName}} installiert, daher aktualisiert dieser Schalter das Gateway, nicht die App. Es startet nur neu, wenn keine Arbeit aktiv ist.",
         "automatic_updates_are_unavailable_in_this_build": "Automatische Aktualisierungen sind in diesem Build nicht verfügbar",
         "automatic_updates_unavailable_dev_build": "Automatische Aktualisierungen sind in diesem Build nicht verfügbar (Entwicklungs-Build).",
         "automatic_updates_unavailable_channel": "Automatische Updates sind nicht verfügbar, da dieser Release-Kanal noch keine Builds für Ihre Plattform enthält. Wechseln Sie oben den Kanal, um Updates zu erhalten.",
@@ -16165,7 +16168,8 @@
         "app_lane_title": "Die installierte Desktop-App. Ihre eigene Version, getrennt vom Dienst darunter.",
         "gateway_lane_label": "Gateway",
         "gateway_lane_title": "Der Hintergrunddienst, der Ihre Agenten ausführt und dieses Dashboard bereitstellt. Die Branch- und Commit-Chips zeigen seinen Build.",
-        "update_refused_dirty_worktree": "Das Update wurde angehalten, um deine lokalen Änderungen zu schützen: Dein {{productName}}-Ordner hat nicht committete Änderungen ({{changed}}). Committe oder stashe sie und drücke dann erneut auf „Jetzt aktualisieren“. Um alles zu stashen, führe den Befehl unten in einem Terminal in deinem {{productName}}-Ordner aus."
+        "update_refused_dirty_worktree": "Das Update wurde angehalten, um deine lokalen Änderungen zu schützen: Dein {{productName}}-Ordner hat nicht committete Änderungen ({{changed}}). Committe oder stashe sie und drücke dann erneut auf „Jetzt aktualisieren“. Um alles zu stashen, führe den Befehl unten in einem Terminal in deinem {{productName}}-Ordner aus.",
+        "app_updates_heading": "App-Updates"
       },
       "botChannelPanel": {
         "allowed_user_ids": "Erlaubte Benutzer-IDs",

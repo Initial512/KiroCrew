@@ -1523,6 +1523,7 @@ function createGatewaySupervisor({
     fetchRemoteToken,
     entryUrl: dashboardEntryUrl,
     probePrimaryPortOwner,
+    isCurrentBundleGateway,
     stopForUpdate: stopGatewayForUpdate,
     stopOnQuit: stopGatewayOnQuit,
     // After sleep the old forward can look alive while carrying nothing, so a

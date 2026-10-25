@@ -15760,6 +15760,7 @@
         "commits_ahead_other": "{{count}}개 커밋 앞섬",
         "commits_behind_other": "{{count}}개 커밋 뒤처짐",
         "updates_managed_by_policy": "이 설치의 업데이트는 운영자가 정의한 업데이트 정책으로 관리됩니다. 새 버전은 해당 메커니즘을 통해 제공됩니다.",
+        "updates_managed_by_policy_desktop": "이 컴퓨터의 정책이 이 앱의 업데이트를 관리합니다. 새 버전은 해당 정책을 통해 도착하므로 {{productName}}(은/는) 직접 확인하지 않습니다. 변경하려면 설정한 사람에게 문의하거나 security_policy.json을 편집하세요.",
         "updates_managed_externally": "이 설치의 업데이트는 외부 패키지 관리자가 관리합니다. 새 버전은 해당 패키지 관리자로 받으세요.",
         "updates_managed_externally_by": "이 설치의 업데이트는 {{managedBy}}이(가) 관리합니다. 새 버전은 그것으로 받으세요.",
         "updates_managed_lane": "이 설치의 업데이트는 외부 패키지 관리자가 관리합니다. 수동으로 업데이트하려면 터미널에서 아래 명령을 실행하세요.",
@@ -15774,7 +15775,9 @@
         "automatic_updates": "게이트웨이 자동 업데이트",
         "gateway_auto_update_unknown_hint": "이 스위치가 여기에 적용되는지는 시작 직후 첫 업데이트 확인 후에 알 수 있습니다.",
         "gateway_auto_update_mandatory_note": "정책에서 이보다 새 버전을 요구합니다. 사용 가능한 버전이 있으면 이 스위치 설정과 관계없이 설치됩니다.",
-        "gateway_auto_update_description": "실행 중인 작업이 없을 때 새 릴리스를 설치하고 게이트웨이를 재시작합니다. 직접 업데이트할 수 있는 설치 형태에서만 동작합니다.",
+        "gateway_auto_update_description": "작업이 실행되지 않을 때 게이트웨이를 재시작하여 새 릴리스를 설치합니다. 꺼져 있으면 현재 버전을 유지합니다.",
+        "gateway_updates_heading": "게이트웨이 업데이트",
+        "gateway_auto_update_desktop_context": "게이트웨이는 에이전트와 채팅을 실행합니다. {{productName}}(이)과 별도로 설치되어 있으므로 이 스위치는 앱이 아닌 게이트웨이를 업데이트합니다. 작업이 활성화되지 않은 경우에만 다시 시작됩니다.",
         "automatic_updates_are_unavailable_in_this_build": "이 빌드에서는 자동 업데이트를 사용할 수 없습니다",
         "automatic_updates_unavailable_dev_build": "이 빌드에서는 자동 업데이트를 사용할 수 없습니다 (개발 빌드).",
         "automatic_updates_unavailable_channel": "이 릴리스 채널에는 아직 사용 중인 플랫폼용 빌드가 없어 자동 업데이트를 사용할 수 없습니다. 위에서 채널을 변경하면 업데이트를 받을 수 있습니다.",
@@ -15900,7 +15903,8 @@
         "app_lane_title": "설치한 데스크톱 앱입니다. 아래 서비스와는 별개인 자체 버전입니다.",
         "gateway_lane_label": "게이트웨이",
         "gateway_lane_title": "에이전트를 실행하고 이 대시보드를 제공하는 백그라운드 서비스입니다. 브랜치와 커밋 칩은 이 서비스의 빌드입니다.",
-        "update_refused_dirty_worktree": "로컬 편집 내용을 보호하기 위해 업데이트를 중지했습니다. {{productName}} 폴더에 커밋되지 않은 변경 사항이 있습니다({{changed}}). 커밋하거나 stash한 다음 지금 업데이트를 다시 누르세요. 모두 stash하려면 {{productName}} 폴더에서 연 터미널에서 아래 명령을 실행하세요."
+        "update_refused_dirty_worktree": "로컬 편집 내용을 보호하기 위해 업데이트를 중지했습니다. {{productName}} 폴더에 커밋되지 않은 변경 사항이 있습니다({{changed}}). 커밋하거나 stash한 다음 지금 업데이트를 다시 누르세요. 모두 stash하려면 {{productName}} 폴더에서 연 터미널에서 아래 명령을 실행하세요.",
+        "app_updates_heading": "앱 업데이트"
       },
       "botChannelPanel": {
         "allowed_user_ids": "허용된 사용자 ID",
