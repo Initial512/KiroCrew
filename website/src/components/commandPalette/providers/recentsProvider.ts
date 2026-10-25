@@ -7,6 +7,7 @@ import i18next from 'i18next'
 import { api } from '../../../api/client'
 import { useSimplifiedToolNames } from '../../../hooks/useSimplifiedToolNames'
 import { useAppDispatch, useAppSelector, useAppStore } from '../../../store'
+import { selectSlotsWithLiveLastTs } from '../../../store/slotLastTs'
 import { resumeFromHistory, switchSlot } from '../../../store/chatSlice'
 import { createChatForView, showCreatedChat } from '../../../lib/createdChatView'
 import { focusComposerForOpenedSession, focusComposerForResumedSession } from '../../../pages/chat/composerFocus'
@@ -249,7 +250,7 @@ export function useRecentsProvider(): ResourceProvider {
   const store = useAppStore()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const slots = useAppSelector((s) => s.dashboard.slots)
+  const slots = useAppSelector(selectSlotsWithLiveLastTs)
   const unread = useAppSelector((s) => s.dashboard.unreadSlots)
   const slotStatusDetail = useAppSelector((s) => s.chat.slotStatusDetail ?? {})
   const simplifiedToolNames = useSimplifiedToolNames()
@@ -405,6 +406,7 @@ export function useRecentsProvider(): ResourceProvider {
               // the resume has entered the session, nothing on failure (#15732).
               focusComposerForResumedSession(
                 dispatch(resumeFromHistory({ key: s.key, title: s.title || s.key })).unwrap(),
+                store,
               )
               navigate('/chat')
             },

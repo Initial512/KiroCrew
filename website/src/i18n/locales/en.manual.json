@@ -4537,7 +4537,8 @@
     },
     "theme": {
       "high_contrast": "🔆 High Contrast",
-      "nu_disco": "🪩 Nu Disco"
+      "nu_disco": "🪩 Nu Disco",
+      "amethyst_oled": "💜 Amethyst OLED"
     },
     "usePanelTabs": {
       "artifacts": "Artifacts",
@@ -7939,6 +7940,7 @@
         "adding": "Adding…",
         "connect": "Connect",
         "connect_failed": "Connect to {{id}} failed: {{error}}",
+        "connect_disabled_needs_restart": "The gateway is on but not active yet — restart it to connect.",
         "connect_needs_restart": "Connect to {{id}} failed: the gateway needs a restart first. See the note below.",
         "connected_switch_from_tab_strip": "Connected “{{name}}”. Switch to it from the tab strip in the top header.",
         "connecting": "Connecting…",
@@ -9233,6 +9235,8 @@
       "switch_sessions": "switch sessions"
     },
     "popoutController": {
+      "crew_pane_cannot_pop_out_in_desktop_app": "In the desktop app, pop-out windows don't work inside a remote crew. Keep working in this crew here.",
+      "desktop_app_could_not_open_pop_out_window": "The desktop app couldn't open the pop-out window. Keep working in this window.",
       "your_browser_blocked_the_pop_out_window_allow_po": "Your browser blocked the pop-out window. Allow pop-ups for this site and try again."
     },
     "sanitize": {

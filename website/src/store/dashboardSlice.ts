@@ -8,6 +8,7 @@ import { streamFlush } from './streamFlush'
 import { ApiError } from '../api/apiError'
 import { sanitizeLlmOutput, isUnsafeKey } from '../utils/sanitize'
 import type { StatusData, ChatSlot, TodoList, McpSessionReport } from '../types'
+import { bumpLastTsOverlay, dropCaughtUpLastTs, pruneLastTsOverlay, slotLastTsOf } from './slotLastTs'
 import type { SessionColorMode, PaletteName, DefaultColorSetting, IntensityName } from '../utils/sessionColors'
 import { isChatPageSurface } from '../utils/channelOrigin'
 import { slotListHoldTest } from '../utils/slotListHold'
@@ -114,6 +115,8 @@ export interface DashboardState {
    *  reply predates what is on screen for that key. Pruned with the rest of the
    *  per-slot state when an authoritative frame drops the key. */
   slotWrittenAt: Record<string, number>
+  /** Mid-turn `last_ts` bumps held off the row; see `store/slotLastTs`. */
+  slotLastTs: Record<string, string>
   /** Per key, the value of `slotWriteSeq` at that row's last MEMBERSHIP write (a
    *  create / resume / fork / companion-open — every `addSlotOptimistic` and
    *  `createSlot.fulfilled`). Compared against a `fetchSlots` request's mark the
@@ -245,6 +248,7 @@ const initialState: DashboardState = {
   staleSlotFetches: {},
   slotWriteSeq: 0,
   slotWrittenAt: {},
+  slotLastTs: {},
   slotMemberAt: {},
   slotFetchWriteMark: {},
   sidebarOrder: [],
@@ -367,6 +371,7 @@ const reconcileSlots = (
   for (const stamped of Object.keys(state.slotMemberAt ?? {})) {
     if (!liveKeys.has(slotKeyOfStamp(stamped))) delete state.slotMemberAt[stamped]
   }
+  pruneLastTsOverlay(state, liveKeys)
 }
 
 const evictSlotSubagents = (state: DashboardState, slotKey: string): void => {
@@ -748,13 +753,21 @@ const patchSlotRow = (state: DashboardState, key: string, patch: RowPatch): void
   stampSlotWrite(state, key)
 }
 
-/** The `touchSlotActivity` write, shared with the per-frame `streamFlush`. */
+/** The `touchSlotActivity` write, shared with the per-frame `streamFlush`.
+ *  An unsettled bump on a row that has `last_turn_ts` goes to the
+ *  `slotLastTs` overlay instead of the row (see `store/slotLastTs`). */
 const applySlotActivity = (state: DashboardState, { key, ts, settled }: { key: string; ts: string; settled?: boolean }): void => {
+  const row = state.slots.find(s => s.key === key) // row-read: picks the overlay or a row write
+  if (row && !settled && row.last_turn_ts) {
+    // Stamped like a row write, so an older fetchSlots reply cannot undo it.
+    if (bumpLastTsOverlay(state, key, ts)) stampSlotWrite(state, key)
+    return
+  }
   patchSlotRow(state, key, slot => {
     const t = Date.parse(ts)
     let moved = false
-    const lastTsMoved = !slot.last_ts || Date.parse(slot.last_ts) <= t
-    if (lastTsMoved) { slot.last_ts = ts; moved = true }
+    const lastTsMoved = !slot.last_ts || Date.parse(slot.last_ts) <= t // last-ts: the row writer
+    if (lastTsMoved) { slot.last_ts = ts; moved = true } // last-ts: the row writer
     if (settled && (!slot.last_turn_ts || Date.parse(slot.last_turn_ts) <= t)) { slot.last_turn_ts = ts; moved = true }
     // Advance last_activity_ts only for settled events (user-sent prompts):
     // unsettled bumps are streamed tool calls on a running session, and
@@ -771,6 +784,7 @@ const applySlotActivity = (state: DashboardState, { key, ts, settled }: { key: s
     // the strength of a no-op.
     return moved
   })
+  if (row) dropCaughtUpLastTs(state, [row])
 }
 
 /** `patchSlotRow` for a writer that is not keyed by slot: a `source_status`
@@ -979,6 +993,7 @@ const applySlots = (state: DashboardState, rawRows: ChatSlot[]): void => {
     // A listed slot can turn a held orphan back into a counted session.
     relayUnreadIfHolding(state)
   }
+  dropCaughtUpLastTs(state, merged)
 }
 
 const dashboardSlice = createSlice({
@@ -1497,7 +1512,7 @@ const dashboardSlice = createSlice({
       // and strand badges against valid relays.
       const effectiveTs = typeof action.payload === 'string'
         ? undefined
-        : (ts ?? state.slots.find(s => s.key === slot)?.last_ts) // row-read: reads a watermark, writes only unread state
+        : (ts ?? slotLastTsOf(state, slot))
       if (typeof action.payload !== 'string') {
         // ONE atomic shared write: badge presence and watermark are the same
         // record entry ('' = badge with no watermark, any relayed read
@@ -1551,7 +1566,7 @@ const dashboardSlice = createSlice({
       // lagging window (reconnect gap) cannot prove it saw the message a
       // sibling watermarked, so the shared badge survives for siblings and
       // reboots instead of being silently erased.
-      const _readTs = state.slots?.find(sl => sl.key === action.payload)?.last_ts // row-read: reads a watermark, writes only unread state
+      const _readTs = slotLastTsOf(state, action.payload)
       clearSharedUnreadIfCovered(action.payload, _readTs)
       _relayUnreadToParent(JSON.stringify(relayedUnreadKeys(state)))
     },

@@ -10212,7 +10212,8 @@
     },
     "theme": {
       "high_contrast": "🔆 উচ্চ কনট্রাস্ট",
-      "nu_disco": "🪩 Nu Disco"
+      "nu_disco": "🪩 Nu Disco",
+      "amethyst_oled": "💜 Amethyst OLED"
     },
     "useCronActions": {
       "failed_to_cancel_job": "জব বাতিল করা যায়নি",
@@ -16907,6 +16908,7 @@
         "configured_instances": "কনফিগার করা রিমোট ক্রু",
         "connect": "সংযোগ করো",
         "connect_failed": "{{id}}-এ সংযোগ করা যায়নি: {{error}}",
+        "connect_disabled_needs_restart": "গেটওয়ে চালু আছে কিন্তু এখনও সক্রিয় নয় — সংযোগ করতে এটি রিস্টার্ট করো।",
         "connect_needs_restart": "{{id}}-এ সংযোগ করা যায়নি: আগে গেটওয়ে রিস্টার্ট করতে হবে। নিচের নোট দেখো।",
         "connected_switch_from_tab_strip": "“{{name}}” সংযুক্ত হয়েছে। উপরের হেডারের ট্যাব স্ট্রিপ থেকে এতে স্যুইচ করো।",
         "connecting": "সংযোগ করা হচ্ছে…",
@@ -17080,7 +17082,15 @@
         "custom_sound_undo": "পূর্বাবস্থায় ফেরাও",
         "custom_sound_option": "{{name}} (তোমার)",
         "channel_member": "সঙ্গীদের বার্তা",
-        "channel_apps": "অ্যাপ আপডেট"
+        "channel_apps": "অ্যাপ আপডেট",
+        "push_section": "পুশ বিজ্ঞপ্তি",
+        "push_toggle_label": "{{productName}} বন্ধ থাকলেও আমাকে জানাও",
+        "push_toggle_description": "এটা উপরের সিস্টেম বিজ্ঞপ্তি থেকে আলাদা সুইচ, যেগুলো শুধু {{productName}} খোলা থাকলে কাজ করে।",
+        "push_install_hint": "iOS-এ পুশ চালু করতে প্রথমে {{productName}} হোম স্ক্রিনে যোগ করো।",
+        "push_unsupported": "{{productName}} বন্ধ থাকলে এই ব্রাউজার বিজ্ঞপ্তি পাঠাতে পারে না।",
+        "push_error_permission": "বিজ্ঞপ্তির অনুমতি দেওয়া হয়নি। ব্রাউজার জানতে চাইলে অনুমতি দাও, তারপর আবার চেষ্টা করো।",
+        "push_error_subscribe": "এই ডিভাইসের জন্য বিজ্ঞপ্তি চালু করা যায়নি। আবার চেষ্টা করো বা পেজটি আবার লোড করো।",
+        "push_error_unsubscribe": "এই ডিভাইসের জন্য বিজ্ঞপ্তি বন্ধ করা যায়নি। আবার চেষ্টা করো বা পেজটি আবার লোড করো।"
       },
       "privacyPanel": {
         "recordMetricsLabel": "মেট্রিক রেকর্ড করো",
@@ -19345,6 +19355,8 @@
       "switch_sessions": "সেশন পরিবর্তন"
     },
     "popoutController": {
+      "crew_pane_cannot_pop_out_in_desktop_app": "ডেস্কটপ অ্যাপে রিমোট ক্রু-এর ভেতরে পপ-আউট উইন্ডো কাজ করে না। এই ক্রু-তে এখানেই কাজ করতে থাকো।",
+      "desktop_app_could_not_open_pop_out_window": "ডেস্কটপ অ্যাপ পপ-আউট উইন্ডো খুলতে পারেনি। এই উইন্ডোতেই কাজ করতে থাকো।",
       "your_browser_blocked_the_pop_out_window_allow_po": "তোমার ব্রাউজার পপ-আউট উইন্ডো ব্লক করেছে। এই সাইটের জন্য পপ-আপ চালু করো, তারপর আবার চেষ্টা করো।"
     },
     "sanitize": {

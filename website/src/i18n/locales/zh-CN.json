@@ -10067,7 +10067,8 @@
     },
     "theme": {
       "high_contrast": "🔆 高对比度",
-      "nu_disco": "🪩 Nu Disco"
+      "nu_disco": "🪩 Nu Disco",
+      "amethyst_oled": "💜 Amethyst OLED"
     },
     "useCronActions": {
       "failed_to_cancel_job": "取消任务失败",
@@ -16634,6 +16635,7 @@
         "configured_instances": "已配置的远程 Crew",
         "connect": "连接",
         "connect_failed": "连接 {{id}} 失败：{{error}}",
+        "connect_disabled_needs_restart": "网关已开启但尚未生效 — 请重启后再连接。",
         "connect_needs_restart": "连接 {{id}} 失败：需要先重启网关。请看下方提示。",
         "connected_switch_from_tab_strip": "已连接“{{name}}”。可从顶部标题栏的标签条切换过去。",
         "connecting": "正在连接…",
@@ -16807,7 +16809,15 @@
         "custom_sound_undo": "撤销",
         "custom_sound_option": "{{name}}（自定义）",
         "channel_member": "队友消息",
-        "channel_apps": "应用更新"
+        "channel_apps": "应用更新",
+        "push_section": "推送通知",
+        "push_toggle_label": "即使 {{productName}} 已关闭也通知我",
+        "push_toggle_description": "与上方的系统通知是两个开关：系统通知只在 {{productName}} 打开时有效。",
+        "push_install_hint": "在 iOS 上，请先将 {{productName}} 添加到主屏幕以启用推送通知。",
+        "push_unsupported": "此浏览器无法在 {{productName}} 关闭时发送通知。",
+        "push_error_permission": "未允许通知。请在浏览器询问时允许，然后重试。",
+        "push_error_subscribe": "无法为此设备开启通知。请重试，或重新加载页面。",
+        "push_error_unsubscribe": "无法为此设备关闭通知。请重试，或重新加载页面。"
       },
       "privacyPanel": {
         "recordMetricsLabel": "记录指标",
@@ -19051,6 +19061,8 @@
       "switch_sessions": "切换会话"
     },
     "popoutController": {
+      "crew_pane_cannot_pop_out_in_desktop_app": "在桌面应用中，远程 Crew 内无法使用弹出窗口。请继续在这里使用这个 Crew。",
+      "desktop_app_could_not_open_pop_out_window": "桌面应用无法打开弹出窗口。请继续在此窗口中工作。",
       "your_browser_blocked_the_pop_out_window_allow_po": "浏览器阻止了弹出窗口。允许此站点的弹出窗口后重试。"
     },
     "sanitize": {

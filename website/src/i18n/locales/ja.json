@@ -10067,7 +10067,8 @@
     },
     "theme": {
       "high_contrast": "🔆 高コントラスト",
-      "nu_disco": "🪩 Nu Disco"
+      "nu_disco": "🪩 Nu Disco",
+      "amethyst_oled": "💜 Amethyst OLED"
     },
     "useCronActions": {
       "failed_to_cancel_job": "ジョブのキャンセルに失敗しました",
@@ -16634,6 +16635,7 @@
         "configured_instances": "設定されたリモートクルー",
         "connect": "接続",
         "connect_failed": "{{id}} への接続に失敗しました: {{error}}",
+        "connect_disabled_needs_restart": "ゲートウェイはオンですがまだ有効化されていません。接続するには再起動してください。",
         "connect_needs_restart": "{{id}} への接続に失敗しました: 先にゲートウェイを再起動する必要があります。下の案内をご覧ください。",
         "connected_switch_from_tab_strip": "「{{name}}」に接続しました。上部ヘッダーのタブストリップから切り替えられます。",
         "connecting": "接続中…",
@@ -16807,7 +16809,15 @@
         "custom_sound_undo": "元に戻す",
         "custom_sound_option": "{{name}}（自作）",
         "channel_member": "クルーメイトからのメッセージ",
-        "channel_apps": "アプリのアップデート"
+        "channel_apps": "アプリのアップデート",
+        "push_section": "プッシュ通知",
+        "push_toggle_label": "{{productName}} を閉じていても通知する",
+        "push_toggle_description": "上のシステム通知とは別のスイッチです。システム通知は {{productName}} を開いている間だけ届きます。",
+        "push_install_hint": "iOS では、プッシュ通知を有効にするにはまず {{productName}} をホーム画面に追加してください。",
+        "push_unsupported": "このブラウザーでは、{{productName}} を閉じている間は通知を送れません。",
+        "push_error_permission": "通知が許可されませんでした。ブラウザーに確認されたら許可してから、もう一度お試しください。",
+        "push_error_subscribe": "この端末の通知をオンにできませんでした。もう一度試すか、ページを再読み込みしてください。",
+        "push_error_unsubscribe": "この端末の通知をオフにできませんでした。もう一度試すか、ページを再読み込みしてください。"
       },
       "privacyPanel": {
         "recordMetricsDescription": "このマシンでパフォーマンスメトリクスを収集します。",
@@ -19051,6 +19061,8 @@
       "switch_sessions": "セッションを変更"
     },
     "popoutController": {
+      "crew_pane_cannot_pop_out_in_desktop_app": "デスクトップアプリでは、リモートクルー内でポップアウトウィンドウを使えません。このクルーでここで作業を続けてください。",
+      "desktop_app_could_not_open_pop_out_window": "デスクトップアプリでポップアウトウィンドウを開けませんでした。このウィンドウで作業を続けてください。",
       "your_browser_blocked_the_pop_out_window_allow_po": "ブラウザーがポップアップウィンドウをブロックしました。このサイトのポップアップを許可して、もう一度お試しください。"
     },
     "sanitize": {

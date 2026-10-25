@@ -1450,3 +1450,75 @@ class TestAdvertisedModelIds:
         assert advertised_model_ids(None) == []
         assert advertised_model_ids("nope") == []
         assert advertised_model_ids([{"modelId": "  "}, "x", 7]) == []
+
+
+#: Where ``AcpSessionHandle.cleanup_transcript_files`` looks up the sessions dir.
+_SESSIONS_DIR_SEAM = "kiro_crew.acp.session_handle_lifecycle.kiro_sessions_dir"
+
+
+class TestAcpSessionProviderCleanupSession:
+    """``cleanup_session`` deletes the transcript pair off the event loop."""
+
+    @staticmethod
+    def _sessions(tmp_path: Path, monkeypatch, sid: str = "sid-cleanup") -> tuple[Path, list[Path]]:
+        sessions = tmp_path / "sessions" / "cli"
+        sessions.mkdir(parents=True)
+        files = [sessions / f"{sid}.json", sessions / f"{sid}.jsonl"]
+        for f in files:
+            f.write_text("{}", encoding="utf-8")
+        monkeypatch.setattr(_SESSIONS_DIR_SEAM, lambda: sessions)
+        return sessions, files
+
+    @pytest.mark.asyncio
+    async def test_deletes_both_transcript_files_and_nothing_else(self, tmp_path, monkeypatch):
+        sessions, files = self._sessions(tmp_path, monkeypatch)
+        other = sessions / "other-sid.json"
+        other.write_text("{}", encoding="utf-8")
+        provider = AcpSessionProvider(_make_handle(session_id="sid-cleanup"), _make_runtime())
+
+        await provider.cleanup_session()
+
+        assert [f.exists() for f in files] == [False, False]
+        assert other.exists()
+
+    @pytest.mark.asyncio
+    async def test_path_resolution_runs_in_a_worker_thread(self, tmp_path, monkeypatch):
+        """The resolve/unlink work must not run on the event-loop thread."""
+        import threading
+
+        sessions, files = self._sessions(tmp_path, monkeypatch)
+        seen: list[int] = []
+
+        def _recording_sessions_dir() -> Path:
+            seen.append(threading.get_ident())
+            return sessions
+
+        monkeypatch.setattr(_SESSIONS_DIR_SEAM, _recording_sessions_dir)
+        provider = AcpSessionProvider(_make_handle(), _make_runtime())
+
+        await provider.cleanup_session("sid-cleanup")
+
+        assert seen and threading.get_ident() not in seen
+        assert not any(f.exists() for f in files)
+
+    @pytest.mark.asyncio
+    async def test_traversal_session_id_deletes_nothing(self, tmp_path, monkeypatch, caplog):
+        self._sessions(tmp_path, monkeypatch)
+        outside = tmp_path / "sessions" / "victim.json"
+        outside.write_text("{}", encoding="utf-8")
+        provider = AcpSessionProvider(_make_handle(), _make_runtime())
+
+        with caplog.at_level("ERROR", logger="kiro_crew.acp.session_handle"):
+            await provider.cleanup_session("../victim")
+
+        assert outside.exists()
+        assert "path traversal blocked" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_no_session_id_is_a_no_op(self, tmp_path, monkeypatch):
+        _, files = self._sessions(tmp_path, monkeypatch)
+        provider = AcpSessionProvider(_make_handle(session_id=""), _make_runtime())
+
+        await provider.cleanup_session()
+
+        assert all(f.exists() for f in files)

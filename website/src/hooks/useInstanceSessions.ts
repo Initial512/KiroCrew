@@ -425,7 +425,7 @@ export function useInstanceSessions(
           key: s.key,
           title: str(s.title),
           last_turn_ts: str(s.last_turn_ts),
-          last_ts: str(s.last_ts),
+          last_ts: str(s.last_ts), // last-ts: a peer instance's payload, not a local row
           created: str(s.created),
           agent: str(s.agent),
           // An offline crew's row is a cached answer: its last `running`,

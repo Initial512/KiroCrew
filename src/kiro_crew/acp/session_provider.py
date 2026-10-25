@@ -65,7 +65,6 @@ from kiro_crew.acp.types import (
 )
 from kiro_crew.agent_sdk import host_auth
 from kiro_crew.agent_sdk.tool_gate import ADAPTER_EXPOSED_CREDENTIAL_LEAVES
-from kiro_crew.config.paths import kiro_sessions_dir
 from kiro_crew.constants import COMPACT_WAIT_TIMEOUT_SECS
 from kiro_crew.mcp_gateway.claim import schedule_claim
 from kiro_crew.providers.base import CancelOutcome, LLMEvent, LLMProvider
@@ -575,23 +574,16 @@ class AcpSessionProvider(LLMProvider):
         """Delete this session's kiro-cli transcript files (.json + .jsonl).
 
         Overrides the no-op LLMProvider.cleanup_session so shared-subagent
-        sessions don't leak transcripts on the shared runtime. Mirrors
-        AcpProvider.cleanup_session.
+        sessions don't leak transcripts on the shared runtime. Deletes through
+        the same helper ``destroy()`` uses, so the traversal guard is shared.
         """
         sid = session_id or getattr(self._handle, "session_id", "") or ""
         if not sid:
             return
-        sessions_dir = kiro_sessions_dir().resolve()
-        for suffix in (".json", ".jsonl"):
-            target = (sessions_dir / f"{sid}{suffix}").resolve()
-            # Guard against a crafted sessionId escaping the sessions dir.
-            if target.parent != sessions_dir:
-                logger.error("cleanup_session: path traversal blocked for %s", target)
-                return
-            try:
-                target.unlink(missing_ok=True)
-            except OSError:
-                logger.warning("cleanup_session: failed to delete %s", target, exc_info=True)
+        # The handle's helper resolves, guards and unlinks: blocking disk work
+        # that would stall every session on a slow home mount, so it runs in a
+        # worker thread.
+        await asyncio.to_thread(AcpSessionHandle.cleanup_transcript_files, sid)
 
     @property
     def context_incarnation(self) -> object:

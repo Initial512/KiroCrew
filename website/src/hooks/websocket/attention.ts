@@ -11,6 +11,7 @@ import { bindComposeIntentSender } from '../../lib/composeIntent'
 import { getViewedThreadSlot } from '../../lib/viewedThread'
 import { getMountedMemberThreadSlot, subscribeMountedMemberThread } from '../../lib/mountedMemberThread'
 import { isMemberThreadSlot } from '../unreadOnAttention'
+import { slotLastTsOf } from '../../store/slotLastTs'
 import type { SocketConnection } from './connection'
 import { appPathname } from '@/lib/basePath'
 
@@ -81,7 +82,7 @@ export function attendArrival(
     onOffScreen(slot)
   }
   else if (slot && !reconnecting && !document.hidden && document.hasFocus() && isSlotRenderedVisibly(slot)) {
-    const readTs = ts || store.getState().dashboard.slots?.find(s => s.key === slot)?.last_ts
+    const readTs = ts || slotLastTsOf(store.getState().dashboard, slot)
     emitSlotRead(slot, readTs)
   }
 }
@@ -189,7 +190,7 @@ export function attachFocusRelay({ socket, flushSlotActivity, onActiveSlotChange
       flushSlotActivity()
       const active = store.getState().chat.activeSlot
       if (active && !socket.reconnectingRef.current && document.hasFocus() && isChatSurfaceVisible()) {
-        emitSlotRead(active, store.getState().dashboard.slots?.find(s => s.key === active)?.last_ts)
+        emitSlotRead(active, slotLastTsOf(store.getState().dashboard, active))
       }
     }
   }

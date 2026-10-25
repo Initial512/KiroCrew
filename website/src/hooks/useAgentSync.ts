@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useSelector } from 'react-redux'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
-import type { RootState } from '../store'
+import { selectSlotsWithLiveLastTs } from '../store/slotLastTs'
 import { agentOrDefaultLabel } from '../utils/agentLabel'
 import { sessionDisplayTitle } from '../utils/sessionDisplayTitle'
 import { defaultAgentQuery } from '../api/defaultAgentQuery'
@@ -34,7 +34,7 @@ function shortName(s: string, max = 45): string {
 }
 
 export function useAgentSync() {
-  const slots = useSelector((s: RootState) => s.dashboard.slots)
+  const slots = useSelector(selectSlotsWithLiveLastTs)
   const [extras, setExtras] = useState<AgentSource[]>([])
   // Slots created before the default was stamped into metadata at creation
   // carry agent:'' — label them with the default custom agent (a template),

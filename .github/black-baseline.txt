@@ -144,7 +144,6 @@ src/kiro_crew/dashboard/chat_title.py
 src/kiro_crew/dashboard/file_index.py
 src/kiro_crew/dashboard/handlers/files.py
 src/kiro_crew/dashboard/handlers/kiro_usage_api.py
-src/kiro_crew/dashboard/handlers/notifications_push.py
 src/kiro_crew/dashboard/handlers/sso_login.py
 src/kiro_crew/dashboard/handlers/steering.py
 src/kiro_crew/dashboard/handlers/terminal.py
@@ -283,7 +282,6 @@ test/test_app_routes.py
 test/test_app_scaffold.py
 test/test_app_storage.py
 test/test_appearance_packs_detail_categories.py
-test/test_appearance_packs_overwrite_safety.py
 test/test_appearance_packs_store.py
 test/test_appearance_packs_transfer.py
 test/test_approval_and_update_task.py

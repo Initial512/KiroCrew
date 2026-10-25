@@ -10212,7 +10212,8 @@
     },
     "theme": {
       "high_contrast": "🔆 Hoher Kontrast",
-      "nu_disco": "🪩 Nu Disco"
+      "nu_disco": "🪩 Nu Disco",
+      "amethyst_oled": "💜 Amethyst OLED"
     },
     "useCronActions": {
       "failed_to_cancel_job": "Job konnte nicht abgebrochen werden",
@@ -16907,6 +16908,7 @@
         "configured_instances": "Konfigurierte Remote-Crews",
         "connect": "Verbinden",
         "connect_failed": "Verbindung zu {{id}} fehlgeschlagen: {{error}}",
+        "connect_disabled_needs_restart": "Das Gateway ist an, aber noch nicht aktiv — starte es neu, um zu verbinden.",
         "connect_needs_restart": "Verbindung zu {{id}} fehlgeschlagen: Das Gateway muss zuerst neu gestartet werden. Siehe den Hinweis unten.",
         "connected_switch_from_tab_strip": "„{{name}}“ verbunden. Wechsle über die Tab-Leiste in der oberen Kopfzeile dorthin.",
         "connecting": "Verbindung wird hergestellt…",
@@ -17080,7 +17082,15 @@
         "custom_sound_undo": "Rückgängig",
         "custom_sound_option": "{{name}} (eigener)",
         "channel_member": "Crewmate-Nachrichten",
-        "channel_apps": "App-Aktualisierungen"
+        "channel_apps": "App-Aktualisierungen",
+        "push_section": "Push-Benachrichtigungen",
+        "push_toggle_label": "Benachrichtige mich auch, wenn {{productName}} geschlossen ist",
+        "push_toggle_description": "Ein eigener Schalter, getrennt von den Systembenachrichtigungen oben, die nur funktionieren, solange {{productName}} geöffnet ist.",
+        "push_install_hint": "Füge {{productName}} auf iOS zuerst zum Home-Bildschirm hinzu, um Push zu aktivieren.",
+        "push_unsupported": "Dieser Browser kann keine Benachrichtigungen senden, während {{productName}} geschlossen ist.",
+        "push_error_permission": "Benachrichtigungen wurden nicht erlaubt. Erlaube sie, wenn dein Browser fragt, und versuche es dann erneut.",
+        "push_error_subscribe": "Benachrichtigungen für dieses Gerät konnten nicht aktiviert werden. Versuche es erneut oder lade die Seite neu.",
+        "push_error_unsubscribe": "Benachrichtigungen für dieses Gerät konnten nicht deaktiviert werden. Versuche es erneut oder lade die Seite neu."
       },
       "privacyPanel": {
         "recordMetricsDescription": "Leistungsmetriken auf diesem Rechner erfassen.",
@@ -19345,6 +19355,8 @@
       "switch_sessions": "das Wechseln von Sitzungen"
     },
     "popoutController": {
+      "crew_pane_cannot_pop_out_in_desktop_app": "In der Desktop-App funktionieren Pop-out-Fenster in einer Remote-Crew nicht. Arbeite in dieser Crew hier weiter.",
+      "desktop_app_could_not_open_pop_out_window": "Die Desktop-App konnte das Pop-out-Fenster nicht öffnen. Arbeite in diesem Fenster weiter.",
       "your_browser_blocked_the_pop_out_window_allow_po": "Dein Browser hat das Pop-out-Fenster blockiert. Erlaube Pop-ups für diese Seite und versuche es erneut."
     },
     "sanitize": {

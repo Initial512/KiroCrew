@@ -395,6 +395,19 @@ class TestDeadIdentifier:
         _write(tree, "docs/ok.md", "# Ok\n\nPinned by `test_all_exports_exact`.\n")
         assert not _tokens(tree, gate.CHECK_DEAD_IDENTIFIER)
 
+    def test_silent_for_a_frontend_integration_test_file(self, tree: Path) -> None:
+        # website/integration/ is the vitest integration suite; a doc citing one
+        # of its files by name names a live test, not a renamed symbol.
+        _write(
+            tree, "website/integration/WidgetButtons.integration.test.tsx", "it('x', () => {})\n"
+        )
+        _write(
+            tree,
+            "docs/ok.md",
+            "# Ok\n\nCovered by `integration/WidgetButtons.integration.test.tsx`.\n",
+        )
+        assert not _tokens(tree, gate.CHECK_DEAD_IDENTIFIER)
+
     @pytest.mark.parametrize("prefix", sorted(gate._IDENT_PLACEHOLDER_PREFIXES))
     def test_silent_for_a_documentation_placeholder(self, tree: Path, prefix: str) -> None:
         _write(tree, "src/kiro_crew/real.py", "a = 1\n")

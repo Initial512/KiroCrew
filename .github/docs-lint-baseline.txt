@@ -185,7 +185,6 @@ dead-identifier	src/kiro_crew/docs/feishu-integration.md	send_as_bot
 dead-identifier	website/docs/extension-seams.md	registerThemee
 dead-identifier	website/docs/i18n-catalog.md	installReceipt
 dead-identifier	website/docs/narrow-viewport.md	ActionBar
-dead-identifier	website/docs/testing.md	CronNotificationButtons
 dead-identifier	website/docs/testing.md	webServer
 line-ref	docs/request-for-change/rfc-crew-agent-sdk-boundary.md	acp/types.py:177-181
 line-ref	docs/request-for-change/rfc-crew-agent-sdk-boundary.md	acp/worker_pool.py:49

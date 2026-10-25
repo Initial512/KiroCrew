@@ -354,6 +354,41 @@ class TestMiseWhich:
         monkeypatch.setattr(client_mod, "subprocess_mod", mock_sub)
         assert _mise_which("claude-agent-acp") is None
 
+    @pytest.mark.parametrize("host_encoding", ["cp1252", "ascii"])
+    def test_non_ascii_path_survives_a_non_utf8_host_codepage(
+        self, tmp_path, monkeypatch, host_encoding
+    ):
+        """mise prints the path as UTF-8; a profile dir like ``José`` must resolve.
+
+        The stand-in decodes the way ``subprocess`` does: with ``encoding=`` when
+        given, else the host code page. cp1252 mangles the path (no such file, so
+        the lookup falls through to None); ascii raises ``UnicodeDecodeError``,
+        which escapes the ``TimeoutExpired``/``OSError`` handler.
+        """
+        import subprocess
+
+        from kiro_crew.acp import client as client_mod
+        from kiro_crew.acp.client import _mise_which
+
+        script = tmp_path / "José" / "node"
+        script.parent.mkdir()
+        script.write_text("#!/bin/sh\n", encoding="utf-8")
+        payload = (str(script) + "\n").encode("utf-8")
+
+        def _decoding_run(argv, **kwargs):
+            codec = kwargs.get("encoding") or host_encoding
+            return subprocess.CompletedProcess(argv, 0, payload.decode(codec), "")
+
+        monkeypatch.setattr(
+            client_mod.shutil,
+            "which",
+            lambda name: str(tmp_path / "mise") if name == "mise" else None,
+        )
+        mock_sub = MagicMock(run=_decoding_run)
+        mock_sub.TimeoutExpired = subprocess.TimeoutExpired
+        monkeypatch.setattr(client_mod, "subprocess_mod", mock_sub)
+        assert _mise_which("node") == str(script)
+
 
 class TestResolveKiroBinEnvOverride:
     """_resolve_kiro_bin honors the KIROCREW_KIRO_BIN override for environments

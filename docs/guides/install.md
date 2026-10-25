@@ -320,7 +320,10 @@ Both targets bootstrap their toolchain first (`ensure-node.sh`,
 `ensure-python.sh`) and fall back to whatever is on `PATH` if that fails. The
 backend target refuses to build a venv from an interpreter older than 3.12,
 matching `pyproject.toml`'s `requires-python`, rather than letting dependency
-resolution backtrack or the package fail at import.
+resolution backtrack or the package fail at import. `ensure-python.sh` also
+skips any interpreter whose throwaway `--without-pip` venv cannot run python,
+such as a shared-libpython build behind a launcher wrapper (Toolbox's kirocrew
+Python), and moves on to the next candidate or mise.
 
 `make.ps1` resolves the same toolchain but installs none of it: the bootstrap
 scripts' install paths are `curl … | sh`, so on Windows it searches (`py`
@@ -551,7 +554,9 @@ Linux, `.\make.ps1 <target>` on Windows.
 | `make clean` | Remove build artifacts, dists, and caches |
 
 Override the Python interpreter with `make PY=python3.12 build`, or
-`.\make.ps1 build -Py C:\path\to\python.exe`.
+`.\make.ps1 build -Py C:\path\to\python.exe`. Either one takes precedence over
+the `<data-home>/python-bin` marker `ensure-python.sh` records; a `PY` exported
+in the environment does not, so the marker still wins over it.
 
 `make wheel`, `make backend-bin` and `make desktop` take `EDITION=oss` or `EDITION=enterprise`, stamped into the built package's `kiro_crew/edition.py`. Only `EDITION=` on the `make` command line counts; an exported shell `EDITION` is ignored, even under `make -e`. Without it, the value comes from the `KIROCREW_BUILD_EDITION` environment variable, and then defaults to `oss`. Both set to different values, or any other value (wildcards such as `%` included), fails the build before it starts. On Windows, set `KIROCREW_BUILD_EDITION` before `.\make.ps1`. See [platform-context](../system-specs/modules/platform-context.md#build-time-edition-constant).
 

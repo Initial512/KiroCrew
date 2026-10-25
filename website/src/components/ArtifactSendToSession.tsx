@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Forward, Plus } from 'lucide-react'
 
 import { useAppDispatch, useAppSelector } from '../store'
+import { selectSlotsWithLiveLastTs } from '../store/slotLastTs'
 import { createSlot } from '../store/chatSlice'
 import { DropdownMenuItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger } from './ui/dropdown-menu'
 import { prepareCurrentSlots, isEmptyNewSlot } from './commandPalette/providers/recentsProvider'
@@ -48,7 +49,9 @@ export function useArtifactSendToSession({ name, slug, active, onSend, beforeSen
   onError: (message: string | null) => void
 }) {
   const dispatch = useAppDispatch()
-  const slots = useAppSelector((s) => s.dashboard.slots)
+  // Live message recency: prepareCurrentSlots orders by last_ts, which the
+  // row does not carry while a turn streams (see store/slotLastTs).
+  const slots = useAppSelector(selectSlotsWithLiveLastTs)
   const [creating, setCreating] = useState(false)
   const liveRef = useRef(active)
   liveRef.current = active

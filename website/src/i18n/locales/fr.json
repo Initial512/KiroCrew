@@ -10357,7 +10357,8 @@
     },
     "theme": {
       "high_contrast": "🔆 Contraste élevé",
-      "nu_disco": "🪩 Nu Disco"
+      "nu_disco": "🪩 Nu Disco",
+      "amethyst_oled": "💜 Amethyst OLED"
     },
     "useCronActions": {
       "failed_to_cancel_job": "Échec de l’annulation de la tâche",
@@ -17180,6 +17181,7 @@
         "configured_instances": "Crews distantes configurées",
         "connect": "Connecter",
         "connect_failed": "Échec de la connexion à {{id}} : {{error}}",
+        "connect_disabled_needs_restart": "La passerelle est activée mais pas encore active — redémarre-la pour te connecter.",
         "connect_needs_restart": "Échec de la connexion à {{id}}: la passerelle doit d’abord être redémarrée. Voir la note ci-dessous.",
         "connected_switch_from_tab_strip": "Connexion à « {{name}} » établie. Bascule vers cette crew depuis la barre d’onglets en haut de la page.",
         "connecting": "Connexion…",
@@ -17353,7 +17355,15 @@
         "custom_sound_undo": "Annuler",
         "custom_sound_option": "{{name}} (le tien)",
         "channel_member": "Messages des coéquipiers",
-        "channel_apps": "Mises à jour des apps"
+        "channel_apps": "Mises à jour des apps",
+        "push_section": "Notifications push",
+        "push_toggle_label": "Me notifier même quand {{productName}} est fermé",
+        "push_toggle_description": "Un interrupteur distinct des notifications système ci-dessus, qui ne fonctionnent que lorsque {{productName}} est ouvert.",
+        "push_install_hint": "Sur iOS, ajoute {{productName}} à l’écran d’accueil pour activer les notifications push.",
+        "push_unsupported": "Ce navigateur ne peut pas envoyer de notifications quand {{productName}} est fermé.",
+        "push_error_permission": "Les notifications n'ont pas été autorisées. Autorise-les lorsque ton navigateur le demande, puis réessaie.",
+        "push_error_subscribe": "Impossible d'activer les notifications sur cet appareil. Réessaie ou recharge la page.",
+        "push_error_unsubscribe": "Impossible de désactiver les notifications sur cet appareil. Réessaie ou recharge la page."
       },
       "privacyPanel": {
         "recordMetricsDescription": "Collecter les métriques de performance sur cette machine.",
@@ -19639,6 +19649,8 @@
       "switch_sessions": "changer de session"
     },
     "popoutController": {
+      "crew_pane_cannot_pop_out_in_desktop_app": "Dans l'app de bureau, les fenêtres détachées ne fonctionnent pas dans une crew distante. Continue à travailler dans cette crew ici.",
+      "desktop_app_could_not_open_pop_out_window": "L'app de bureau n'a pas pu ouvrir la fenêtre détachée. Continue à travailler dans cette fenêtre.",
       "your_browser_blocked_the_pop_out_window_allow_po": "Votre navigateur a bloqué la fenêtre détachée. Autorisez les fenêtres pop-up pour ce site et réessayez."
     },
     "sanitize": {

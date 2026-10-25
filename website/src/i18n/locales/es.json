@@ -10357,7 +10357,8 @@
     },
     "theme": {
       "high_contrast": "🔆 Alto contraste",
-      "nu_disco": "🪩 Nu Disco"
+      "nu_disco": "🪩 Nu Disco",
+      "amethyst_oled": "💜 Amethyst OLED"
     },
     "useCronActions": {
       "failed_to_cancel_job": "No se pudo cancelar el trabajo",
@@ -17180,6 +17181,7 @@
         "configured_instances": "Crews remotos configurados",
         "connect": "Conectar",
         "connect_failed": "No se pudo conectar con {{id}}: {{error}}",
+        "connect_disabled_needs_restart": "El gateway está activado pero aún no activo: reinícialo para conectar.",
         "connect_needs_restart": "No se pudo conectar con {{id}}: primero hay que reiniciar el gateway. Consulta la nota de abajo.",
         "connected_switch_from_tab_strip": "Se conectó “{{name}}”. Cambia a ella desde la barra de pestañas del encabezado superior.",
         "connecting": "Conectando…",
@@ -17353,7 +17355,15 @@
         "custom_sound_undo": "Deshacer",
         "custom_sound_option": "{{name}} (tuyo)",
         "channel_member": "Mensajes de compañeros",
-        "channel_apps": "Actualizaciones de apps"
+        "channel_apps": "Actualizaciones de apps",
+        "push_section": "Notificaciones push",
+        "push_toggle_label": "Avísame aunque {{productName}} esté cerrado",
+        "push_toggle_description": "Un interruptor aparte de las notificaciones del sistema de arriba, que solo funcionan mientras {{productName}} está abierto.",
+        "push_install_hint": "En iOS, añade {{productName}} a la pantalla de inicio para activar las notificaciones push.",
+        "push_unsupported": "Este navegador no puede enviar notificaciones mientras {{productName}} está cerrado.",
+        "push_error_permission": "No se permitieron las notificaciones. Permítelas cuando tu navegador lo pida y vuelve a intentarlo.",
+        "push_error_subscribe": "No se pudieron activar las notificaciones en este dispositivo. Vuelve a intentarlo o recarga la página.",
+        "push_error_unsubscribe": "No se pudieron desactivar las notificaciones en este dispositivo. Vuelve a intentarlo o recarga la página."
       },
       "privacyPanel": {
         "recordMetricsLabel": "Registrar métricas",
@@ -19639,6 +19649,8 @@
       "switch_sessions": "cambiar de sesión"
     },
     "popoutController": {
+      "crew_pane_cannot_pop_out_in_desktop_app": "En la app de escritorio, las ventanas desacopladas no funcionan dentro de un crew remoto. Sigue trabajando en este crew aquí.",
+      "desktop_app_could_not_open_pop_out_window": "La app de escritorio no pudo abrir la ventana desacoplada. Sigue trabajando en esta ventana.",
       "your_browser_blocked_the_pop_out_window_allow_po": "Tu navegador bloqueó la ventana desacoplada. Permite las ventanas emergentes para este sitio e inténtalo de nuevo."
     },
     "sanitize": {

@@ -10357,7 +10357,8 @@
     },
     "theme": {
       "high_contrast": "🔆 Alto contraste",
-      "nu_disco": "🪩 Nu Disco"
+      "nu_disco": "🪩 Nu Disco",
+      "amethyst_oled": "💜 Amethyst OLED"
     },
     "useCronActions": {
       "failed_to_cancel_job": "Falha ao cancelar o job",
@@ -17180,6 +17181,7 @@
         "configured_instances": "Crews remotas configuradas",
         "connect": "Conectar",
         "connect_failed": "Falha ao conectar a {{id}}: {{error}}",
+        "connect_disabled_needs_restart": "O gateway está ligado, mas ainda não ativo — reinicie-o para conectar.",
         "connect_needs_restart": "Falha ao conectar a {{id}}: primeiro é preciso reiniciar o gateway. Veja a nota abaixo.",
         "connected_switch_from_tab_strip": "Conectado a “{{name}}”. Alterne para ela na barra de abas do cabeçalho superior.",
         "connecting": "Conectando…",
@@ -17353,7 +17355,15 @@
         "custom_sound_undo": "Desfazer",
         "custom_sound_option": "{{name}} (seu)",
         "channel_member": "Mensagens de colegas",
-        "channel_apps": "Atualizações de apps"
+        "channel_apps": "Atualizações de apps",
+        "push_section": "Notificações push",
+        "push_toggle_label": "Notificar-me mesmo quando o {{productName}} estiver fechado",
+        "push_toggle_description": "Um botão separado das notificações do sistema acima, que só funcionam enquanto o {{productName}} está aberto.",
+        "push_install_hint": "No iOS, adicione o {{productName}} à tela inicial para ativar as notificações push.",
+        "push_unsupported": "Este navegador não consegue enviar notificações enquanto o {{productName}} está fechado.",
+        "push_error_permission": "As notificações não foram permitidas. Permita-as quando o navegador pedir e tente novamente.",
+        "push_error_subscribe": "Não foi possível ativar as notificações neste dispositivo. Tente novamente ou recarregue a página.",
+        "push_error_unsubscribe": "Não foi possível desativar as notificações neste dispositivo. Tente novamente ou recarregue a página."
       },
       "privacyPanel": {
         "recordMetricsLabel": "Registrar métricas",
@@ -19639,6 +19649,8 @@
       "switch_sessions": "alternar sessões"
     },
     "popoutController": {
+      "crew_pane_cannot_pop_out_in_desktop_app": "No app de desktop, janelas destacadas não funcionam dentro de uma crew remota. Continue trabalhando nesta crew aqui.",
+      "desktop_app_could_not_open_pop_out_window": "O app de desktop não conseguiu abrir a janela destacada. Continue trabalhando nesta janela.",
       "your_browser_blocked_the_pop_out_window_allow_po": "Seu navegador bloqueou a janela destacada. Permita pop-ups para este site e tente novamente."
     },
     "sanitize": {

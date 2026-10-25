@@ -130,6 +130,8 @@ _COUPLING_AMBIGUOUS_NAMES: frozenset[str] = frozenset({"README.md"})
 # (it lives in test/) and `KiroCrewClient` dead (it lives in packages/). The tail
 # of the list mirrors `_SOURCE_CITE_TREES`, because a symbol defined only in a
 # workflow or in `website/scripts/` is alive and would otherwise read as dead.
+# `website/integration/` holds the vitest integration suite, so a doc naming one
+# of its test files (`CronNotificationButtons`) cites something real.
 _IDENT_SNAKE_RE = re.compile(r"\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b")
 _IDENT_CAMEL_RE = re.compile(r"\b[A-Za-z][a-z0-9]*(?:[A-Z][a-z0-9]+)+\b")
 _IDENT_TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{2,}")
@@ -139,6 +141,7 @@ _IDENT_CODE_TREES: tuple[str, ...] = (
     "src",
     "website/src",
     "website/scripts",
+    "website/integration",
     "scripts",
     "test",
     "packages",

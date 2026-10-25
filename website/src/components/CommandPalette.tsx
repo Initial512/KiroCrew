@@ -4,6 +4,7 @@ import { Search, X, Pin, MessageSquare, Clock, Plus, RotateCw } from 'lucide-rea
 import { useQuery } from '@tanstack/react-query'
 
 import { useAppSelector } from '../store'
+import { selectSlotsWithLiveLastTs } from '../store/slotLastTs'
 import { useListKeyboardNav } from '../hooks/useListKeyboardNav'
 import { useSimplifiedToolNames } from '../hooks/useSimplifiedToolNames'
 import type { Result, ResourceProvider } from './commandPalette/types'
@@ -362,7 +363,7 @@ export default function CommandPalette({
   // change — a re-memoized provider identity alone does nothing. Fold a
   // fingerprint of that live state into the key so status dots and MRU order
   // update while the palette is open instead of freezing at open-time.
-  const slots = useAppSelector((s) => s.dashboard.slots)
+  const slots = useAppSelector(selectSlotsWithLiveLastTs)
   const unreadSlots = useAppSelector((s) => s.dashboard.unreadSlots)
   const slotStatusDetail = useAppSelector((s) => s.chat.slotStatusDetail ?? {})
   // Rows render a tool status through toolStatusLabel, so the purpose-vs-raw-title

@@ -16,7 +16,7 @@
  */
 
 /** Paths relative to website/, forward slashes, sorted. */
-export const REACT_COMPILER_FILES = []
+export const REACT_COMPILER_FILES = ['src/pages/chat/page/ChatPaneNotices.tsx']
 
 /**
  * babel-plugin-react-compiler options. `target: '18'` imports the memo cache

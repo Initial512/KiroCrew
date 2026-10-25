@@ -68,6 +68,56 @@ describe('React Compiler allowlist', () => {
     }
   })
 
+  // `i18nT()` and the `i18n/format` helpers read the active language without
+  // being reactive inputs, so the compiler would cache their output across a
+  // language switch. A listed file that uses them must also read the language
+  // generation and pass it into the calls (see ChatPaneNotices' `paneCopy`).
+  it.each(REACT_COMPILER_FILES)('%s makes the language an input when it translates', (f) => {
+    const src = readFileSync(path.join(WEBSITE, f), 'utf8')
+    if (!/from '[./]*i18n\/(t|format)'/.test(src)) return
+    expect(src, `${f} calls i18nT/format helpers without useLanguageGeneration()`).toMatch(/\buseLanguageGeneration\(\)/)
+  })
+
+  // A compiled component caches the elements it renders while their props are
+  // unchanged, so a child it imports becomes a memo boundary: on a language
+  // switch the child is not re-rendered unless it subscribes itself. Every
+  // relative .tsx module a listed file imports, statically or through a lazy
+  // `import()`, that translates must call useLanguageGeneration().
+  // Child modules that translate but need no subscription, with the reason.
+  const LANGUAGE_EXEMPT: Record<string, string> = {
+    // The listed files import `Btn` from here, which renders no catalog text;
+    // the translating exports of this module are not rendered by them.
+    'src/components/ui.tsx': 'Btn renders no catalog text',
+  }
+  // Class components cannot call the hook, so the listed file passes the
+  // generation as a prop instead; every element of the component must carry it.
+  const LANGUAGE_PROP: Record<string, string> = {
+    'src/components/ErrorBoundary.tsx': 'ErrorBoundary',
+  }
+
+  it.each(REACT_COMPILER_FILES)('%s renders only children that follow a language switch', (f) => {
+    const abs = path.join(WEBSITE, f)
+    const src = readFileSync(abs, 'utf8')
+    const specs = [...src.matchAll(/(?:from|import\()\s*'(\.{1,2}\/[^']+)'/g)].map(m => m[1])
+    const stale: string[] = []
+    for (const spec of new Set(specs)) {
+      const child = path.resolve(path.dirname(abs), spec.endsWith('.tsx') ? spec : `${spec}.tsx`)
+      const rel = path.relative(WEBSITE, child).replace(/\\/g, '/')
+      if (!existsSync(child) || rel in LANGUAGE_EXEMPT) continue
+      if (rel in LANGUAGE_PROP) {
+        const tag = LANGUAGE_PROP[rel]
+        const opens = src.match(new RegExp(`<${tag}\\b[^>]*>`, 'g')) ?? []
+        if (opens.some(o => !/\blanguageGeneration=\{/.test(o))) stale.push(`${rel} (pass languageGeneration)`)
+        continue
+      }
+      const childSrc = readFileSync(child, 'utf8')
+      if (/from '[./]*i18n\/(t|format)'/.test(childSrc) && !/\buseLanguageGeneration\(\)/.test(childSrc)) {
+        stale.push(path.relative(WEBSITE, child))
+      }
+    }
+    expect(stale, `${f} renders translating children without useLanguageGeneration()`).toEqual([])
+  })
+
   it.each(REACT_COMPILER_FILES)('%s compiles with no bailout', (f) => {
     const report = compile(readFileSync(path.join(WEBSITE, f), 'utf8'), path.join(WEBSITE, f))
     expect(report.problems, `${f} bails; fix it or drop it from react-compiler.config.mjs`).toEqual([])

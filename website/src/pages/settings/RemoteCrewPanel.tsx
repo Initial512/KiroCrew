@@ -94,7 +94,7 @@ import {
 import {
   SizeCard, ProvisionerCard, SettingUpRow, PrereqRow, LaunchProgressCard,
 } from './RemoteCrewPanelLaunch'
-import { CREW_SWITCH_HINT_ID, CrewRow } from './RemoteCrewPanelCrewRow'
+import { CREW_SWITCH_HINT_ID, CREW_NEEDS_RESTART_BANNER_ID, CrewRow } from './RemoteCrewPanelCrewRow'
 export { TurnUrlField } from './RemoteCrewPanelCrewRow'
 
 export function RemoteCrewPanel() {
@@ -1032,7 +1032,7 @@ export function RemoteCrewPanel() {
               {i18nT('pages.settings.remoteCrewPanel.crew_switch_hint')}
             </p>
             {needsRestart && (
-              <div role="status" className="flex items-start gap-2 px-3 py-2 mb-3 text-[13px] rounded-md bg-warn/10 text-warn-text border border-warn/30">
+              <div id={CREW_NEEDS_RESTART_BANNER_ID} role="status" className="flex items-start gap-2 px-3 py-2 mb-3 text-[13px] rounded-md bg-warn/10 text-warn-text border border-warn/30">
                 <AlertTriangle size={14} className="lucide-inline mt-0.5 shrink-0" />
                 <RestartToActivateText />
               </div>
@@ -1082,6 +1082,7 @@ export function RemoteCrewPanel() {
                     fetchingSignin={signinMutation.isPending && signinMutation.variables === signinJobIdFor(inst)}
                     signinNotice={signinNotice && signinNotice.jobId === signinJobIdFor(inst) ? signinNotice : null}
                     busy={busy}
+                    connectBlocked={needsRestart}
                     deleting={inst.ssm_target ? deletingTags.has(cloudTagByInstanceId.get(inst.ssm_target) ?? '') : false}
                     confirmDelete={confirmDeleteTag !== null && confirmDeleteTag === (inst.ssm_target ? cloudTagByInstanceId.get(inst.ssm_target) : null)}
                     confirmRemove={confirmRemoveId === inst.id}

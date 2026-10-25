@@ -29,6 +29,7 @@ import time
 from typing import Any, NamedTuple, Optional
 
 from kiro_crew.sandbox import cgroup_scope_argv, run_limited, wrap_argv
+from kiro_crew.subprocess_utf8 import UTF8_TEXT
 
 logger = logging.getLogger(__name__)
 
@@ -376,7 +377,10 @@ def run_aws(
         proc = run_limited(  # noqa: S603 — fixed argv, no shell, sandbox-wrapped
             sandboxed,
             capture_output=True,
-            text=True,
+            # The CLI writes UTF-8 because it inherits the PYTHONUTF8=1 that
+            # ensure_utf8_console publishes, which aws-cli v1 and v2 honour.
+            # A locale decode would read that as the Windows ANSI code page.
+            **UTF8_TEXT,
             timeout=timeout,
             stdin=stdin_arg,
         )

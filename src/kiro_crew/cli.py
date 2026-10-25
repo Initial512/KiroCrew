@@ -89,6 +89,7 @@ from kiro_crew.sel import sel  # noqa: F401
 from kiro_crew.service.live_target import maybe_reexec
 from kiro_crew.session import SessionManager  # noqa: F401
 from kiro_crew.skills import SkillsLoader  # noqa: F401
+from kiro_crew.subprocess_utf8 import UTF8_TEXT
 
 # The owners bind this same logger by name; ``__name__`` is ``__main__`` under
 # ``python -m kiro_crew.cli``, where one object per name must still hold.
@@ -169,7 +170,8 @@ def _node_ok() -> bool:
             # found anyway.
             [node, "-v"],
             capture_output=True,
-            text=True,
+            # node writes UTF-8 to a pipe on every OS, whatever the locale.
+            **UTF8_TEXT,
             timeout=5,
         )
         version = parse_node_version(node_ver.stdout)

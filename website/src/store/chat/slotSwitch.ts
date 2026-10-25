@@ -9,6 +9,7 @@ import type { ChatMessage } from '../../types'
 import { emitSlotRead } from '../../lib/slotReadRelay'
 import { devLog, inspectorOn } from '../../dev/scrollInspector'
 import { armConfirmedCloseHold, markSlotRead, removeSlotOptimistic } from '../dashboardSlice'
+import { slotLastTsOf } from '../slotLastTs'
 import { mergePreservedPastes } from '../../utils/pasteTokens'
 import { errMessage, isMissingSlotError, type StatusRejection } from '../../utils/thunkError'
 import { i18nT } from '../../i18n/t'
@@ -59,8 +60,12 @@ import { walkWindowBackTo } from './windowWalk'
  *    recovery.
  *  - `automatic`: the chat page's own auto-select after it lost the active
  *    chat. The move counts in `activeSlotAutoMoves`, so a pending fork still
- *    opens its child (see `forkMayOpen`). */
-export type SwitchSlotArg = string | { key: string; keepTargetOnMissing?: boolean; announceOnMissing?: boolean; automatic?: boolean }
+ *    opens its child (see `forkMayOpen`).
+ *  - `requestSeq`: a fork opening its child, with the fork's origin `seq`.
+ *    The move counts in `activeSlotRequestMoves`, so a request clicked after
+ *    the fork still opens, and one clicked before it does not take the view
+ *    back (see `forkMayOpen`). */
+export type SwitchSlotArg = string | { key: string; keepTargetOnMissing?: boolean; announceOnMissing?: boolean; automatic?: boolean; requestSeq?: number }
 
 /** The slot key of a `switchSlot` argument, in either spelling. Non-object
  *  values pass through untouched: a hand-rolled test dispatch can omit
@@ -208,7 +213,7 @@ export const switchSlot = createAsyncThunk<
     // relays. Optional-chained like the slotRun guard below: a partial
     // preloaded test state can omit the dashboard slice, and throwing here
     // would abort the switch fetch itself.
-    const _newestSlotTs = () => (getState() as RootState).dashboard?.slots?.find(s => s.key === key)?.last_ts
+    const _newestSlotTs = () => slotLastTsOf((getState() as RootState).dashboard, key)
     // Bounded to the page size so opening a long session costs one page, not the
     // whole chained transcript; `loadOlderMessages` walks back from the cursor
     // this fetch returns, and a window that misses rows this tab already holds
@@ -470,7 +475,10 @@ export function addSlotSwitchCases(builder: ActionReducerMapBuilder<ChatState>):
       // the target -- so the hand-back inside reads the mirror while it still
       // describes the outgoing slot. WS events for the new slot are accepted
       // from here on.
-      enterActiveSlot(state, target, typeof action.meta.arg === 'object' && action.meta.arg !== null && action.meta.arg.automatic === true)
+      const switchArg = typeof action.meta.arg === 'object' && action.meta.arg !== null ? action.meta.arg : null
+      const openedBy = typeof switchArg?.requestSeq === 'number' ? switchArg.requestSeq : null
+      enterActiveSlot(state, target, switchArg?.automatic === true ? true : openedBy !== null ? 'request' : false)
+      if (openedBy !== null) state.activatedRequestSeq = Math.max(state.activatedRequestSeq ?? 0, openedBy)
       if (target !== outgoingSlot) {
         state.lastChunkSeq = runs[safeKey(target)]?.lastChunkSeq
         state.lastChunkGen = runs[safeKey(target)]?.lastChunkGen

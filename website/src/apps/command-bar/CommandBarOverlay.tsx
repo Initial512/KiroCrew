@@ -3,6 +3,7 @@ import { OverlayPortal } from '../../components/overlayRoot'
 import { Command, Loader2 } from 'lucide-react'
 
 import { useAppDispatch, useAppSelector, useAppStore } from '../../store'
+import { selectSlotsWithLiveLastTs } from '../../store/slotLastTs'
 import { findReport } from '../../utils/errorReport'
 import { errMessage } from '../../utils/thunkError'
 import ErrorNotice from '../../components/ErrorNotice'
@@ -206,7 +207,7 @@ export default function CommandBarOverlay({
   // current over its socket. This is what lets the root LEAD with the sessions that
   // owe the user something without issuing a request: the facts are already here,
   // and the alternative surfaces (sidebar, recents) are reading the same three.
-  const liveSlots = useAppSelector(s => s.dashboard.slots)
+  const liveSlots = useAppSelector(selectSlotsWithLiveLastTs)
   const unreadSlots = useAppSelector(s => s.dashboard.unreadSlots)
   const slotStatusDetail = useAppSelector(s => s.chat.slotStatusDetail ?? {})
   const simplifiedToolNames = useSimplifiedToolNames()

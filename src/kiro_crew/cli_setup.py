@@ -49,6 +49,7 @@ from kiro_crew.secrets.migrate import _env_lock_path
 from kiro_crew.security import redact
 from kiro_crew.sel import sel
 from kiro_crew.skills import remove_retired_conductor_skill
+from kiro_crew.subprocess_utf8 import UTF8_TEXT
 from kiro_crew.validation import USER_ID_RE
 
 
@@ -233,7 +234,9 @@ def _setup_electron() -> None:
         ["npm", "install", "--no-audit", "--no-fund", "--loglevel=error"],
         cwd=str(electron_dir),
         capture_output=True,
-        text=True,
+        # npm and electron-builder are node programs: their pipes carry UTF-8,
+        # not the locale's code page.
+        **UTF8_TEXT,
         timeout=120,
     )
     if npm_install.returncode != 0:
@@ -246,7 +249,7 @@ def _setup_electron() -> None:
         ["npx", "electron-builder", "--mac", "--dir"],
         cwd=str(electron_dir),
         capture_output=True,
-        text=True,
+        **UTF8_TEXT,
         timeout=300,
     )
     if build.returncode != 0:

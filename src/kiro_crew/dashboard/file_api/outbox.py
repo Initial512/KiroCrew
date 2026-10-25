@@ -568,14 +568,22 @@ async def api_outbox_download(request: web.Request) -> web.StreamResponse:
     )
 
 
-async def api_outbox_list(request: web.Request) -> web.Response:
-    """GET /api/outbox — list files in the outbox."""
+def _list_outbox_entries() -> list[dict[str, object]]:
+    """The outbox's listable files, newest first.
+
+    Blocking: one ``iterdir`` plus a ``stat`` per entry of a directory that grows
+    with every file an agent sends, so ``api_outbox_list`` runs it with
+    ``asyncio.to_thread``. The directory is the gateway's own, never the
+    request's choice, so the default executor is the lane rather than the
+    bounded probe pool request-chosen paths use. An entry removed mid-scan is
+    skipped, as are directories and names ``redact()`` would rewrite.
+    """
     from kiro_crew.config.loader import outbox_dir  # noqa: F811
 
-    entries = []
+    entries: list[dict[str, object]] = []
     odir = outbox_dir()
     if not odir.is_dir():
-        return web.json_response({"files": []})
+        return entries
     for f in odir.iterdir():
         try:
             st = f.stat()
@@ -583,7 +591,13 @@ async def api_outbox_list(request: web.Request) -> web.Response:
             continue
         if f.is_file() and redact(f.name) == f.name:
             entries.append({"filename": f.name, "size": st.st_size, "modified": st.st_mtime})
-    entries.sort(key=lambda x: float(x["modified"]), reverse=True)  # type: ignore[arg-type,return-value]
+    entries.sort(key=lambda x: float(x["modified"]), reverse=True)  # type: ignore[arg-type]
+    return entries
+
+
+async def api_outbox_list(request: web.Request) -> web.Response:
+    """GET /api/outbox — list files in the outbox."""
+    entries = await asyncio.to_thread(_list_outbox_entries)
 
     _sel().log_tool_invocation(
         session_key="api",

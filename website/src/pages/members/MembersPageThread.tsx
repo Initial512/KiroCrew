@@ -40,6 +40,7 @@ import { useAppDispatch, useAppSelector } from '../../store'
 import { selectSlotMessages, selectSlotStreamState, selectSlotTurnFromWake } from '../../store/chatSlice'
 import { useLanguage } from '../../i18n/LanguageProvider'
 import { markSlotRead } from '../../store/dashboardSlice'
+import { selectSlotLastTs } from '../../store/slotLastTs'
 import { emitSlotRead, flushSlotRead } from '../../lib/slotReadRelay'
 import { setViewedThreadSlot, clearViewedThreadSlot } from '../../lib/viewedThread'
 import { setMountedMemberThreadSlot, clearMountedMemberThreadSlot } from '../../lib/mountedMemberThread'
@@ -400,7 +401,7 @@ export function useMembersPageThreadView({
     (s) => !!activeSlot && s.dashboard.unreadSlots.includes(activeSlot),
   )
   const activeSlotLastTs = useAppSelector(
-    (s) => (activeSlot ? s.dashboard.slots.find(sl => sl.key === activeSlot)?.last_ts : undefined),
+    (s) => (activeSlot ? selectSlotLastTs(s, activeSlot) : undefined),
   )
   // The identity pill's second line — what the crewmate is doing now, read
   // through the ONE seam the chat's live status line reads too

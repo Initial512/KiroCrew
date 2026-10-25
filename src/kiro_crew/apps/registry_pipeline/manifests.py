@@ -95,6 +95,16 @@ async def _fetch_app_manifest(
     and a pinned row carries no branch at all, so the branch would silently be
     the ``"main"`` default.
     """
+
+    def _read_manifest_text(path: Path) -> str | None:
+        # Blocking: the ``is_file`` probe and the read are both filesystem calls,
+        # so each caller below runs this in ONE ``asyncio.to_thread`` hop rather
+        # than probing on the event loop. None means "not a regular file"; read
+        # errors propagate to the caller's own handler.
+        if not path.is_file():
+            return None
+        return path.read_text("utf-8")
+
     credential_target = git_url or repo
     if _git_target_is_unsupported(credential_target):
         logger.warning("registry manifest fetch refused an unsupported clone target")
@@ -129,16 +139,22 @@ async def _fetch_app_manifest(
         manifest_dir = _contained_join(clone_dir, subdirectory)
         local_manifest = manifest_dir / "app.json" if manifest_dir is not None else None
         fresh_enough = await _clone_branch_matches(clone_dir, branch)
+        # The file probe and the read share one thread hop, and run before the
+        # origin check so a missing manifest still skips that git subprocess.
+        local_content: str | None = None
+        if local_manifest is not None:
+            try:
+                local_content = await asyncio.to_thread(_read_manifest_text, local_manifest)
+            except (OSError, UnicodeDecodeError):
+                local_content = None
         if (
-            local_manifest is not None
-            and local_manifest.is_file()
+            local_content is not None
             and await _clone_origin_matches(clone_dir, git_url)
             and fresh_enough
         ):
             try:
-                content = await asyncio.to_thread(local_manifest.read_text, "utf-8")
-                return json.loads(content)
-            except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+                return json.loads(local_content)
+            except json.JSONDecodeError:
                 pass
 
     if not _looks_like_git_url(git_url):
@@ -283,10 +299,9 @@ async def _fetch_app_manifest(
             # Untrusted index subdirectory escaped the clone root (absolute,
             # ``..``, or a symlink resolving outside tmp_root) — refuse.
             return None
-        manifest_path = manifest_dir / "app.json"
-        if not manifest_path.is_file():
+        content = await asyncio.to_thread(_read_manifest_text, manifest_dir / "app.json")
+        if content is None:
             return None
-        content = await asyncio.to_thread(manifest_path.read_text, "utf-8")
         return json.loads(content)
     except (asyncio.TimeoutError, OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
         logger.debug(

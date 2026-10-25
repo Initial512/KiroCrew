@@ -227,6 +227,18 @@ describe('a fetchSlots reply cannot clobber a write that raced it', () => {
     expect(Object.prototype.hasOwnProperty.call(written.slotWrittenAt, 'a')).toBe(false)
   })
 
+  it('keeps a mid-turn last_ts bump held off the row from being undone by an older reply', () => {
+    // The bump lands in the overlay, a slots frame catches up and drops it,
+    // then a reply serialized before the bump arrives with the older last_ts.
+    const base = loaded(mk('a', { last_ts: '2026-01-01T00:00:00Z', last_turn_ts: '2026-01-01T00:00:00Z' }))
+    const inFlight = reducer(base, started('r1'))
+    const bumped = reducer(inFlight, touchSlotActivity({ key: 'a', ts: '2026-06-01T00:00:00Z' }))
+    expect(bumped.slots).toBe(inFlight.slots)
+    const caught = reducer(bumped, sseSlots([mk('a', { last_ts: '2026-06-01T00:00:00Z', last_turn_ts: '2026-01-01T00:00:00Z' })]))
+    const settled = reducer(caught, reply([mk('a', { last_ts: '2026-01-01T00:00:00Z', last_turn_ts: '2026-01-01T00:00:00Z' })], 'r1'))
+    expect(rowOf(settled, 'a')?.last_ts).toBe('2026-06-01T00:00:00Z')
+  })
+
   it('does not hold on a write both recency guards rejected', () => {
     // `touchSlotActivity` with an OLDER ts changes nothing — provided BOTH
     // watermarks are already ahead of it, since an unset `last_turn_ts` is a

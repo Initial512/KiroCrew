@@ -45,11 +45,18 @@ def _reset_ctx():
     ctx_mod.reset_context()
 
 
-def _install_ceiling(policy_body):
-    """Compose a context carrying the given policy and install it as active."""
+def _install_ceiling(policy_body, *, edition=None, monkeypatch=None):
+    """Compose a context carrying the given policy and install it as active.
+
+    ``edition`` is switched only after the base context is composed: an
+    enterprise build refuses to compose without its central policy, and the
+    policy under test is installed here directly rather than fetched.
+    """
     from kiro_crew.config.loader import KiroCrewConfig
 
     base = build_default_context(KiroCrewConfig.load())
+    if edition is not None:
+        monkeypatch.setattr("kiro_crew.edition.EDITION", edition)
     ceiling = parse_policy(policy_body) if policy_body is not None else None
     ctx_mod.set_context(dataclasses.replace(base, governance=ceiling))
 
@@ -83,8 +90,7 @@ class TestNoPolicyDefault:
     def test_enterprise_unnamed_scope_reports_the_baseline(self, profiles_dir, monkeypatch):
         # An enterprise build answers an unnamed scope from the built-in baseline,
         # so the viewer must not call it "ungoverned" (RFC D3).
-        monkeypatch.setattr("kiro_crew.edition.EDITION", "enterprise")
-        _install_ceiling({"version": 1, "boot": {}})
+        _install_ceiling({"version": 1, "boot": {}}, edition="enterprise", monkeypatch=monkeypatch)
         rows = _by_scope(build_governance_policy_snapshot())
 
         assert rows["capabilities.browse"]["governed"] is True

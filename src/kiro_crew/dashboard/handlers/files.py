@@ -81,6 +81,7 @@ from kiro_crew.config.sections import (  # noqa: F401
 )
 from kiro_crew.dashboard import git_repo_touches as _git_repo_touches  # noqa: F401
 from kiro_crew.dashboard import part_stream, upload_destination  # noqa: F401
+from kiro_crew.dashboard.body_numbers import body_int  # noqa: F401
 from kiro_crew.dashboard.chat_persistence import rehydrate_slot_from_history_async  # noqa: F401
 from kiro_crew.dashboard.chat_utils import (  # noqa: F401
     dashboard_slot_key,
@@ -181,6 +182,7 @@ from kiro_crew.dashboard.file_api.office_preview import (  # noqa: F401
 from kiro_crew.dashboard.file_api.outbox import (  # noqa: F401
     _audit_consented_download,
     _audit_owner_grant_refusal,
+    _list_outbox_entries,
     _owner_grant_releases_flagged,
     _read_outbox_file,
     api_outbox_download,
