@@ -118,7 +118,7 @@ Evidence, strongest first (`identity.derive_principal`):
 | An app identity (an app token, or an internal caller the middleware derived an app for) | `system`, component `app:<name>` | `internal` |
 | The internal loopback secret (kiro-cli, MCP, doctor) | `system`, component `internal` | `internal` |
 | Loopback peer forwarded by local `tailscale serve`, resolved and allowlisted by `tailnet.resolve_forwarded_peer` | `human` keyed by tailnet login; `machine` keyed by node for a tagged node | `tailscale_serve` |
-| Tailnet peer on the direct tailnet listener, admitted by daemon `whois` of its own TCP `ip:port` and the derived access set (`tailnet_direct.DirectGate`) | `human` keyed by stable Tailscale user id; `machine` keyed by node for a tagged node | `tailscale_listener` |
+| Tailnet peer on the direct tailnet listener, admitted by daemon `whois` of its own TCP `ip:port` and the derived access set (`tailnet_direct.DirectGate`) | `human` keyed by tailnet login (the stable user id is an alias); `machine` keyed by node for a tagged node | `tailscale_listener` |
 | Tailnet peer reaching a widened bind on its tailnet address, no forwarding header, resolved by daemon `whois` of the socket address (`tailnet.resolve_direct_peer`) | `human` keyed by tailnet login; `machine` keyed by node | `tailscale_direct` |
 | Loopback socket with no forwarding header at all | `human`, the local operator, keyed by the token subject | `local_operator` |
 | Anything else auth admitted | `Principal.unknown()` | `none` |
@@ -128,12 +128,15 @@ A tailnet principal's subject is the lowercased daemon login under provider
 tagged node reports the login `tagged-devices`. The display snapshot is the login
 (or node name) as the daemon reported it, so a rename never changes the id.
 
-A person on the direct tailnet listener is keyed by the stable Tailscale user id
-(`whois` `UserProfile.ID`, subject `uid:<id>`), never by a display name: every node
-of one user, a re-created node and a node shared in from another tailnet
-(`Node.Sharer` set; the principal is the node's owner, never the sharer) map to one
-principal. The login is the invite key and the label; the display name is a
-label only. The device a person was seen from is the node key.
+A person is keyed by their tailnet login on every transport, never by a display
+name. `tailscale serve` names only the login, while the direct listener's `whois`
+also names the stable user id (`UserProfile.ID`); the user id is an alias of the
+login, never the key, so one person reaching the Crew through Serve and through the
+listener is one principal with one admission budget. Every node of one user, a
+re-created node and a node shared in from another tailnet (`Node.Sharer` set; the
+principal is the node's owner, never the sharer) map to that principal. Access
+approvals still match the stable user id. The display name is a label only. The
+device a person was seen from is the node key.
 
 #### Direct tailnet listener
 
@@ -387,13 +390,16 @@ Owner routes (`shared_crew.routes_access`, the invite routes' owner gate):
 takes the person out of the set (a live revoke by login and by user id, so the
 next request is refused), closes every dashboard socket whose verified actor is
 that person (`routes_access.close_sockets`, by principal id or verified login), and
-calls `admission_revoke.stop_principals` with every principal id the person may
-have worked under (login-keyed and each user id the direct listener admitted under
-that login). Each non-terminal root work item charged to them is cancelled through
+calls `admission_revoke.stop_principals` with the person's principal id (keyed by
+login on every transport, `access_set.principal_ids_for`). Each non-terminal root work item charged to them is cancelled through
 `AdmissionService.cancel` with reason `access_removed`: queued and admitted work
 ends `cancelled` at once; running work moves to `cancelling`, its turn is
 cancelled, and its slot is released only when the runtime has stopped and the
-work settles. Finished work is kept. Work of theirs that reaches the front of a
+work settles. Finished work is kept. A parked message of theirs is dropped from
+its session's queue before any merge: the drain's per-entry check
+(`AdmissionService._cancelled_parked`) refuses work ended by `cancelled_by_user`
+or `access_removed`, with that reason, so their text never runs merged into
+someone else's turn. Work of theirs that reaches the front of a
 queue later is refused at revalidation (`enterprise_revocation.queued_dispatch_recheck`
 consults `access_set.principal_removed`). With fair admission off (the default)
 no work record exists, so `access_set.slot_work_stopper`
@@ -798,7 +804,19 @@ as that work (`turn_gate.queued_work`, `AdmissionService.start_parked`), which t
 its place in the fair queue then. Messages a drain merges into one turn end with that
 turn's outcome (`extra.merged_into`). A parked message's expiry is a check-in: while
 its queue card exists it waits on; once the card is gone it ends `cancelled`
-(`queue_entry_gone`). A card cancelled through the work API does not run.
+(`queue_entry_gone`). A card cancelled through the work API, or whose sender was
+removed, does not run.
+
+A queued ticket leaves the scheduler only when its terminal write is durable. When
+the write of a cancel or an expiry fails (the task store is locked past its
+timeout), `AdmissionService._end` puts the ticket back in its own place
+(`FairScheduler.restore_queued`): the work stays `queued`, the cancel raises, and
+the next tick expires it again.
+
+A background run admitted now can be cancelled while its start is still in flight.
+`_end` remembers the ended, not-yet-attached work with its operation's cancel hook,
+and `attach_child` then finds no live record and stops the new execution through
+that hook, so cancelled work never keeps running outside admission.
 
 Across principals the scheduler is deficit round robin. Principals with queued roots
 sit in a ring; a visit adds the quantum (1) to the principal's deficit and admits
@@ -1125,7 +1143,11 @@ session_key, revision, last}` and every accepted send pushes the same body as a
 running turn too, so a frame that lands after the press never raises it. A tab reads
 the send state for every open session whatever the capabilities, and a send whose
 revision was unknown at the press joins that read (`ensureSendRevision`, up to 1.5 s), then goes without a
-base. A session the send itself creates starts at revision 0.
+base. A session the send itself creates starts at revision 0. A frame or a read
+only raises the tab's revision; a `send_race` conflict answer replaces it with the
+host's `current_revision`, even when lower, so a tab open across a host restart
+(the host counts from zero again) recovers on its first conflict and Send now goes
+at the host's revision.
 
 `chat_send` settles the race (`_settle_send_race`) after the empty-message guard
 and before the responsive, steer, busy-queue, sub-agent-hold and new-turn branches,
@@ -1248,6 +1270,8 @@ People, owner only (`TailscaleAccess`, theme tokens, rows wrap at narrow widths)
 | approved people | Approved: name, login, when; Remove behind a confirm that names the stopped turn |
 | entries carried over from config | one line listing them |
 | access set unreadable | an error line: only the owner can open the Crew |
+| an Approve, Dismiss or Remove fails (`not_waiting`, `first_share_ack_required`, any error) | an inline `ErrorNotice` in the row with the agent hand-off (no draft sits beside it) |
+| the direct link's Copy is refused by the browser | an inline `ErrorNotice` with no hand-off: the link stays selectable in its field |
 | first invite or approve while nobody else has access | a one-time confirm with the session and Crew memory counts, plus a laptop note on a laptop host |
 | Remove key | a confirm, then `DELETE .../credential` with the irreversible-confirm header |
 | teammate or a gateway without the routes | nothing |

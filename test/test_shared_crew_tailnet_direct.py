@@ -20,6 +20,7 @@ from aiohttp.test_utils import TestClient, TestServer, make_mocked_request
 from kiro_crew.config.sections_shared_crew import SharedCrewConfig, shared_crew_config_from
 from kiro_crew.dashboard import tailnet_direct, tailnet_localapi
 from kiro_crew.dashboard.origin import check_origin
+from kiro_crew.dashboard.tailnet import ForwardedPeer
 from kiro_crew.dashboard.tailnet_direct import (
     DirectGate,
     SelfNode,
@@ -286,13 +287,31 @@ def test_one_user_on_two_nodes_is_one_principal_named_by_display_name():
     assert phone is not None
     a, b = direct_principal(laptop), direct_principal(phone)
     assert a.id == b.id
-    assert a.subject == "uid:21"
+    assert a.subject == "alice@example.com"
     assert a.provenance is Provenance.TAILSCALE_LISTENER
     assert a.display.name == "Alice A" and a.display.login == "alice@example.com"
     renamed = parse_whois(
         _whois_body("alice@example.com", 21, "alice-laptop", KEY_B, display="Other"), "x", 1, "x"
     )
     assert renamed is not None and direct_principal(renamed).id == a.id
+
+
+def test_serve_and_the_listener_give_one_person_one_principal_and_budget():
+    from kiro_crew.shared_crew.access_set import principal_ids_for
+    from kiro_crew.shared_crew.identity import derive_principal
+
+    serve = derive_principal(
+        internal=False,
+        app="",
+        token_subject="",
+        serve_peer=ForwardedPeer(login="Alice@Example.com", node="alice-laptop", address="x"),
+        direct_peer=None,
+        remote="127.0.0.1",
+        forwarded=True,
+    )
+    listener = direct_principal(_peer("100.64.0.5"))
+    assert serve.id == listener.id
+    assert principal_ids_for("alice@example.com", frozenset({"21"})) == frozenset({serve.id})
 
 
 def test_tagged_node_is_a_machine_keyed_by_node():

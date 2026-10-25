@@ -419,3 +419,121 @@ async def test_gate_turn_runs_the_parked_work_it_was_handed(installed):
     assert installed._store.get_sync(parked.work.work_id).state is S.COMPLETED
     # One record for the message, not a second admission for its turn.
     assert len(installed._store.list_sync()) == 1
+
+
+# -- a removed person's parked prompt, a late start, a failed terminal write --------
+
+
+@pytest.mark.asyncio
+async def test_a_removed_persons_parked_prompt_is_refused_before_any_merge(tmp_path, clock):
+    svc = _service(tmp_path, clock)
+    removed = await _park(svc, who=ALICE.id, key="park-key-0001", text="alice")
+    staying = await _park(svc, who=BOB.id, key="park-key-0002", text="bob")
+    await svc.cancel(
+        removed.work.work_id,
+        expected_revision=removed.work.revision,
+        reason=ReasonCode.ACCESS_REMOVED,
+    )
+    # The drain's per-entry check drops the removed person's entry, with its reason.
+    alone = await svc._cancelled_parked([removed.work.work_id])
+    assert alone is not None and alone.reason is ReasonCode.ACCESS_REMOVED
+    # A merge that still names it never runs the removed person's text.
+    merged = await svc.start_parked([removed.work.work_id, staying.work.work_id])
+    assert merged is not None and merged.rejected
+    assert merged.reason is ReasonCode.ACCESS_REMOVED
+
+
+@pytest.mark.asyncio
+async def test_work_cancelled_while_its_start_runs_stops_the_started_execution(tmp_path, clock):
+    svc = _service(tmp_path, clock)
+    stopped: list[str] = []
+    svc.register_cancel(
+        OperationKind.WORKFLOW, lambda work: stopped.append(str(work.extra["execution_id"]))
+    )
+    admission = await svc.admit(
+        budget_key=ALICE.id,
+        session_key="workflow",
+        operation=OperationKind.WORKFLOW,
+        idempotency_key="wf-key-0001",
+        digest="d",
+        allow_queue=False,
+    )
+    assert admission.admitted and admission.work is not None
+    # Cancelled from the work API while the start is still in flight.
+    await svc.cancel(admission.work.work_id, expected_revision=admission.work.revision)
+    assert svc.capacity(ALICE.id).principal.active == 0
+    await admission.attach_child("run-1")
+    assert stopped == ["run-1"]
+    assert svc._store.get_sync(admission.work.work_id).state is S.CANCELLED
+    # A second attach (a retry) stops nothing twice.
+    await admission.attach_child("run-1")
+    assert stopped == ["run-1"]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_cancel_write_keeps_the_queued_ticket(tmp_path, clock):
+    svc = _service(tmp_path, clock, principal_concurrency=1, crew_concurrency=1)
+    running = await svc.admit(
+        budget_key=ALICE.id,
+        session_key="dashboard:a",
+        operation=OperationKind.CHAT_TURN,
+        idempotency_key="run-key-0001",
+        digest="a",
+    )
+    queued = await svc.admit(
+        budget_key=BOB.id,
+        session_key="dashboard:b",
+        operation=OperationKind.CHAT_TURN,
+        idempotency_key="run-key-0002",
+        digest="b",
+    )
+    assert running.admitted and queued.queued and queued.work is not None
+    work_id = queued.work.work_id
+
+    async def locked(*args, **kwargs):
+        raise RuntimeError("database is locked")
+
+    with patch.object(svc._store, "advance", side_effect=locked):
+        with pytest.raises(RuntimeError):
+            await svc.cancel(work_id, expected_revision=queued.work.revision)
+    assert svc._scheduler.is_queued(work_id)
+    assert svc._store.get_sync(work_id).state is S.QUEUED
+    # Once the store answers again, the same cancel settles it.
+    await svc.cancel(work_id, expected_revision=queued.work.revision)
+    assert not svc._scheduler.is_queued(work_id)
+    assert svc._store.get_sync(work_id).state is S.CANCELLED
+
+
+@pytest.mark.asyncio
+async def test_a_failed_expiry_write_requeues_and_the_next_tick_expires(tmp_path, clock):
+    svc = _service(
+        tmp_path, clock, principal_concurrency=1, crew_concurrency=1, queue_expiry_seconds=60
+    )
+    running = await svc.admit(
+        budget_key=ALICE.id,
+        session_key="dashboard:a",
+        operation=OperationKind.CHAT_TURN,
+        idempotency_key="run-key-0001",
+        digest="a",
+    )
+    queued = await svc.admit(
+        budget_key=BOB.id,
+        session_key="dashboard:b",
+        operation=OperationKind.CHAT_TURN,
+        idempotency_key="run-key-0002",
+        digest="b",
+    )
+    assert running.admitted and queued.queued and queued.work is not None
+    work_id = queued.work.work_id
+    clock.advance(61)
+
+    async def locked(*args, **kwargs):
+        raise RuntimeError("database is locked")
+
+    with patch.object(svc._store, "advance", side_effect=locked):
+        assert (await svc.tick())["expired"] == 0
+    assert svc._scheduler.is_queued(work_id)
+    assert svc._store.get_sync(work_id).state is S.QUEUED
+    assert (await svc.tick())["expired"] == 1
+    assert not svc._scheduler.is_queued(work_id)
+    assert svc._store.get_sync(work_id).state is S.EXPIRED

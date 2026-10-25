@@ -216,6 +216,32 @@ class FairScheduler:
                 self._forget_if_idle(ticket.budget_key)
             return ticket
 
+    def restore_queued(self, ticket: Ticket, *, parked: bool = False) -> None:
+        """Put back a ticket :meth:`cancel_queued` or :meth:`expire` took out.
+
+        For a terminal write that failed: the work is still queued, so its
+        ticket returns to its own place (by ``seq``) without a limit check, as
+        it was already counted. Nothing is dispatched here; the next release or
+        tick does that.
+        """
+        with self._lock:
+            if (
+                ticket.work_id in self._active
+                or ticket.work_id in self._queued
+                or ticket.work_id in self._parked
+            ):
+                return
+            p = self._principal(ticket.budget_key)
+            if parked:
+                self._parked[ticket.work_id] = ticket
+                p.parked += 1
+                return
+            index = sum(1 for t in p.queue if t.seq < ticket.seq)
+            p.queue.insert(index, ticket)
+            self._queued[ticket.work_id] = ticket
+            if ticket.budget_key not in self._ring:
+                self._ring.append(ticket.budget_key)
+
     def expire(self, now: float | None = None) -> tuple[Ticket, ...]:
         """Remove and return every queued ticket whose expiry has passed."""
         with self._lock:

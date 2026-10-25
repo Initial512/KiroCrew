@@ -90,11 +90,12 @@ def tailnet_principal(
 ) -> Principal:
     """The principal for a daemon-verified tailnet peer.
 
-    A person is keyed by their login, so every device and tab they use maps to
-    one id. When the daemon gave a stable Tailscale user id (the direct
-    listener's ``whois``), the person is keyed by that id instead, so a renamed
-    login or a re-created node stays one principal; the login stays the
-    allowlist key and the display label. An ACL-tagged node reports the same
+    A person is keyed by their login, so every device, tab and transport they
+    use maps to one id and one budget. The login is the one key both verified
+    transports have: ``tailscale serve`` names only the login, while the direct
+    listener's ``whois`` also names a stable user id. *user_id* is therefore an
+    alias, never the key: keying by it would give one person a second budget on
+    the listener. The login is also the allowlist key. An ACL-tagged node reports the same
     ``tagged-devices`` login as every other tagged node, so it is a ``machine``
     keyed by its node name instead, and two tagged nodes never share a budget
     or a byline. A display name is a label only and never part of the key.
@@ -113,7 +114,7 @@ def tailnet_principal(
             provenance=provenance,
             display=DisplaySnapshot(name=node_name, login=""),
         )
-    subject = f"uid:{user_id}" if user_id else login.strip().lower()
+    subject = login.strip().lower()
     return Principal(
         id=principal_id_for(PROVIDER_TAILSCALE, TAILNET_ISSUER, subject),
         kind=PrincipalKind.HUMAN,

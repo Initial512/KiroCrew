@@ -131,6 +131,11 @@ _RETRY_AFTER: Mapping[ReasonCode, int] = {
 
 _SESSION_BINDINGS_MAX = 20000
 _QUEUE_IDS_MAX = 4096
+#: Unattached work ended before its execution started, remembered so the late
+#: start can be stopped (bounded, in memory).
+_ENDED_UNATTACHED_MAX = 4096
+#: Reasons that mean a person stopped the work: its text must never run.
+_PERSON_STOPS = frozenset({ReasonCode.CANCELLED_BY_USER, ReasonCode.ACCESS_REMOVED})
 #: How long a containment probe answers before it is taken again.
 _REPORT_TTL_SECONDS = 60.0
 
@@ -326,6 +331,9 @@ class AdmissionService:
         self._parked_present: Callable[[str], bool] | None = None
         self._reconcile_listener: ReconcileListener | None = None
         self._queue_ids: OrderedDict[str, str] = OrderedDict()
+        self._ended_unattached: OrderedDict[str, tuple[AcceptedWork, CancelHook | None]] = (
+            OrderedDict()
+        )
         self._child_probe = child_probe
         self._storage = storage or (StorageAccount(store.tasks, clock=clock) if store else None)
         self._create_rate = SessionCreateRate(limits.session_creates_per_minute)
@@ -757,7 +765,7 @@ class AdmissionService:
         if refused is not None:
             for work_id in work_ids:
                 if (live := self._live.get(work_id)) is not None:
-                    await self._end(live, S.CANCELLED, reason=ReasonCode.CANCELLED_BY_USER)
+                    await self._end(live, S.CANCELLED, reason=refused.reason)
             return refused
         primary: _Live | None = None
         followers: list[_Live] = []
@@ -805,7 +813,12 @@ class AdmissionService:
         )
 
     async def _cancelled_parked(self, work_ids: list[str]) -> Admission | None:
-        """Refuse a merged prompt containing any work cancelled by a person."""
+        """Refuse a merged prompt containing any work a person's stop ended.
+
+        That is work its sender cancelled and work whose sender was removed: the
+        text of either must never run, alone or merged into someone else's turn.
+        The refusal carries the work's own reason.
+        """
         if self._store is None:
             return None
         lives = [self._live.get(work_id) for work_id in work_ids]
@@ -813,23 +826,22 @@ class AdmissionService:
             live.work if live is not None else await self._store.get(work_id)
             for work_id, live in zip(work_ids, lives)
         ]
-        cancelled: AcceptedWork | None = None
         for live, work in zip(lives, works):
-            if work is not None and (
-                work.reason is ReasonCode.CANCELLED_BY_USER
-                or (live is not None and live.cancel_reason is ReasonCode.CANCELLED_BY_USER)
-            ):
-                cancelled = work
-                break
-        if cancelled is None:
-            return None
-        return Admission(
-            self,
-            Decision.REJECTED.value,
-            work=cancelled,
-            reason=ReasonCode.CANCELLED_BY_USER,
-            capacity=self.capacity(cancelled.budget_key),
-        )
+            if work is None:
+                continue
+            why = live.cancel_reason if live is not None else None
+            if why not in _PERSON_STOPS:
+                why = work.reason
+            if why in _PERSON_STOPS:
+                assert why is not None
+                return Admission(
+                    self,
+                    Decision.REJECTED.value,
+                    work=work,
+                    reason=why,
+                    capacity=self.capacity(work.budget_key),
+                )
+        return None
 
     async def _settle_followers(self, live: _Live) -> None:
         """End every message merged into *live*'s turn with *live*'s own outcome."""
@@ -1163,11 +1175,24 @@ class AdmissionService:
         *,
         reason: ReasonCode | None,
         extra: Mapping[str, Any] | None = None,
+        removed: Ticket | None = None,
     ) -> None:
-        """Move unstarted or child work straight to a terminal *state*."""
+        """Move unstarted or child work straight to a terminal *state*.
+
+        A queued ticket leaves the scheduler only once the terminal write is
+        durable. *removed* is a ticket the caller already took out (an expiry);
+        when the write fails it goes back, so the work stays queued and the next
+        cancel or tick settles it, and the error is raised.
+        """
         assert self._store is not None
-        if live.work.state is S.QUEUED:
-            self._scheduler.cancel_queued(live.work.work_id)
+        work_id = live.work.work_id
+        unattached = live.work.state in (S.QUEUED, S.ADMITTED) and not live.work.extra.get(
+            "execution_id"
+        )
+        parked = self._scheduler.is_parked(work_id)
+        ticket = removed
+        if ticket is None and live.work.state is S.QUEUED:
+            ticket = self._scheduler.cancel_queued(work_id)
         try:
             if live.work.state is S.RUNNING and state is S.CANCELLED:
                 live.work = await self._store.advance(live.work, S.CANCELLING, reason=reason)
@@ -1177,9 +1202,17 @@ class AdmissionService:
                     live.work, state, reason=reason, runtime=stopped, extra=extra
                 )
         except (StaleRevision, InvalidTransition):
-            current = await self._store.get(live.work.work_id)
+            current = await self._store.get(work_id)
             if current is not None:
                 live.work = current
+        except Exception:
+            if ticket is not None and live.work.state is S.QUEUED:
+                self._scheduler.restore_queued(ticket, parked=parked)
+            raise
+        if unattached and live.work.state in TERMINAL:
+            self._ended_unattached[work_id] = (live.work, self._cancel_hook_for(live))
+            while len(self._ended_unattached) > _ENDED_UNATTACHED_MAX:
+                self._ended_unattached.popitem(last=False)
         await self._settle_followers(live)
         live.self_stopped = True
         live.ended.set()
@@ -1188,8 +1221,18 @@ class AdmissionService:
     # -- children ----------------------------------------------------------------
 
     async def attach_child(self, work_id: str, execution_id: str, *, session_key: str = "") -> None:
+        """Mark admitted work as started under *execution_id*.
+
+        Work cancelled (or otherwise ended) while its start was in flight holds
+        no capacity any more, so the execution that start produced is stopped
+        through the operation's cancel hook rather than left running outside
+        admission.
+        """
+        if self._store is None:
+            return
         live = self._live.get(work_id)
-        if live is None or self._store is None:
+        if live is None or live.work.state in TERMINAL:
+            self._stop_late_start(work_id, execution_id)
             return
         runtime = RuntimeOwnershipRef(
             execution_id=execution_id,
@@ -1202,9 +1245,25 @@ class AdmissionService:
                 live.work, S.RUNNING, runtime=runtime, extra={"execution_id": execution_id}
             )
         except (StaleRevision, InvalidTransition):
+            if live.work.state in TERMINAL or work_id not in self._live:
+                self._stop_late_start(work_id, execution_id)
             return
         if session_key:
             self.bind_session(session_key, live.work.budget_key, live.root_work_id or work_id)
+
+    def _stop_late_start(self, work_id: str, execution_id: str) -> None:
+        """Stop an execution whose admitted work ended before it attached."""
+        ended = self._ended_unattached.pop(work_id, None)
+        if ended is None:
+            return
+        work, hook = ended
+        if hook is None or not execution_id:
+            return
+        logger.info("shared crew: %s ended before its start attached; stopping it", work_id)
+        try:
+            hook(replace(work, extra={**work.extra, "execution_id": execution_id}))
+        except Exception:  # noqa: BLE001 -- logged; the record is already terminal
+            logger.warning("shared crew: stopping late start %s failed", work_id, exc_info=True)
 
     async def abandon(self, work_id: str, *, reason: ReasonCode | None = None) -> None:
         live = self._live.get(work_id)
@@ -1280,7 +1339,13 @@ class AdmissionService:
         for ticket in self._scheduler.expire(at):
             live = self._live.get(ticket.work_id)
             if live is not None:
-                await self._end(live, S.EXPIRED, reason=ReasonCode.QUEUE_EXPIRED)
+                try:
+                    await self._end(
+                        live, S.EXPIRED, reason=ReasonCode.QUEUE_EXPIRED, removed=ticket
+                    )
+                except Exception:  # noqa: BLE001 -- re-queued; the next tick retries
+                    logger.warning("shared crew: expiring %s failed", ticket.work_id, exc_info=True)
+                    continue
                 counts["expired"] += 1
         for live in list(self._live.values()):
             work = live.work

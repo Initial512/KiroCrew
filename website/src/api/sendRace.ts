@@ -9,8 +9,12 @@
  * The draft then stays in the composer, and the sender decides: Send now (a new
  * submission at the current revision, which may queue) or leave it.
  *
- * Nothing here ever submits a draft by itself, and a revision only moves up, so a
- * late read can never make this tab think it has seen less than it has.
+ * Nothing here ever submits a draft by itself. A frame or a read only moves the
+ * revision up, so a late read can never make this tab think it has seen less
+ * than it has. A conflict answer is the host's current revision at the moment it
+ * refused this tab, so it replaces what the tab knew, even when lower: when the
+ * host process starts again it counts from zero, and a tab still holding a
+ * higher revision would otherwise lose every send, Send now included.
  */
 import { useSyncExternalStore } from 'react'
 import type { AcceptedSend, SendRaceConflictBody } from './sharedCrew'
@@ -55,7 +59,8 @@ function emit(): void {
 }
 
 export function setSendRaceNotice(sessionKey: string, conflict: SendRaceConflictBody): void {
-  noteSendRevision(sessionKey, conflict.current_revision)
+  const current = conflict.current_revision
+  if (Number.isInteger(current) && current >= 0) revisions.set(sessionKey, current)
   notices.set(sessionKey, { winner: conflict.winner, currentRevision: conflict.current_revision })
   emit()
 }

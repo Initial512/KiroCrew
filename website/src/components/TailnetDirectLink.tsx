@@ -9,6 +9,7 @@ import { useState } from 'react'
 import { Check, Copy, Link2 } from 'lucide-react'
 import type { TailnetDirect } from '../api/sharedCrew'
 import { copyToClipboard } from '../utils/clipboard'
+import ErrorNotice from './ErrorNotice'
 import { Btn } from './ui'
 import { i18nT } from '../i18n/t'
 
@@ -44,7 +45,14 @@ function CopyUrl({ url }: { url: string }) {
           {copied ? <Check size={14} aria-hidden /> : <Copy size={14} aria-hidden />} {i18nT('sharedCrew.direct_link_copy')}
         </Btn>
       </div>
-      {failed && <p className="text-[11.5px] text-danger" role="alert">{i18nT('sharedCrew.direct_link_copy_failed')}</p>}
+      {failed && (
+        <ErrorNotice
+          variant="inline"
+          message={i18nT('sharedCrew.direct_link_copy_failed')}
+          noHandoffReason="The browser refused the clipboard; the link stays selectable in the field above, and an agent cannot copy it for the person."
+          testId="direct-link-copy-error"
+        />
+      )}
     </div>
   )
 }

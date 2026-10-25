@@ -251,8 +251,6 @@ def _is_collaborator(principal: Any, owner_login: str, owner_id: str) -> bool:
         return False
     subject = str(getattr(principal, "subject", "") or "")
     login = str(getattr(getattr(principal, "display", None), "login", "") or "").lower()
-    if owner_id and subject == f"uid:{owner_id}":
-        return False
     return not (owner_login and (subject == owner_login or login == owner_login))
 
 

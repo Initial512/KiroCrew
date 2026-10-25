@@ -21,6 +21,7 @@ import { api } from '../../api/client'
 import { inviteErrorCode } from '../../api/sharedCrewInvites'
 import { initials, safeAvatarUrl, type AccessView, type ApprovedPerson, type FirstShare, type WaitingPerson } from '../../api/sharedCrewAccess'
 import { useConfirm } from '../../components/ConfirmDialog'
+import ErrorNotice from '../../components/ErrorNotice'
 import { SettingsCard, SettingsSection } from '../../components/settings'
 import { Badge, Btn } from '../../components/ui'
 import { sharedCrewKeys } from '../../hooks/sharedCrew/sharedCrewSocket'
@@ -137,7 +138,8 @@ function WaitingRow({ person, guard }: { person: WaitingPerson; guard: (action: 
           <X size={14} className="lucide-inline" aria-hidden /> {i18nT('sharedCrew.waitlist_dismiss')}
         </Btn>
       </div>
-      {err && <p role="alert" className="text-[12px] text-danger w-full" data-testid="waiting-error">{accessErrorText(err)}</p>}
+      {/* No draft sits beside an approve or dismiss, so the hand-off loses nothing. */}
+      {err && <ErrorNotice variant="inline" className="w-full" message={accessErrorText(err)} askAgent testId="waiting-error" />}
     </li>
   )
 }
@@ -175,7 +177,8 @@ function ApprovedRow({ person }: { person: ApprovedPerson }) {
       <Btn type="button" danger onClick={() => { void onRemove() }} disabled={remove.isPending} data-testid="approved-remove">
         <UserMinus size={14} className="lucide-inline" aria-hidden /> {i18nT('sharedCrew.waitlist_remove')}
       </Btn>
-      {remove.isError && <p role="alert" className="text-[12px] text-danger w-full">{accessErrorText(inviteErrorCode(remove.error))}</p>}
+      {/* No draft sits beside a removal, so the hand-off loses nothing. */}
+      {remove.isError && <ErrorNotice variant="inline" className="w-full" message={accessErrorText(inviteErrorCode(remove.error))} askAgent testId="approved-remove-error" />}
       {confirmDialog}
     </li>
   )

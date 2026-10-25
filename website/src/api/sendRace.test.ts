@@ -1,5 +1,6 @@
-/** The tab's send revision only moves up, from every source, and a reconnect
- *  read that lands late never moves it back. */
+/** The tab's send revision only moves up from a frame or a read, and a
+ *  reconnect read that lands late never moves it back. A conflict answer is the
+ *  host's current revision and replaces it. */
 import { beforeEach, describe, expect, it } from 'vitest'
 import { QueryClient } from '@tanstack/react-query'
 import { applySharedCrewFrame, sharedCrewKeys } from '../hooks/sharedCrew/sharedCrewSocket'
@@ -48,6 +49,17 @@ describe('send revision', () => {
     expect(sendRaceNoticeFor('s')?.winner.message_id).toBe('m')
     clearSendRaceNotice('s')
     expect(sendRaceNoticeFor('s')).toBeNull()
+  })
+
+  it('a conflict answer lowers a revision from before the host started again', () => {
+    noteSendRevision('s', 10)
+    const body: SendRaceConflictBody = { error: 'x', code: 'send_race', session_key: 's', current_revision: 1, winner }
+    setSendRaceNotice('s', body)
+    // Send now reads this at the press, so it goes at the host's revision.
+    expect(baseRevisionFor('s')).toBe(1)
+    // A late frame or read still only moves it up from there.
+    noteSendRevision('s', 0)
+    expect(baseRevisionFor('s')).toBe(1)
   })
 
   it('names each send with a key the host accepts', () => {

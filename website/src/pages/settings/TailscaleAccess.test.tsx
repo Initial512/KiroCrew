@@ -131,6 +131,28 @@ describe('TailscaleAccess', () => {
     expect(screen.getByTestId('access-unreadable')).toBeInTheDocument()
   })
 
+  it('a failed approve shows an error notice with a hand-off', async () => {
+    read.mockResolvedValue(view({ waiting: [waiting()] }))
+    approve.mockRejectedValue(new ApiError(409, 'x', JSON.stringify({ code: 'not_waiting' })))
+    mount()
+    fireEvent.click(await screen.findByTestId('waiting-approve'))
+    const notice = await screen.findByTestId('waiting-error')
+    expect(notice).toHaveAttribute('role', 'alert')
+    expect(within(notice).getByRole('button', { name: /Ask the agent/ })).toBeInTheDocument()
+  })
+
+  it('a failed removal shows an error notice with a hand-off', async () => {
+    read.mockResolvedValue(view({
+      approved: [{ user_id: '21', login: 'alice@example.com', display_name: 'Alice', avatar_url: '', first_seen: 0, approved_at: 1_760_000_000, approved_by: 'o' }],
+    }))
+    remove.mockRejectedValue(new ApiError(500, 'x', JSON.stringify({ code: 'error' })))
+    mount()
+    fireEvent.click(await screen.findByTestId('approved-remove'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove access' }))
+    const notice = await screen.findByTestId('approved-remove-error')
+    expect(within(notice).getByRole('button', { name: /Ask the agent/ })).toBeInTheDocument()
+  })
+
   it('renders nothing for a non-owner', async () => {
     read.mockRejectedValue(new ApiError(403, 'x', JSON.stringify({ code: 'owner_only' })))
     mount()

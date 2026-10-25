@@ -483,18 +483,17 @@ def principal_removed(principal_id: str) -> bool:
 
 
 def principal_ids_for(login: str, user_ids: frozenset[str]) -> frozenset[str]:
-    """Every principal id a person may have worked under: by login and by each user id."""
+    """Every principal id a person may have worked under.
+
+    A tailnet person is keyed by login on every transport, so that is one id.
+    *user_ids* are aliases of the login and add none.
+    """
     from kiro_crew.shared_crew.contracts import Provenance
     from kiro_crew.shared_crew.identity import tailnet_principal
 
-    ids: set[str] = set()
-    if login:
-        ids.add(tailnet_principal(login, "", Provenance.TAILSCALE_SERVE).id)
-    for uid in user_ids | tailnet_live_allowlist.seen_user_ids(login):
-        ids.add(
-            tailnet_principal(login or "unknown", "", Provenance.TAILSCALE_DIRECT, user_id=uid).id
-        )
-    return frozenset(ids)
+    if not login:
+        return frozenset()
+    return frozenset({tailnet_principal(login, "", Provenance.TAILSCALE_SERVE).id})
 
 
 async def stop_work(login: str, user_ids: frozenset[str], *, actor: str) -> dict[str, int]:
