@@ -14,6 +14,7 @@ import reducer, {
   triggerRefresh,
   markSlotUnread,
   markSlotRead,
+  remoteSlotRead,
   fetchSlots,
   selectUnreadByMode,
   sseSubagentStatus,
@@ -22,6 +23,8 @@ import reducer, {
   dropSlotLinks,
 } from '../store/dashboardSlice'
 import type { StatusData, ChatSlot } from '../types'
+import { sharedItem } from './unreadStorageTestUtils'
+import { SHARED_UNREAD_FLUSH_MS, flushSharedUnread } from '../store/dashboard/unread'
 
 vi.mock('../api/client', () => ({
   api: { chatSlots: vi.fn(), chatMode: vi.fn() },
@@ -449,13 +452,13 @@ describe('dashboardSlice', () => {
       expect(state.slots.map(s => s.key)).toEqual(['chat-2'])
       expect(state.unreadSlots).toEqual(['chat-1'])
       expect(state.unreadSince['chat-1']).toBe('2026-01-01T00:00:00Z')
-      expect(Object.keys(JSON.parse(localStorage.getItem('mc-unread-shared') ?? '{}'))).toContain('chat-1')
+      expect(Object.keys(JSON.parse(sharedItem('mc-unread-shared') ?? '{}'))).toContain('chat-1')
       // The first complete frame drains what is genuinely gone.
       state = reducer(state, sseSlotsPartial(false))
       state = reducer(state, sseSlots([slot2]))
       expect(state.unreadSlots).toEqual([])
       expect(state.unreadSince['chat-1']).toBeUndefined()
-      expect(Object.keys(JSON.parse(localStorage.getItem('mc-unread-shared') ?? '{}'))).not.toContain('chat-1')
+      expect(Object.keys(JSON.parse(sharedItem('mc-unread-shared') ?? '{}'))).not.toContain('chat-1')
     })
 
     it('a GET started during the hold cannot drain after a complete frame releases it', () => {
@@ -473,7 +476,7 @@ describe('dashboardSlice', () => {
 
       expect(state.unreadSlots).toEqual(['chat-1'])
       expect(state.unreadSince['chat-1']).toBe('2026-01-01T00:00:00Z')
-      expect(JSON.parse(localStorage.getItem('mc-unread-shared') ?? '{}')).toMatchObject({
+      expect(JSON.parse(sharedItem('mc-unread-shared') ?? '{}')).toMatchObject({
         'chat-1': '2026-01-01T00:00:00Z',
       })
       expect(state.slotFetchWriteMark['held-request']).toBeUndefined()
@@ -490,7 +493,7 @@ describe('dashboardSlice', () => {
 
       expect(state.unreadSlots).toEqual([])
       expect(state.unreadSince['chat-1']).toBeUndefined()
-      expect(JSON.parse(localStorage.getItem('mc-unread-shared') ?? '{}')).not.toHaveProperty('chat-1')
+      expect(JSON.parse(sharedItem('mc-unread-shared') ?? '{}')).not.toHaveProperty('chat-1')
       expect(state.slotFetchWriteMark['unheld-request']).toBeUndefined()
     })
   })
@@ -558,12 +561,13 @@ describe('dashboardSlice', () => {
 
       try {
         reducer(initial, markSlotUnread({ slot: 'chat-1', ts: '2026-01-01T00:00:00Z' }))
+        flushSharedUnread()
       } finally {
         spy.mockRestore()
       }
 
       // The shared record survived because the write reclaimed space first.
-      expect(JSON.parse(localStorage.getItem('mc-unread-shared') ?? '{}')).toEqual({
+      expect(JSON.parse(sharedItem('mc-unread-shared') ?? '{}')).toEqual({
         'chat-1': '2026-01-01T00:00:00Z',
       })
       // Disposable cache was the thing sacrificed, not the record.
@@ -605,6 +609,7 @@ describe('dashboardSlice', () => {
 
       try {
         reducer(initial, markSlotUnread({ slot: 'chat-1', ts: '2026-01-01T00:00:00Z' }))
+        flushSharedUnread()
       } finally {
         spy.mockRestore()
       }
@@ -613,12 +618,101 @@ describe('dashboardSlice', () => {
       // past it. Two persisted records that disagree is worse than neither
       // being written: `restoreUnreadSince` trusts the record while older tabs
       // and the hub relay read the projection.
-      expect(localStorage.getItem('mc-unread-shared')).toBeNull()
-      expect(JSON.parse(localStorage.getItem('mc-unread-slots') ?? '[]')).toEqual([
+      expect(sharedItem('mc-unread-shared')).toBeNull()
+      expect(JSON.parse(sharedItem('mc-unread-slots') ?? '[]')).toEqual([
         'chat-1',
         'chat-2',
         'chat-3',
       ])
+    })
+
+    // A background slot re-marks itself on every arriving row. The reducer
+    // queues the shared write instead of doing it, and one flush writes every
+    // queued arrival in a single record write.
+    it('queues arrivals and writes them in one record write', () => {
+      localStorage.clear()
+      const spy = vi.spyOn(Storage.prototype, 'setItem')
+      vi.useFakeTimers()
+      try {
+        let s = reducer(initial, markSlotUnread({ slot: 'chat-1', ts: '2026-01-01T00:00:05Z' }))
+        s = reducer(s, markSlotUnread({ slot: 'chat-1', ts: '2026-01-01T00:00:09Z' }))
+        s = reducer(s, markSlotUnread({ slot: 'chat-1', ts: '2026-01-01T00:00:01Z' }))
+        s = reducer(s, markSlotUnread({ slot: 'chat-2' }))
+        expect(spy.mock.calls.filter(([k]) => k.startsWith('mc-unread-'))).toEqual([])
+        vi.advanceTimersByTime(SHARED_UNREAD_FLUSH_MS)
+        expect(spy.mock.calls.map(([k]) => k)).toEqual(['mc-unread-shared', 'mc-unread-slots'])
+        expect(JSON.parse(localStorage.getItem('mc-unread-shared') ?? '{}')).toEqual({
+          'chat-1': '2026-01-01T00:00:09Z',
+          'chat-2': '',
+        })
+        expect(s.unreadSlots).toEqual(['chat-1', 'chat-2'])
+      } finally {
+        spy.mockRestore()
+        vi.useRealTimers()
+      }
+    })
+
+    // When the live record already holds the badge at that watermark, the
+    // flush must not rewrite the record or its projection.
+    it('skips the storage write when the live record already covers the arrival', () => {
+      localStorage.clear()
+      let s = reducer(initial, markSlotUnread({ slot: 'chat-1', ts: '2026-01-01T00:00:05Z' }))
+      flushSharedUnread()
+      const spy = vi.spyOn(Storage.prototype, 'setItem')
+      try {
+        s = reducer(s, markSlotUnread({ slot: 'chat-1', ts: '2026-01-01T00:00:05Z' }))
+        s = reducer(s, markSlotUnread({ slot: 'chat-1', ts: '2026-01-01T00:00:01Z' }))
+        s = reducer(s, markSlotUnread({ slot: 'chat-1' }))
+        flushSharedUnread()
+        expect(spy.mock.calls.filter(([k]) => k.startsWith('mc-unread-'))).toEqual([])
+      } finally {
+        spy.mockRestore()
+      }
+      expect(s.unreadSlots).toEqual(['chat-1'])
+    })
+
+    // A sibling window that read the message cleared the shared record before
+    // this window's queued arrival was written. The relayed read must drop the
+    // queued arrival it covers, even when this window keeps its own badge (a
+    // manual reminder here), and keep a queued arrival newer than the read.
+    it('a relayed read drops the queued arrival it covers', () => {
+      localStorage.clear()
+      let s = reducer(initial, markSlotUnread('chat-1'))
+      s = reducer(s, markSlotUnread({ slot: 'chat-1', ts: '2026-01-01T00:00:05Z' }))
+      s = reducer(s, markSlotUnread({ slot: 'chat-2', ts: '2026-01-01T00:00:09Z' }))
+      s = reducer(s, remoteSlotRead({ slot: 'chat-1', readTs: '2026-01-01T00:00:05Z' }))
+      s = reducer(s, remoteSlotRead({ slot: 'chat-2', readTs: '2026-01-01T00:00:05Z' }))
+      flushSharedUnread()
+      expect(JSON.parse(localStorage.getItem('mc-unread-shared') ?? '{}')).toEqual({ 'chat-2': '2026-01-01T00:00:09Z' })
+      // The manual reminder answers only to a local read, so its badge stays.
+      expect(s.unreadSlots).toEqual(['chat-1', 'chat-2'])
+    })
+
+    // A read in this window right after an arrival must judge the record with
+    // that arrival in it, or the queued write would land after the clear and
+    // bring the badge back for sibling windows.
+    it('writes queued arrivals before a local read clears the record', () => {
+      localStorage.clear()
+      let s = reducer(initial, sseSlots([{ key: 'chat-1', last_ts: '2026-01-01T00:00:09Z' } as never]))
+      s = reducer(s, markSlotUnread({ slot: 'chat-1', ts: '2026-01-01T00:00:09Z' }))
+      s = reducer(s, markSlotRead('chat-1'))
+      flushSharedUnread()
+      expect(JSON.parse(localStorage.getItem('mc-unread-shared') ?? '{}')).toEqual({})
+      expect(s.unreadSlots).toEqual([])
+    })
+
+    // The skip reads the live record, so a sibling window that cleared the
+    // shared entry still gets it back on this window's next arrival, even one
+    // at the same watermark.
+    it('re-publishes an arrival after a sibling cleared the shared entry', () => {
+      localStorage.clear()
+      let s = reducer(initial, markSlotUnread({ slot: 'chat-1', ts: '2026-01-01T00:00:05Z' }))
+      localStorage.setItem('mc-unread-shared', '{}')
+      localStorage.setItem('mc-unread-slots', '[]')
+      s = reducer(s, markSlotUnread({ slot: 'chat-1', ts: '2026-01-01T00:00:05Z' }))
+      expect(JSON.parse(sharedItem('mc-unread-shared') ?? '{}')).toEqual({ 'chat-1': '2026-01-01T00:00:05Z' })
+      expect(JSON.parse(sharedItem('mc-unread-slots') ?? '[]')).toEqual(['chat-1'])
+      expect(s.unreadSlots).toEqual(['chat-1'])
     })
   })
 
@@ -945,8 +1039,8 @@ describe('dashboardSlice per-slot sub-agent teardown', () => {
     const next = reducer(before, sseSlots([{ key: 'chat-1', messages: 0, running: false }] as ChatSlot[]))
 
     expect(next.unreadSlots).toEqual(['chat-1'])
-    expect(Object.keys(JSON.parse(localStorage.getItem('mc-unread-shared') ?? '{}'))).toEqual(['chat-1'])
-    expect(JSON.parse(localStorage.getItem('mc-unread-slots') ?? '[]')).toEqual(['chat-1'])
+    expect(Object.keys(JSON.parse(sharedItem('mc-unread-shared') ?? '{}'))).toEqual(['chat-1'])
+    expect(JSON.parse(sharedItem('mc-unread-slots') ?? '[]')).toEqual(['chat-1'])
   })
 
   it('leaves unread state alone when the frame still lists every unread slot', () => {
@@ -960,7 +1054,7 @@ describe('dashboardSlice per-slot sub-agent teardown', () => {
 
     expect(next.unreadSlots).toEqual(['chat-1', 'chat-2'])
     // Not rewritten, because this reducer runs on every slots frame.
-    expect(localStorage.getItem('mc-unread-slots')).toBeNull()
+    expect(sharedItem('mc-unread-slots')).toBeNull()
   })
 
   /** Optimistic removal runs before the delete is confirmed, and a slot whose

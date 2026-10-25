@@ -90,14 +90,15 @@ function commandDescription(cmd: SlashCommand): string {
 // _SLASH_COMMANDS set MINUS _BLOCKED_SLASH_COMMANDS — so the same commands
 // appear whether they came from the live API or this fallback. Blocked
 // commands (/quit, /exit, /q, /chat, /paste, /reply, /editor, /tangent) are
-// terminal-only kiro-cli gestures the dashboard rejects, and /todos is one the
-// ACP harness does not implement, so suggesting any of them anywhere is an
+// terminal-only kiro-cli gestures the dashboard rejects. /issue is documented
+// by the interactive CLI but unsupported by the ACP harness, and /todos is one
+// the ACP harness does not implement, so suggesting any of them anywhere is an
 // inert affordance; the descriptions themselves come from COMMAND_DESC_KEY
 // either way. /kb is a frontend-only command (also merged via
 // FRONTEND_COMMANDS below).
 const FALLBACK_COMMAND_NAMES = [
   '/agent', '/changelog', '/clear', '/code', '/compact', '/context',
-  '/experiment', '/help', '/hooks', '/issue', '/kb', '/logdump',
+  '/experiment', '/help', '/hooks', '/kb', '/logdump',
   '/mcp', '/model', '/prompts', '/side', '/tools', '/usage', '/workflow',
 ] as const
 

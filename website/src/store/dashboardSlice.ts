@@ -4,13 +4,14 @@ import { jsonEqual } from '../utils/structuralEqual'
 import { slotSurfaceKey } from './slotIdentity'
 import { createSlice, createAsyncThunk, createSelector, type PayloadAction } from '@reduxjs/toolkit'
 import { api } from '../api/client'
+import { streamFlush } from './streamFlush'
 import { ApiError } from '../api/apiError'
 import { sanitizeLlmOutput, isUnsafeKey } from '../utils/sanitize'
 import type { StatusData, ChatSlot, TodoList, McpSessionReport } from '../types'
 import type { SessionColorMode, PaletteName, DefaultColorSetting, IntensityName } from '../utils/sessionColors'
 import { isChatPageSurface } from '../utils/channelOrigin'
 import { slotListHoldTest } from '../utils/slotListHold'
-import { MANUAL_UNREAD, _relayUnreadToParent, clearSharedUnreadIfCovered, drainUnreadKeys, hasUnreadRelayHold, heldOrphanTest, persistManualSentinels, persistSharedUnread, readCovers, relayUnreadIfHolding, relayedUnreadKeys, restoreUnreadBadges, restoreUnreadSince } from './dashboard/unread'
+import { MANUAL_UNREAD, _relayUnreadToParent, clearSharedUnreadIfCovered, drainUnreadKeys, dropQueuedSharedUnreadCoveredBy, hasUnreadRelayHold, heldOrphanTest, persistManualSentinels, persistSharedUnread, queueSharedUnread, readCovers, relayUnreadCount, relayUnreadIfHolding, relayedUnreadKeys, restoreUnreadBadges, restoreUnreadSince } from './dashboard/unread'
 
 export interface SubagentDetail {
   id: string; task: string; agent: string; turns: number; last_tool: string; startedAt: number
@@ -747,6 +748,31 @@ const patchSlotRow = (state: DashboardState, key: string, patch: RowPatch): void
   stampSlotWrite(state, key)
 }
 
+/** The `touchSlotActivity` write, shared with the per-frame `streamFlush`. */
+const applySlotActivity = (state: DashboardState, { key, ts, settled }: { key: string; ts: string; settled?: boolean }): void => {
+  patchSlotRow(state, key, slot => {
+    const t = Date.parse(ts)
+    let moved = false
+    const lastTsMoved = !slot.last_ts || Date.parse(slot.last_ts) <= t
+    if (lastTsMoved) { slot.last_ts = ts; moved = true }
+    if (settled && (!slot.last_turn_ts || Date.parse(slot.last_turn_ts) <= t)) { slot.last_turn_ts = ts; moved = true }
+    // Advance last_activity_ts only for settled events (user-sent prompts):
+    // unsettled bumps are streamed tool calls on a running session, and
+    // advancing on every one would re-rank running sessions mid-turn in the
+    // session grid — the same problem that last_turn_ts avoids.
+    if (settled && lastTsMoved) {
+      const prevActivity = slot.last_activity_ts ? Date.parse(slot.last_activity_ts) : NaN
+      if (!slot.last_activity_ts || !Number.isFinite(prevActivity) || t > prevActivity) {
+        slot.last_activity_ts = ts
+      }
+    }
+    // A bump both guards rejected changed nothing, so it is not a write and
+    // must not outrank a reply: stamping it would withhold a server row on
+    // the strength of a no-op.
+    return moved
+  })
+}
+
 /** `patchSlotRow` for a writer that is not keyed by slot: a `source_status`
  *  delta names a URL and may touch every row that links it. Same stamp, so a
  *  URL-keyed write is protected exactly like a key-keyed one. */
@@ -1123,28 +1149,7 @@ const dashboardSlice = createSlice({
     // shared check would discard a legitimate settling bump. Reducer stays pure —
     // the caller supplies ts (falling back to now at the dispatch site).
     touchSlotActivity(state, action: PayloadAction<{ key: string; ts: string; settled?: boolean }>) {
-      const { key, ts, settled } = action.payload
-      patchSlotRow(state, key, slot => {
-        const t = Date.parse(ts)
-        let moved = false
-        const lastTsMoved = !slot.last_ts || Date.parse(slot.last_ts) <= t
-        if (lastTsMoved) { slot.last_ts = ts; moved = true }
-        if (settled && (!slot.last_turn_ts || Date.parse(slot.last_turn_ts) <= t)) { slot.last_turn_ts = ts; moved = true }
-        // Advance last_activity_ts only for settled events (user-sent prompts):
-        // unsettled bumps are streamed tool calls on a running session, and
-        // advancing on every one would re-rank running sessions mid-turn in the
-        // session grid — the same problem that last_turn_ts avoids.
-        if (settled && lastTsMoved) {
-          const prevActivity = slot.last_activity_ts ? Date.parse(slot.last_activity_ts) : NaN
-          if (!slot.last_activity_ts || !Number.isFinite(prevActivity) || t > prevActivity) {
-            slot.last_activity_ts = ts
-          }
-        }
-        // A bump both guards rejected changed nothing, so it is not a write and
-        // must not outrank a reply: stamping it would withhold a server row on
-        // the strength of a no-op.
-        return moved
-      })
+      applySlotActivity(state, action.payload)
     },
     setChannelTrusted(state, action: PayloadAction<boolean>) { state.channelTrusted = action.payload },
     sseSlotTitle(state, action: PayloadAction<{ key: string; title: string }>) {
@@ -1497,8 +1502,11 @@ const dashboardSlice = createSlice({
         // ONE atomic shared write: badge presence and watermark are the same
         // record entry ('' = badge with no watermark, any relayed read
         // clears). The RMW keeps the newest instant, so publishing on every
-        // arrival converges.
-        persistSharedUnread({ [slot]: effectiveTs ?? '' }, [])
+        // arrival converges. The write is queued, not done here: arrivals
+        // coalesce into one write per SHARED_UNREAD_FLUSH_MS, and every read
+        // or drain in this window flushes the queue before it touches the
+        // record.
+        queueSharedUnread(slot, effectiveTs ?? '')
         const prev = state.unreadSince[slot]
         // `localTs` is the row's own server ts and guards THIS window only.
         // A row the gateway never saves (a permission row) publishes the
@@ -1521,7 +1529,10 @@ const dashboardSlice = createSlice({
         state.unreadSince[slot] = MANUAL_UNREAD
         persistManualSentinels(state.unreadSince)
       }
-      _relayUnreadToParent(JSON.stringify(relayedUnreadKeys(state)))
+      // Relayed on every arrival, not only when the badge is new: the hub
+      // zeroes an instance's count when the user selects it, and the next
+      // arrival is what lights the chip again. A standalone window skips it.
+      relayUnreadCount(state)
     },
     markSlotRead(state, action: PayloadAction<string>) {
       if (state.unreadSince?.[action.payload] !== undefined) {
@@ -1553,6 +1564,10 @@ const dashboardSlice = createSlice({
      *  a sibling window's trailing relay. */
     remoteSlotRead(state, action: PayloadAction<{ slot: string; readTs?: string }>) {
       const { slot, readTs } = action.payload
+      // The reader already cleared the shared record for what it read, so a
+      // queued arrival this read covers must not be written after that clear.
+      // Runs before the local guard below, which keeps this window's own badge.
+      dropQueuedSharedUnreadCoveredBy(slot, readTs)
       const since = state.unreadSince?.[slot]
       if (since !== undefined && !readCovers(readTs, since)) return
       // The local watermark accepted the relay — but this window's view can
@@ -1650,6 +1665,9 @@ const dashboardSlice = createSlice({
   },
   extraReducers: (builder) => {
     builder
+      .addCase(streamFlush, (state, action) => {
+        for (const r of action.payload.recency) applySlotActivity(state, r)
+      })
       .addCase(fetchSlots.pending, (state, action) => {
         if (!state.slotFetchesInFlight) state.slotFetchesInFlight = []
         state.slotFetchesInFlight.push(action.meta.requestId)

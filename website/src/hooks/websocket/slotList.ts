@@ -11,6 +11,7 @@ import type { FrameData } from './frames'
 import type { StreamBuffers } from './streamBuffers'
 import { clearIdleRowRefreshes, recordIdleRowRefresh } from './idleRowRefresh'
 import { CHAT_FOLDERS_WRITE_KEY } from '../../api/chatFoldersWrite'
+import { autoBatched } from '../../lib/streamBatch'
 
 export interface SlotListSync {
   /** A new connection: forget the last-seen generations and raw frame. */
@@ -60,7 +61,13 @@ export function useSlotListSync(
       // It runs ahead of the repeat check below: a push identical to the last
       // one still corrects a count a `subagent_queued` frame moved in between,
       // which is the very case the reconcile exists for.
-      if (Array.isArray(data)) dispatch(reconcileSubagentQueuedFromSlots(data))
+      //
+      // Every side dispatch of this frame is `autoBatched`: its reducer runs
+      // now, but subscribers hear of it with the `sseSlots` notification below,
+      // which is untagged and so flushes the held ones. A frame that stops at
+      // the repeat check notifies once, on the next animation frame, instead of
+      // once per dispatch; each notification re-runs every mounted selector.
+      if (Array.isArray(data)) dispatch(autoBatched(reconcileSubagentQueuedFromSlots(data)))
       // The gateway labels the lists it pushes while a restart is still
       // restoring sessions; `reconcileSlots` must not drain unread entries
       // against one of those. Set before the list is applied so the frame's
@@ -68,13 +75,13 @@ export function useSlotListSync(
       // flips the label differs in `raw`, but the hold must also be re-read
       // from a frame this socket repeats. Absent on an older gateway, which
       // means complete and keeps the base behaviour.
-      dispatch(sseSlotListHolds({
+      dispatch(autoBatched(sseSlotListHolds({
         heldKeys: Array.isArray(msg.slotsHeldKeys)
           ? msg.slotsHeldKeys.filter((key: unknown): key is string => typeof key === 'string')
           : [],
         holdChannels: msg.slotsHoldChannels === true,
-      }))
-      dispatch(sseSlotsPartial(msg.slotsPartial === true))
+      })))
+      dispatch(autoBatched(sseSlotsPartial(msg.slotsPartial === true)))
       // An identical repeat carries identical values for every arm below, but
       // only while no other writer (fetchSlots) has since replaced the list.
       // Current history replies carry turn identity and cannot restore busy
@@ -109,6 +116,10 @@ export function useSlotListSync(
       // Query keys this frame has made stale; flushed once at the end.
       const staleKeys = new Set<'chat-folders' | 'dashboardConfig'>()
       const beforeSettle = store.getState().chat
+      // Ahead of `sseSlots` so its notification covers them too. Neither
+      // reducer reads the slot list, nor does `sseSlots` read either flag.
+      if (msg.yolo !== undefined) dispatch(autoBatched(sseYolo(msg.yolo)))
+      if (msg.channelTrusted !== undefined) dispatch(autoBatched(setChannelTrusted(msg.channelTrusted)))
       dispatch(sseSlots(data))
       lastSlotsArrayRef.current = store.getState().dashboard.slots
       // The frame may predate a create or fork this tab just made; if the
@@ -128,12 +139,6 @@ export function useSlotListSync(
           && afterSettle.slotState === 'idle' && !afterSettle.slotRunning) {
         recordIdleRowRefresh(activeKey, wireTurnIdentity(data.find(s => s.key === activeKey) ?? {}))
         dispatch(refreshSlot(activeKey))
-      }
-      if (msg.yolo !== undefined) {
-        dispatch(sseYolo(msg.yolo))
-      }
-      if (msg.channelTrusted !== undefined) {
-        dispatch(setChannelTrusted(msg.channelTrusted))
       }
       // Seed the ['chat-folders'] query cache from the folder tree carried
       // on this frame so the sidebar groups sessions correctly on the FIRST
