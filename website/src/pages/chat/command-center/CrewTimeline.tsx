@@ -96,13 +96,19 @@ export default function CrewTimeline({ root, viewing, active, onOpen }: {
   const window = useMemo(() => (data ? timelineWindow(data) ?? emptyWindow(data) : null), [data])
   const scale = useMemo(() => (data && window ? timelineScale(data, window) : null), [data, window])
   // A read failure with nothing to lose (the composer draft is saved per chat).
-  if (query.isError) return <div className="p-3"><ErrorNotice message={t('commandCenter.timeline_error')} askAgent /></div>
-  // The first read is in flight: say so, so a slow read is not an empty panel.
-  if (!data) return <p role="status" aria-busy="true" className="p-3 text-sm text-muted" data-testid="crew-timeline-loading">{t('commandCenter.timeline_loading')}</p>
+  // With a read already on screen the failure is said above it: the lanes the
+  // server did return stay, a failed poll does not blank them.
+  const failed = query.isError && <ErrorNotice message={t('commandCenter.timeline_error')} askAgent />
+  if (!data) {
+    if (failed) return <div className="p-3">{failed}</div>
+    // The first read is in flight: say so, so a slow read is not an empty panel.
+    return <p role="status" aria-busy="true" className="p-3 text-sm text-muted" data-testid="crew-timeline-loading">{t('commandCenter.timeline_loading')}</p>
+  }
   const lanes = data.lanes
   const stateKey = timelineStateKey(data)
   const notStarted = stateKey === 'commandCenter.timeline_not_started'
   return <div className="flex flex-col gap-3 p-3 min-w-0" data-testid="crew-timeline" data-live={data.live ? 'true' : 'false'}>
+    {failed}
     <header className="flex items-center gap-2 text-[12px] text-muted" data-testid="crew-timeline-header">
       <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-semibold ${data.live ? 'crew-grad' : 'bg-bg-hover text-text'}`}>
         {t(stateKey)}

@@ -290,6 +290,24 @@ describe('CrewTimeline', () => {
     renderWith(<CrewTimeline root="root-1" viewing={null} active onOpen={vi.fn()} />)
     expect(await screen.findByText('Could not load the timeline.')).toBeInTheDocument()
   })
+
+  it('keeps the lanes it has when a later read fails, and says the read failed above them', async () => {
+    // The server answered once; a poll then fails (a blip, a restart). The lanes
+    // it returned are still what the person has: they stay, under the notice.
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      api.crewTimeline.mockResolvedValueOnce({ ...DONE, live: true }).mockRejectedValue(new Error('nope'))
+      renderWith(<CrewTimeline root="root-1" viewing={null} active onOpen={vi.fn()} />)
+      expect(await screen.findAllByTestId('crew-timeline-lane')).toHaveLength(4)
+      await act(async () => { vi.advanceTimersByTime(2500) })
+      expect(await screen.findByText('Could not load the timeline.')).toBeInTheDocument()
+      expect(api.crewTimeline).toHaveBeenCalledTimes(2)
+      expect(screen.getAllByTestId('crew-timeline-lane')).toHaveLength(4)
+      expect(screen.getByTestId('crew-timeline-header')).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
 
 describe('Workers panel List | Timeline switch', () => {
