@@ -816,8 +816,11 @@ adapter at that seam: it reads the tier lists from the platform policy, the relo
 data-home spellings, the voice-runtime paths, the carve-out `realpath`/`isdir` probes
 and the ssh accept-new probe from `kiro_crew.sandbox` at call time; a test builds a
 `PlanHost` from literals. What a renderer cannot express in the planning both backends
-share is a declared capability in `sandbox_plan.CAPABILITIES`: Seatbelt cannot mask
-`~/.aws` while re-exposing one file in it, so the cc tier leaves it readable there. The
+share is a declared capability in `sandbox_plan.CAPABILITIES`. Today no renderer
+declares a cc directory it cannot mask: the launcher restores a read-only copy of
+`~/.aws/config` into the `~/.aws` mask, and Seatbelt denies the `~/.aws` subpath with a
+`require-not literal` exception for `~/.aws/config`, so on both backends the cc tier
+hides the credentials file and the SSO caches and keeps only `config` readable. The
 rest of each backend's shape is its own planner, which `plan_confinement` picks by
 backend: one flat mask list folded onto the resolved data-home spelling for the
 launcher, which re-applies a mask nested inside a private window; a rule set per masked
