@@ -579,13 +579,15 @@ Neither path owns a timer. The prefs path is checked inline on every
 `maybe_consolidate()`; the history path is driven entirely by the heartbeat
 calling `check_idle_sessions()`. Every embed-bearing step
 (`_write_structured_memory`, `_save_lessons`, `append_history`) is dispatched
-through `run_in_memory_background_pool` (the two-worker `mc-membg` pool) because
+through `run_in_memory_background_pool` (the `mc-membg` pool, which admits two
+consolidation passes at a time) because
 `_consolidate` runs on the gateway event loop, and a slow or hung embed inline
 would stall heartbeats, Slack, and the dashboard. It is not `mc-embed`: turn
 context (`build_message`) runs there, and a backlog of consolidation passes once
 held seven of its eight workers. The gateway's embedding backfill and member
-repair loops run on `mc-membg` too, so background memory work waits only for
-itself.
+repair loops run on `mc-membg` too, on two threads of their own outside that
+admission, so a backfill that runs for hours never takes a consolidation worker
+and background memory work waits only for itself.
 
 Structured `[Monitor wake]` turns never call `maybe_consolidate()`: their prompt
 and resulting action are automation evidence, not user-authored memory. Monitor

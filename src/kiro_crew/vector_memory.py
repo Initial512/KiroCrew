@@ -493,6 +493,12 @@ def _read_pooled(store: "VectorMemoryStore", sql: str, params: Sequence[object],
             cursor.close()
         broken = False
         return result
+    except sqlite3.OperationalError:
+        # A statement this connection cannot run (a function only the shared
+        # connection registers, an interrupt from close()). The connection
+        # itself is fine; close() discards it through the generation check.
+        broken = False
+        return _ON_SHARED_CONNECTION
     except sqlite3.Error:
         return _ON_SHARED_CONNECTION
     finally:

@@ -104,6 +104,21 @@ class TestReadsRunBesideEachOther:
             assert pool.submit(store.get_lessons).result(timeout=_WAIT) == []
             assert pool.submit(store._ineligible_ids).result(timeout=_WAIT) == set()
 
+    def test_a_statement_only_the_shared_connection_can_run_falls_back(
+        self, tmp_path: Path, opened
+    ) -> None:
+        """A function registered on the shared connection alone fails on a pooled
+        connection; the read answers from the shared one and the pooled connection
+        is kept, so repeated calls do not open a connection each time."""
+        store = _store(tmp_path, opened)
+        with store._db_lock:
+            store.db.create_function("shared_only", 0, lambda: 7)
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            for _ in range(5):
+                row = pool.submit(store._fetch_one_locked, "SELECT shared_only() AS v")
+                assert row.result(timeout=_WAIT)["v"] == 7
+        assert store._readers.open_count() == 1
+
     def test_read_counters_still_count_pooled_reads(self, tmp_path: Path, opened) -> None:
         store = _store(tmp_path, opened)
         before = store.read_counters()
@@ -337,6 +352,42 @@ class TestBackgroundPool:
                 await asyncio.gather(*backlog)
 
         assert "related tests" in asyncio.run(run())
+
+    def test_backfill_and_repair_loops_leave_consolidation_its_workers(self) -> None:
+        """The backfill and repair loops hold background threads for a long time
+        without admission; consolidation still runs its admitted passes at once."""
+        release = threading.Event()
+        loops_started = threading.Semaphore(0)
+        passes_started = threading.Semaphore(0)
+
+        def long_loop() -> None:
+            loops_started.release()
+            assert release.wait(_WAIT)
+
+        def consolidation() -> None:
+            passes_started.release()
+            assert release.wait(_WAIT)
+
+        async def run() -> None:
+            loop = asyncio.get_running_loop()
+            held = [
+                loop.run_in_executor(executors.memory_background_executor(), long_loop)
+                for _ in range(executors._MEMORY_BACKGROUND_LOOP_THREADS)
+            ]
+            for _ in held:
+                assert await asyncio.to_thread(loops_started.acquire, True, _WAIT)
+            passes = [
+                asyncio.ensure_future(executors.run_in_memory_background_pool(consolidation))
+                for _ in range(executors._MAX_MEMORY_BACKGROUND_WORKERS)
+            ]
+            try:
+                for _ in passes:
+                    assert await asyncio.to_thread(passes_started.acquire, True, _WAIT)
+            finally:
+                release.set()
+                await asyncio.gather(*held, *passes)
+
+        asyncio.run(run())
 
     def test_consolidation_and_backfill_never_use_the_turn_pool(self) -> None:
         """Every store pass of a consolidation, and the gateway's backfill and

@@ -198,7 +198,12 @@ _MAX_EMBED_WORKERS = 8
 # filled seven of its eight workers and left turn context (build_message) queued
 # behind them. They get this small pool of their own, so at worst they wait for
 # each other and mc-embed keeps its workers for interactive work.
+# Consolidation is admitted at most this many at a time.
 _MAX_MEMORY_BACKGROUND_WORKERS = 2
+# The gateway's embedding backfill (hours, paced) and member repair loop hold a
+# thread each through ``run_in_executor`` without admission; these extra threads
+# are theirs, so consolidation keeps its two workers while they run.
+_MEMORY_BACKGROUND_LOOP_THREADS = 2
 
 # Governance checks for EXTERNALLY-triggered surfaces: the per-inbound-message
 # channels gate (every Slack/Discord/Telegram/Webex/WeCom message + approval
@@ -826,14 +831,15 @@ def embed_executor() -> ThreadPoolExecutor:
 def memory_background_executor() -> ThreadPoolExecutor:
     """Return the background memory pool (consolidation, backfill), creating it once.
 
-    Threads are named ``mc-membg``. See :data:`_MAX_MEMORY_BACKGROUND_WORKERS`.
+    Threads are named ``mc-membg``. See :data:`_MAX_MEMORY_BACKGROUND_WORKERS` and
+    :data:`_MEMORY_BACKGROUND_LOOP_THREADS`.
     """
     global _memory_background_pool
     if _memory_background_pool is None:
         with _lock:
             if _memory_background_pool is None:
                 _memory_background_pool = ThreadPoolExecutor(
-                    max_workers=_MAX_MEMORY_BACKGROUND_WORKERS,
+                    max_workers=_MAX_MEMORY_BACKGROUND_WORKERS + _MEMORY_BACKGROUND_LOOP_THREADS,
                     thread_name_prefix="mc-membg",
                 )
                 atexit.register(shutdown_maintenance_executor)
