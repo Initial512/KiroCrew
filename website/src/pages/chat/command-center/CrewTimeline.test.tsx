@@ -177,6 +177,28 @@ describe('CrewTimeline', () => {
     expect(screen.queryByTestId('crew-timeline-credits')).toBeNull()
   })
 
+  it('draws a lane for every worker the List shows, open or closed, even with nothing recorded', async () => {
+    // Rows with no usable time (the pod's chat-9 root): no lane has a bar, and
+    // `started` is null. The List still shows the workers, so the Timeline must too.
+    const workers = [
+      { key: 'w-1', title: 'Waiting one', agent: 'kirocrew-worker', status: 'idle', group: 'waiting', last_activity: '', ledger_item: '', summary: '', created_by: '' },
+      { key: 'w-gone', title: 'Done one', agent: 'kirocrew-worker', status: 'closed', group: 'done', last_activity: '', ledger_item: '', summary: '', created_by: '' },
+    ]
+    api.crewWorkers.mockResolvedValue({ root: 'root-1', workers })
+    api.crewTimeline.mockResolvedValue({
+      ...DONE, started: null, ended: null, handoffs: [],
+      lanes: [lane('root-1', { role: 'conductor' }), lane('w-1', { group: 'waiting' }), lane('w-gone', { status: 'closed' })],
+    })
+    renderWith(<CrewWorkerList root="root-1" viewing="root-1" active />)
+    const listed = (await screen.findAllByRole('button', { name: /Waiting one|Done one/ })).length
+    fireEvent.click(screen.getByRole('button', { name: 'Timeline' }))
+    const lanes = await screen.findAllByTestId('crew-timeline-lane')
+    const workerLanes = lanes.filter(l => l.getAttribute('data-role') === 'worker').map(l => l.getAttribute('data-lane'))
+    expect(new Set(workerLanes)).toEqual(new Set(workers.map(w => w.key)))
+    expect(workerLanes).toHaveLength(listed)
+    expect(screen.getByText('Nothing recorded yet.')).toBeInTheDocument()
+  })
+
   it('shows a loading line while the first read is in flight (X6)', () => {
     api.crewTimeline.mockReturnValue(new Promise(() => {}))
     renderWith(<CrewTimeline root="root-1" viewing={null} active onOpen={vi.fn()} />)

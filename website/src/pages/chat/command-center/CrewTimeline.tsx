@@ -91,7 +91,9 @@ export default function CrewTimeline({ root, viewing, active, onOpen }: {
   const ticking = !!data?.live && !reduced && !composing
   // Derived once per read, not per playhead tick: the tick re-renders only the
   // playhead and the elapsed label, which own the ticking clock.
-  const window = useMemo(() => (data ? timelineWindow(data) : null), [data])
+  // Nothing drawable yet (no row with a time): a one-minute window at the server's
+  // now, so every worker the List shows still gets its lane, with an empty track.
+  const window = useMemo(() => (data ? timelineWindow(data) ?? emptyWindow(data) : null), [data])
   const scale = useMemo(() => (data && window ? timelineScale(data, window) : null), [data, window])
   // A read failure with nothing to lose (the composer draft is saved per chat).
   if (query.isError) return <div className="p-3"><ErrorNotice message={t('commandCenter.timeline_error')} askAgent /></div>
@@ -112,9 +114,10 @@ export default function CrewTimeline({ root, viewing, active, onOpen }: {
         <span data-testid="crew-timeline-credits">{t('commandCenter.timeline_credits', { value: fmtCredits(data.credits) })}</span>
       </>}
     </header>
-    {!window || !scale || lanes.every(lane => lane.segments.length === 0 && lane.marks.length === 0)
-      ? <p className="text-sm text-muted">{t('commandCenter.timeline_empty')}</p>
-      : <Lanes data={data} window={window} scale={scale} viewing={viewing} onOpen={onOpen} receivedAt={receivedAt} ticking={ticking} reduced={reduced} />}
+    {/* One lane per session the List shows, drawn or not: an empty run says so
+        above its lanes instead of hiding them. */}
+    {notStarted && <p className="text-sm text-muted">{t('commandCenter.timeline_empty')}</p>}
+    {window && scale && lanes.length > 0 && <Lanes data={data} window={window} scale={scale} axis={!notStarted} viewing={viewing} onOpen={onOpen} receivedAt={receivedAt} ticking={ticking} reduced={reduced} />}
     <Legend gaps={data.gaps} compressed={!!scale?.compressed} />
   </div>
 }
@@ -131,10 +134,11 @@ function Elapsed({ data, start, receivedAt, ticking }: { data: CrewTimelineData;
 /** The axis, the lanes, the hand-off arrows over them and the playhead. The
  *  arrows join two lanes, so they are drawn once over the whole list from each
  *  track's measured box. */
-function Lanes({ data, window, scale, viewing, onOpen, receivedAt, ticking, reduced }: {
+function Lanes({ data, window, scale, axis, viewing, onOpen, receivedAt, ticking, reduced }: {
   data: CrewTimelineData
   window: TimelineWindow
   scale: TimeScale
+  axis: boolean
   viewing: string | null
   onOpen: (key: string, title?: string, closed?: boolean) => void
   receivedAt: number
@@ -146,7 +150,7 @@ function Lanes({ data, window, scale, viewing, onOpen, receivedAt, ticking, redu
   // opens between two reads keeps the count and changes the boxes.
   const tracks = useTrackBoxes(boxRef, data.lanes.map(lane => lane.key).join('|'))
   return <div ref={boxRef} className="relative flex flex-col gap-1" role="list">
-    <Axis window={window} scale={scale} />
+    {axis && <Axis window={window} scale={scale} />}
     {data.lanes.map(lane => (
       <Lane key={lane.key} lane={lane} scale={scale} current={lane.key === viewing} onOpen={onOpen} />
     ))}
@@ -155,6 +159,12 @@ function Lanes({ data, window, scale, viewing, onOpen, receivedAt, ticking, redu
         every read is motion too. The header still says Live and the elapsed time. */}
     {data.live && !reduced && <Playhead data={data} scale={scale} receivedAt={receivedAt} ticking={ticking} />}
   </div>
+}
+
+/** The window for a read with no drawable row: one minute from the server's now. */
+function emptyWindow(data: CrewTimelineData): TimelineWindow {
+  const start = parseTime(data.now) ?? 0
+  return { start, end: start + 60_000 }
 }
 
 interface TrackBox { left: number; top: number; width: number; height: number }
