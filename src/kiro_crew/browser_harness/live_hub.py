@@ -36,6 +36,7 @@ from kiro_crew.browser_harness.takeover import (
     USER,
     InputLock,
     dispatch_input,
+    focused_field,
     parse_input_event,
 )
 
@@ -1000,6 +1001,16 @@ class LiveHub:
             # no typed text: keystrokes count as characters, never as what was typed.
             self.recorder.user_input(session_key, parse_input_event(event), sess.url)
         return sent
+
+    async def focused_field(self, session_key: str) -> dict[str, Any]:
+        """The page's focused field kind while the person holds input (see ``takeover``)."""
+        sess = self._sessions.get(session_key)
+        if sess is None or sess.lock.owner != USER or sess.stream is None:
+            return {"editable": False, "kind": "", "mode": ""}
+        stream = sess.stream
+        if not stream.session_id:
+            return {"editable": False, "kind": "", "mode": ""}
+        return await focused_field(stream.relay, stream.session_id)
 
     async def reopen(
         self,

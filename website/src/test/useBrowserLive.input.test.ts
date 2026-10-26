@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 
 import {
   drawnRect, keyToEvent, mapPointToFrame, modifiersOf, pointerToEvent, wheelToEvent, isHandBackKey,
+  beforeInputToEvents, focusOfReply, keyboardHints, proxyKeyIsForwarded, textToEvents, TEXT_CHUNK,
   MOD_ALT, MOD_CTRL, MOD_META, MOD_SHIFT,
 } from '../hooks/useBrowserLive.input'
 
@@ -111,5 +112,50 @@ describe('keyToEvent', () => {
   it('Esc is the hand-back key and nothing else is', () => {
     expect(isHandBackKey('Escape')).toBe(true)
     expect(isHandBackKey('Enter')).toBe(false)
+  })
+})
+
+describe('touch typing', () => {
+  it('reads the focus reply and refuses anything malformed', () => {
+    expect(focusOfReply({ sent: 1, focus: { editable: true, kind: 'tel', mode: '' } })).toEqual({ editable: true, kind: 'tel', mode: '' })
+    expect(focusOfReply({ sent: 1 })).toBeNull()
+    expect(focusOfReply(undefined)).toBeNull()
+    expect(focusOfReply({ focus: { editable: 'yes', kind: 3 } })).toEqual({ editable: false, kind: '', mode: '' })
+  })
+
+  it('asks for the keyboard the field wants: its own inputmode first, else by type', () => {
+    expect(keyboardHints({ editable: true, kind: 'number', mode: '' })).toEqual({ inputMode: 'decimal', enterKeyHint: 'go' })
+    expect(keyboardHints({ editable: true, kind: 'tel', mode: '' }).inputMode).toBe('tel')
+    expect(keyboardHints({ editable: true, kind: 'text', mode: 'numeric' }).inputMode).toBe('numeric')
+    expect(keyboardHints({ editable: true, kind: 'password', mode: '' }).inputMode).toBe('text')
+    expect(keyboardHints({ editable: true, kind: 'textarea', mode: '' }).enterKeyHint).toBe('enter')
+  })
+
+  it('splits committed text to the wire cap, never inside a surrogate pair', () => {
+    const long = '\u{1F600}'.repeat(TEXT_CHUNK + 1)
+    const evs = textToEvents(long)
+    expect(evs).toHaveLength(2)
+    expect(evs.every(e => e.key === '' && e.action === 'press')).toBe(true)
+    expect(Array.from(evs[0].text ?? '')).toHaveLength(TEXT_CHUNK)
+    expect(textToEvents('')).toEqual([])
+  })
+
+  it('maps beforeinput to text, Backspace, Delete and Enter, and leaves a composition alone', () => {
+    expect(beforeInputToEvents('insertText', '4', false)).toEqual([{ type: 'key', action: 'press', key: '', text: '4', modifiers: 0 }])
+    expect(beforeInputToEvents('deleteContentBackward', null, false)?.map(e => [e.action, e.key])).toEqual([['down', 'Backspace'], ['up', 'Backspace']])
+    expect(beforeInputToEvents('deleteContentForward', null, false)?.[0].key).toBe('Delete')
+    expect(beforeInputToEvents('insertParagraph', null, false)?.[0].key).toBe('Enter')
+    expect(beforeInputToEvents('insertCompositionText', 'he', false)).toBeNull()
+    expect(beforeInputToEvents('insertText', 'x', true)).toBeNull()
+    expect(beforeInputToEvents('formatBold', null, false)).toEqual([])
+  })
+
+  it('forwards named keys and chords from the proxy, not printable or IME placeholder keys', () => {
+    expect(proxyKeyIsForwarded({ ...noMods, key: 'Backspace', code: 'Backspace' })).toBe(true)
+    expect(proxyKeyIsForwarded({ ...noMods, key: 'Enter', code: 'Enter' })).toBe(true)
+    expect(proxyKeyIsForwarded({ ...noMods, key: 'a', code: 'KeyA', ctrlKey: true })).toBe(true)
+    expect(proxyKeyIsForwarded({ ...noMods, key: '5', code: 'Digit5' })).toBe(false)
+    expect(proxyKeyIsForwarded({ ...noMods, key: 'Unidentified', code: '', keyCode: 229 })).toBe(false)
+    expect(proxyKeyIsForwarded({ ...noMods, key: 'Backspace', code: 'Backspace', isComposing: true })).toBe(false)
   })
 })

@@ -3,9 +3,23 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from 
 import { browserLiveStore } from '../../hooks/useBrowserLive'
 import type { DecodedBrowserFrame } from '../../hooks/useBrowserLive.frame'
 import {
-  isHandBackKey, keyToEvent, pointerToEvent, wheelToEvent,
+  beforeInputToEvents, focusOfReply, isHandBackKey, keyboardHints, keyToEvent, pointerToEvent,
+  proxyKeyIsForwarded, textToEvents, wheelToEvent,
   type BrowserInputEvent, type FrameSize,
 } from '../../hooks/useBrowserLive.input'
+
+/**
+ * What the proxy holds between keystrokes: one zero-width space, so a phone
+ * keyboard's Backspace always has something to delete and so always reports it
+ * (Android sends no `beforeinput` for a delete in an empty field).
+ */
+const PROXY_FILL = '\u200b'
+
+/** iOS reopens no keyboard for a focus outside a tap, so the proxy is not refocused there. */
+function isIOS(): boolean {
+  if (typeof navigator === 'undefined') return false
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+}
 
 /**
  * The picture in the live-browser card: a `<canvas>` painted from the frame
@@ -217,10 +231,51 @@ const BrowserLiveCardCanvas = forwardRef<BrowserLiveCanvasHandle, Props>(functio
     return r ? { left: r.left, top: r.top, width: r.width, height: r.height } : { left: 0, top: 0, width: 0, height: 0 }
   }
 
+  // ---- touch typing: the proxy textarea --------------------------------------
+  // A tap focuses the proxy at once (a phone opens its keyboard only for a
+  // focus inside the tap itself), then the release's reply says what took
+  // focus in the page: a field keeps the keyboard, with the field's keyboard
+  // type; anything else closes it again.
+  const proxyRef = useRef<HTMLTextAreaElement>(null)
+  const proxyDown = useRef(new Set<string>())
+  const tapSeq = useRef(0)
+
+  const resetProxy = () => {
+    const p = proxyRef.current
+    if (!p) return
+    p.value = PROXY_FILL
+    try { p.setSelectionRange(PROXY_FILL.length, PROXY_FILL.length) } catch { /* not focused */ }
+  }
+
+  const onTouchRelease = (clientY: number, reply: Promise<unknown> | undefined) => {
+    const p = proxyRef.current
+    if (!p) return
+    p.style.top = `${Math.max(0, Math.round(clientY))}px`
+    resetProxy()
+    p.focus({ preventScroll: true })
+    const seq = ++tapSeq.current
+    void reply?.then((r) => {
+      if (seq !== tapSeq.current || document.activeElement !== p) return
+      const focus = focusOfReply(r)
+      if (!focus?.editable) { p.blur(); return }
+      const { inputMode, enterKeyHint } = keyboardHints(focus)
+      const changed = p.inputMode !== inputMode || p.enterKeyHint !== enterKeyHint
+      p.inputMode = inputMode
+      p.enterKeyHint = enterKeyHint
+      // Android takes the new keyboard type on a refocus (the tap's activation
+      // still holds); iOS would close the keyboard, so it keeps the text one.
+      if (changed && !isIOS()) { p.blur(); p.focus({ preventScroll: true }); resetProxy() }
+    })
+  }
+
+  const isTouch = (e: React.PointerEvent) => e.pointerType === 'touch' || e.pointerType === 'pen'
+
   const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!interactive) return
     e.preventDefault()
-    canvasRef.current?.focus()
+    // A touch leaves focus where it is: moving it to the canvas would close the
+    // keyboard the last tap opened, only to open it again on release.
+    if (!isTouch(e)) canvasRef.current?.focus()
     try { canvasRef.current?.setPointerCapture(e.pointerId) } catch { /* not a pointer device */ }
     flushMove()
     const size = sizeRef.current
@@ -232,8 +287,56 @@ const BrowserLiveCardCanvas = forwardRef<BrowserLiveCanvasHandle, Props>(functio
     try { canvasRef.current?.releasePointerCapture(e.pointerId) } catch { /* not captured */ }
     flushMove()
     const size = sizeRef.current
-    if (size) send(pointerToEvent('up', e.nativeEvent, box(), size, e.detail || 1))
+    const up = size ? pointerToEvent('up', e.nativeEvent, box(), size, e.detail || 1) : null
+    const reply = up ? browserLiveStore.sendInput(sessionKey, up) : undefined
+    if (isTouch(e)) onTouchRelease(e.clientY, reply)
   }
+
+  // The proxy's keys: named keys go to the page as keys, text arrives through
+  // `beforeinput` / `compositionend` and goes as text. All of it stops here, so
+  // nothing typed for the page reaches a dashboard shortcut.
+  const onProxyKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    e.stopPropagation()
+    if (!interactive) return
+    if (isHandBackKey(e.key)) { e.preventDefault(); proxyRef.current?.blur(); onHandBack?.(); return }
+    if (!proxyKeyIsForwarded(e.nativeEvent)) return
+    e.preventDefault()
+    proxyDown.current.add(e.code || e.key)
+    send(keyToEvent('down', e.nativeEvent))
+  }
+  const onProxyKeyUp = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    e.stopPropagation()
+    if (!proxyDown.current.delete(e.code || e.key)) return
+    e.preventDefault()
+    send(keyToEvent('up', e.nativeEvent))
+  }
+
+  useEffect(() => {
+    const p = proxyRef.current
+    if (!p) return
+    if (!interactive) { if (document.activeElement === p) p.blur(); return }
+    const onBeforeInput = (e: InputEvent) => {
+      const evs = beforeInputToEvents(e.inputType, e.data ?? e.dataTransfer?.getData('text/plain') ?? null, e.isComposing)
+      if (evs === null) return
+      e.preventDefault()
+      for (const ev of evs) send(ev)
+    }
+    const onCompositionEnd = (e: CompositionEvent) => {
+      for (const ev of textToEvents(e.data || '')) send(ev)
+      // After the IME lets go of the text, so it does not commit it twice.
+      setTimeout(resetProxy, 0)
+    }
+    // A blur with keys still down (the keyboard closed mid-press) releases them.
+    const onBlur = () => { proxyDown.current.clear() }
+    p.addEventListener('beforeinput', onBeforeInput)
+    p.addEventListener('compositionend', onCompositionEnd)
+    p.addEventListener('blur', onBlur)
+    return () => {
+      p.removeEventListener('beforeinput', onBeforeInput)
+      p.removeEventListener('compositionend', onCompositionEnd)
+      p.removeEventListener('blur', onBlur)
+    }
+  }, [interactive, send])
   const onPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!interactive) return
     const size = sizeRef.current
@@ -287,6 +390,7 @@ const BrowserLiveCardCanvas = forwardRef<BrowserLiveCanvasHandle, Props>(functio
   const onClick = () => { if (!interactive && onClaim) onClaim() }
 
   return (
+    <>
     <canvas
       ref={canvasRef}
       role="img"
@@ -302,6 +406,23 @@ const BrowserLiveCardCanvas = forwardRef<BrowserLiveCanvasHandle, Props>(functio
       onKeyUp={onKeyUp}
       onClick={onClick}
     />
+    {/* The phone keyboard's target (see onTouchRelease). Invisible, out of the
+        tab order, 16px so iOS does not zoom on focus; holds no typed text. */}
+    <textarea
+      ref={proxyRef}
+      aria-label={`${ariaLabel}: type into the page`}
+      data-testid="browser-live-type-proxy"
+      tabIndex={-1}
+      autoCapitalize="off"
+      autoCorrect="off"
+      autoComplete="off"
+      spellCheck={false}
+      defaultValue={PROXY_FILL}
+      onKeyDown={onProxyKeyDown}
+      onKeyUp={onProxyKeyUp}
+      style={{ position: 'fixed', left: 0, top: 0, width: 1, height: 1, padding: 0, border: 0, opacity: 0, fontSize: 16, resize: 'none', pointerEvents: 'none' }}
+    />
+    </>
   )
 })
 

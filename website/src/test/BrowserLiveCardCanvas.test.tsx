@@ -217,6 +217,93 @@ describe('takeover input', () => {
     expect(writes.input.mock.calls[0][1]).toMatchObject({ type: 'wheel', x: 320, y: 200, dx: 0, dy: 40 })
   })
 
+  const tap = (canvas: HTMLElement) => {
+    fireEvent.pointerDown(canvas, { clientX: 160, clientY: 100, button: 0, pointerId: 7, pointerType: 'touch' })
+    fireEvent.pointerUp(canvas, { clientX: 160, clientY: 100, button: 0, pointerId: 7, pointerType: 'touch' })
+  }
+
+  it('a tap on a page field opens the phone keyboard with the field\'s keyboard type', async () => {
+    writes.input.mockImplementation(async (_k: string, ev: { action?: string }) =>
+      ev.action === 'up' ? { sent: 1, focus: { editable: true, kind: 'number', mode: '' } } : { sent: 1 })
+    mount({ interactive: true })
+    act(() => browserLiveStore.applyFrame(frame(1)))
+    const canvas = screen.getByTestId('browser-live-canvas')
+    const proxy = screen.getByTestId('browser-live-type-proxy') as HTMLTextAreaElement
+    tap(canvas)
+    // Focused inside the tap itself: a phone opens its keyboard only then.
+    expect(document.activeElement).toBe(proxy)
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(document.activeElement).toBe(proxy)
+    expect(proxy.inputMode).toBe('decimal')
+    expect(writes.input.mock.calls.map(c => c[1].action)).toEqual(['down', 'up'])
+  })
+
+  it('a tap on something that takes no typing closes the keyboard again', async () => {
+    writes.input.mockImplementation(async () => ({ sent: 1, focus: { editable: false, kind: '', mode: '' } }))
+    mount({ interactive: true })
+    act(() => browserLiveStore.applyFrame(frame(1)))
+    tap(screen.getByTestId('browser-live-canvas'))
+    const proxy = screen.getByTestId('browser-live-type-proxy')
+    expect(document.activeElement).toBe(proxy)
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(document.activeElement).not.toBe(proxy)
+  })
+
+  it('a mouse click never focuses the keyboard proxy', () => {
+    mount({ interactive: true })
+    act(() => browserLiveStore.applyFrame(frame(1)))
+    const canvas = screen.getByTestId('browser-live-canvas')
+    fireEvent.pointerDown(canvas, { clientX: 160, clientY: 100, button: 0, pointerId: 1, pointerType: 'mouse' })
+    fireEvent.pointerUp(canvas, { clientX: 160, clientY: 100, button: 0, pointerId: 1, pointerType: 'mouse' })
+    expect(document.activeElement).toBe(canvas)
+  })
+
+  const beforeInput = (el: HTMLElement, inputType: string, data: string | null) => {
+    const ev = new Event('beforeinput', { bubbles: true, cancelable: true })
+    Object.defineProperty(ev, 'inputType', { value: inputType })
+    Object.defineProperty(ev, 'data', { value: data })
+    Object.defineProperty(ev, 'isComposing', { value: false })
+    el.dispatchEvent(ev)
+    return ev
+  }
+
+  it('what the phone keyboard types goes to the page as text, Backspace and Enter', () => {
+    mount({ interactive: true })
+    const proxy = screen.getByTestId('browser-live-type-proxy')
+    // Android: every soft key is keyCode 229, so the key itself is not sent.
+    fireEvent.keyDown(proxy, { key: 'Unidentified', keyCode: 229 })
+    expect(beforeInput(proxy, 'insertText', '7').defaultPrevented).toBe(true)
+    beforeInput(proxy, 'deleteContentBackward', null)
+    beforeInput(proxy, 'insertLineBreak', null)
+    const ce = new Event('compositionend', { bubbles: true })
+    Object.defineProperty(ce, 'data', { value: 'hello' })
+    proxy.dispatchEvent(ce)
+    expect(writes.input.mock.calls.map(c => c[1])).toEqual([
+      { type: 'key', action: 'press', key: '', text: '7', modifiers: 0 },
+      expect.objectContaining({ type: 'key', action: 'down', key: 'Backspace' }),
+      expect.objectContaining({ type: 'key', action: 'up', key: 'Backspace' }),
+      expect.objectContaining({ type: 'key', action: 'down', key: 'Enter' }),
+      expect.objectContaining({ type: 'key', action: 'up', key: 'Enter' }),
+      { type: 'key', action: 'press', key: '', text: 'hello', modifiers: 0 },
+    ])
+  })
+
+  it('keys on the proxy: named keys go as keys, printable ones once (as text), none reach the window', () => {
+    const windowSaw = vi.fn()
+    window.addEventListener('keydown', windowSaw)
+    try {
+      mount({ interactive: true })
+      const proxy = screen.getByTestId('browser-live-type-proxy')
+      fireEvent.keyDown(proxy, { key: '5', code: 'Digit5', keyCode: 53 })
+      fireEvent.keyDown(proxy, { key: 'Backspace', code: 'Backspace', keyCode: 8 })
+      fireEvent.keyUp(proxy, { key: 'Backspace', code: 'Backspace', keyCode: 8 })
+      expect(writes.input.mock.calls.map(c => [c[1].action, c[1].key])).toEqual([['down', 'Backspace'], ['up', 'Backspace']])
+      expect(windowSaw).not.toHaveBeenCalled()
+    } finally {
+      window.removeEventListener('keydown', windowSaw)
+    }
+  })
+
   it('a click on the live (non-interactive) frame claims', () => {
     const onClaim = vi.fn()
     mount({ onClaim })

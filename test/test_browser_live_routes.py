@@ -200,7 +200,22 @@ async def test_takeover_claim_event_release_round_trip() -> None:
             },
         )
         assert status == 200 and body["sent"] == 2 and stream.inputs == 1
+        assert "focus" not in body
         assert [m for m, _, _ in relay.calls] == ["Input.dispatchKeyEvent"] * 2
+        # A release says what took focus, so a phone can raise its keyboard.
+        relay.answers["Runtime.evaluate"] = {
+            "result": {"value": {"editable": True, "kind": "tel", "mode": ""}}
+        }
+        status, body = await _post(
+            client,
+            "/api/browser/input/event",
+            {
+                "session_key": "chat-1",
+                "event": {"type": "mouse", "action": "up", "x": 1, "y": 1, "button": "left"},
+            },
+        )
+        assert status == 200 and body["focus"] == {"editable": True, "kind": "tel", "mode": ""}
+        assert relay.calls[-1][0] == "Runtime.evaluate"
         status, body = await _post(
             client,
             "/api/browser/input/event",

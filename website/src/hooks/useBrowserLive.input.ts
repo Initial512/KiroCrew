@@ -16,7 +16,7 @@
 /** The wire body. `action` tells a mouse down from up from move, a key down from up. */
 export interface BrowserInputEvent {
   type: 'mouse' | 'wheel' | 'key'
-  action?: 'down' | 'up' | 'move'
+  action?: 'down' | 'up' | 'move' | 'press'
   x?: number
   y?: number
   /** CDP button name. */
@@ -177,6 +177,103 @@ export function keyToEvent(action: 'down' | 'up', e: KeyLike): BrowserInputEvent
   const out: BrowserInputEvent = { type: 'key', action, key: e.key, code: e.code, modifiers }
   if (action === 'down' && printable(e.key) && !(modifiers & (MOD_CTRL | MOD_META))) out.text = e.key
   return out
+}
+
+// ---- touch typing ------------------------------------------------------------
+//
+// A canvas cannot raise a phone's keyboard. After a tap the card asks what took
+// focus in the page; for a field it focuses a hidden textarea of its own (the
+// "proxy") so the keyboard opens, and forwards what the keyboard produces.
+
+/** The gateway's answer to "what took focus" after a release. */
+export interface FieldFocus {
+  editable: boolean
+  /** The field's type (`number`, `tel`, `textarea`, ...); `frame` for a cross-origin frame. */
+  kind: string
+  /** The field's own `inputmode` attribute, when it has one. */
+  mode: string
+}
+
+/** Read `focus` off an input-event reply; `null` when there is none. */
+export function focusOfReply(reply: unknown): FieldFocus | null {
+  if (!reply || typeof reply !== 'object') return null
+  const f = (reply as { focus?: unknown }).focus
+  if (!f || typeof f !== 'object') return null
+  const { editable, kind, mode } = f as Record<string, unknown>
+  return { editable: editable === true, kind: typeof kind === 'string' ? kind : '', mode: typeof mode === 'string' ? mode : '' }
+}
+
+/** The keyboard the proxy should ask for: the page field's own inputmode first, else by type. */
+export function keyboardHints(focus: FieldFocus): { inputMode: string; enterKeyHint: string } {
+  const byKind: Record<string, string> = { number: 'decimal', tel: 'tel', email: 'email', url: 'url', search: 'search' }
+  const inputMode = focus.mode && focus.mode !== 'none' ? focus.mode : byKind[focus.kind] ?? 'text'
+  const enterKeyHint = focus.kind === 'textarea' || focus.kind === 'frame' ? 'enter' : focus.kind === 'search' ? 'search' : 'go'
+  return { inputMode, enterKeyHint }
+}
+
+/** The wire caps typed text at 64 characters an event (`takeover.MAX_TEXT_CHARS`). */
+export const TEXT_CHUNK = 64
+
+/** Committed text as keyless text events (`Input.insertText`), split to the wire cap. */
+export function textToEvents(text: string): BrowserInputEvent[] {
+  const out: BrowserInputEvent[] = []
+  const chars = Array.from(text)
+  for (let i = 0; i < chars.length; i += TEXT_CHUNK) {
+    out.push({ type: 'key', action: 'press', key: '', text: chars.slice(i, i + TEXT_CHUNK).join(''), modifiers: 0 })
+  }
+  return out
+}
+
+function namedKey(key: string, code: string): BrowserInputEvent[] {
+  return [
+    { type: 'key', action: 'down', key, code, modifiers: 0 },
+    { type: 'key', action: 'up', key, code, modifiers: 0 },
+  ]
+}
+
+/**
+ * A `beforeinput` on the proxy as wire events, or `null` to let the proxy take
+ * it (a composition in progress: the IME owns the text until it commits).
+ */
+export function beforeInputToEvents(inputType: string, data: string | null, composing: boolean): BrowserInputEvent[] | null {
+  if (composing || inputType === 'insertCompositionText') return null
+  switch (inputType) {
+    case 'insertText':
+    case 'insertReplacementText':
+    case 'insertFromPaste':
+    case 'insertFromDrop':
+      return data ? textToEvents(data) : []
+    case 'insertLineBreak':
+    case 'insertParagraph':
+      return namedKey('Enter', 'Enter')
+    case 'deleteContentBackward':
+    case 'deleteWordBackward':
+      return namedKey('Backspace', 'Backspace')
+    case 'deleteContentForward':
+    case 'deleteWordForward':
+      return namedKey('Delete', 'Delete')
+    default:
+      return []
+  }
+}
+
+export interface ProxyKeyLike extends KeyLike {
+  isComposing?: boolean
+  keyCode?: number
+}
+
+/**
+ * Whether a key down on the proxy goes to the page as a KEY. Printable keys do
+ * not: their character arrives as `beforeinput` and is sent as text, so sending
+ * the key too would type it twice. Neither does an IME's placeholder key
+ * (`Unidentified`/`Process`, keyCode 229, Android's soft keyboard for every
+ * key): its `beforeinput` says what it did. Named keys (Backspace on iOS, Enter,
+ * Tab, arrows) and Ctrl/Meta chords do.
+ */
+export function proxyKeyIsForwarded(e: ProxyKeyLike): boolean {
+  if (e.isComposing || e.keyCode === 229 || e.key === 'Unidentified' || e.key === 'Process' || e.key === 'Dead') return false
+  if (printable(e.key) && !(modifiersOf(e) & (MOD_CTRL | MOD_META))) return false
+  return true
 }
 
 /** Keys the card keeps for itself while the person is in control. */

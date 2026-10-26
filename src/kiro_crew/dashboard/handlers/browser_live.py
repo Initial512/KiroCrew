@@ -214,7 +214,13 @@ async def api_browser_input_event(request: web.Request) -> web.Response:
         event = body.get("event")
         if not isinstance(event, dict):
             raise InputEventError("invalid_input_event", "event must be an object")
-        return {"sent": await hub.input_event(key, event)}
+        sent = await hub.input_event(key, event)
+        out: dict[str, Any] = {"sent": sent}
+        # After a release, say what took focus: a phone raises its keyboard
+        # for a field (and the digit pad for a number box) and only then.
+        if event.get("type") == "mouse" and event.get("action") in ("up", "click"):
+            out["focus"] = await hub.focused_field(key)
+        return out
 
     return await _run(request, "browser_input_event", act)
 

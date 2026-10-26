@@ -28,6 +28,101 @@ AGENT = "agent"
 #: Error code an agent op returns while the lock is held.
 USER_IN_CONTROL = "user_in_control"
 
+#: Windows virtual-key codes by DOM ``code``. ``Input.dispatchKeyEvent`` leaves
+#: ``keyCode`` at 0 without one, and Chrome runs a key's editing command
+#: (Backspace, Delete, arrows, Enter) from it: with 0 Backspace deletes nothing,
+#: and a page that filters keys by ``keyCode`` (a digits-only field, a one-time
+#: code box) drops every digit.
+_VK_NAMED = {
+    "Backspace": 8,
+    "Tab": 9,
+    "Enter": 13,
+    "NumpadEnter": 13,
+    "ShiftLeft": 16,
+    "ShiftRight": 16,
+    "ControlLeft": 17,
+    "ControlRight": 17,
+    "AltLeft": 18,
+    "AltRight": 18,
+    "Pause": 19,
+    "CapsLock": 20,
+    "Escape": 27,
+    "Space": 32,
+    "PageUp": 33,
+    "PageDown": 34,
+    "End": 35,
+    "Home": 36,
+    "ArrowLeft": 37,
+    "ArrowUp": 38,
+    "ArrowRight": 39,
+    "ArrowDown": 40,
+    "Insert": 45,
+    "Delete": 46,
+    "MetaLeft": 91,
+    "MetaRight": 92,
+    "ContextMenu": 93,
+    "NumpadMultiply": 106,
+    "NumpadAdd": 107,
+    "NumpadSubtract": 109,
+    "NumpadDecimal": 110,
+    "NumpadDivide": 111,
+    "Semicolon": 186,
+    "Equal": 187,
+    "Comma": 188,
+    "Minus": 189,
+    "Period": 190,
+    "Slash": 191,
+    "Backquote": 192,
+    "BracketLeft": 219,
+    "Backslash": 220,
+    "BracketRight": 221,
+    "Quote": 222,
+}
+#: The same, by DOM ``key``, for an event that came without a ``code``.
+_VK_BY_KEY = {
+    "Backspace": 8,
+    "Tab": 9,
+    "Enter": 13,
+    "Escape": 27,
+    " ": 32,
+    "PageUp": 33,
+    "PageDown": 34,
+    "End": 35,
+    "Home": 36,
+    "ArrowLeft": 37,
+    "ArrowUp": 38,
+    "ArrowRight": 39,
+    "ArrowDown": 40,
+    "Insert": 45,
+    "Delete": 46,
+}
+#: Text a named key types: Chrome inserts a line break or submits on ``\r``.
+_KEY_TEXT = {"Enter": "\r"}
+
+
+def virtual_key_code(key: str, code: str) -> int:
+    """The Windows virtual-key code for a DOM ``key``/``code`` pair, or 0.
+
+    A named ``key`` wins over the ``code``: Numpad2 with Num Lock off is
+    ``ArrowDown`` and must act as one.
+    """
+    if key in _VK_BY_KEY:
+        return _VK_BY_KEY[key]
+    if code in _VK_NAMED:
+        return _VK_NAMED[code]
+    if len(code) == 4 and code.startswith("Key") and "A" <= code[3] <= "Z":
+        return ord(code[3])
+    if len(code) == 6 and code.startswith("Digit") and code[5].isdigit():
+        return ord(code[5])
+    if len(code) == 7 and code.startswith("Numpad") and code[6].isdigit():
+        return 96 + int(code[6])
+    if code.startswith("F") and code[1:].isdigit() and 1 <= int(code[1:]) <= 24:
+        return 111 + int(code[1:])
+    if len(key) == 1 and key.isascii() and key.isalnum():
+        return ord(key.upper())
+    return 0
+
+
 #: Largest frame coordinate accepted; a 16k-wide frame is far past any ladder rung.
 MAX_COORD = 16_384
 #: Largest wheel delta per event.
@@ -223,16 +318,28 @@ def cdp_calls(event: InputEvent, scale: float = 1.0) -> list[tuple[str, dict[str
             calls.append(("Input.dispatchMouseEvent", {"type": "mousePressed", **p}))
             calls.append(("Input.dispatchMouseEvent", {"type": "mouseReleased", **p}))
         return calls
+    if not event.key and event.text:
+        # Text with no key behind it: what a phone's soft keyboard or an IME
+        # commits. It goes in as typed, the way a paste would.
+        return [] if event.action == "up" else [("Input.insertText", {"text": event.text})]
     base_key: dict[str, Any] = {"modifiers": event.modifiers}
     if event.key:
         base_key["key"] = event.key
     if event.code:
         base_key["code"] = event.code
+    vk = virtual_key_code(event.key, event.code)
+    if vk:
+        base_key["windowsVirtualKeyCode"] = vk
+        base_key["nativeVirtualKeyCode"] = vk
+    if event.code.startswith("Numpad"):
+        base_key["location"] = 3
     down: dict[str, Any] = {**base_key}
-    if event.text:
+    # Ctrl/Meta chords type nothing (Ctrl+A selects); Enter types "\r" otherwise.
+    text = event.text or ("" if event.modifiers & 6 else _KEY_TEXT.get(event.key, ""))
+    if text:
         down["type"] = "keyDown"
-        down["text"] = event.text
-        down["unmodifiedText"] = event.text
+        down["text"] = text
+        down["unmodifiedText"] = text
     else:
         down["type"] = "rawKeyDown"
     up = {"type": "keyUp", **base_key}
@@ -258,6 +365,56 @@ async def dispatch_input(
     return len(calls)
 
 
+#: The page's focused field after a press: its kind, never its value. Follows
+#: open shadow roots and same-origin frames; a cross-origin frame cannot be
+#: looked into and answers "frame" (it may well hold the field the person
+#: tapped, so a phone keeps its keyboard up for it).
+_FOCUS_JS = (
+    "(()=>{let e=document.activeElement;"
+    "for(let i=0;i<8&&e;i++){"
+    "if(e.shadowRoot&&e.shadowRoot.activeElement){e=e.shadowRoot.activeElement;continue;}"
+    "if(e.tagName==='IFRAME'||e.tagName==='FRAME'){let d=null;"
+    "try{d=e.contentDocument;}catch(_){d=null;}"
+    "if(!d)return {editable:true,kind:'frame',mode:''};"
+    "if(d.activeElement&&d.activeElement!==d.body){e=d.activeElement;continue;}}"
+    "break;}"
+    "if(!e)return {editable:false,kind:'',mode:''};"
+    "const mode=(e.getAttribute&&e.getAttribute('inputmode'))||'';"
+    "if(e.isContentEditable)return {editable:true,kind:'text',mode:mode};"
+    "if(e.tagName==='TEXTAREA')return {editable:!e.readOnly&&!e.disabled,kind:'textarea',mode:mode};"
+    "if(e.tagName==='INPUT'){const t=(e.type||'text').toLowerCase();"
+    "return {editable:!e.readOnly&&!e.disabled&&FIELDS.includes(t),kind:t,mode:mode};}"
+    "return {editable:false,kind:'',mode:''};})()"
+).replace("FIELDS", "['text','search','url','tel','email','password','number']")
+
+#: The kinds and ``inputmode`` values the card may hear back; anything else is "".
+_FOCUS_KINDS = frozenset(
+    {"text", "search", "url", "tel", "email", "password", "number", "textarea", "frame"}
+)
+_INPUT_MODES = frozenset({"text", "decimal", "numeric", "tel", "search", "email", "url", "none"})
+
+
+async def focused_field(relay: Relay, session_id: str) -> dict[str, Any]:
+    """Whether the page's focused element takes typing, and what kind it is.
+
+    The card asks after a press so a phone can raise its keyboard only for a
+    field (and the right keyboard: digits for a number box). Answers
+    ``{"editable": bool, "kind": str, "mode": str}``; any failure is "not editable".
+    """
+    try:
+        reply = await relay.send(
+            "Runtime.evaluate", {"expression": _FOCUS_JS, "returnByValue": True}, session_id
+        )
+        value = reply.get("result", {}).get("value")
+    except Exception:  # noqa: BLE001 - a focus probe never fails the input it follows
+        value = None
+    if not isinstance(value, dict):
+        return {"editable": False, "kind": "", "mode": ""}
+    kind = value.get("kind") if value.get("kind") in _FOCUS_KINDS else ""
+    mode = value.get("mode") if value.get("mode") in _INPUT_MODES else ""
+    return {"editable": value.get("editable") is True and bool(kind), "kind": kind, "mode": mode}
+
+
 __all__ = [
     "AGENT",
     "InputEvent",
@@ -267,5 +424,7 @@ __all__ = [
     "USER_IN_CONTROL",
     "cdp_calls",
     "dispatch_input",
+    "focused_field",
     "parse_input_event",
+    "virtual_key_code",
 ]

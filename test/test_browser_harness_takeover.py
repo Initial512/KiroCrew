@@ -117,17 +117,120 @@ def test_a_key_press_is_key_down_with_text_then_key_up() -> None:
                 "modifiers": 0,
                 "key": "a",
                 "code": "KeyA",
+                "windowsVirtualKeyCode": 65,
+                "nativeVirtualKeyCode": 65,
                 "type": "keyDown",
                 "text": "a",
                 "unmodifiedText": "a",
             },
         ),
-        ("Input.dispatchKeyEvent", {"type": "keyUp", "modifiers": 0, "key": "a", "code": "KeyA"}),
+        (
+            "Input.dispatchKeyEvent",
+            {
+                "type": "keyUp",
+                "modifiers": 0,
+                "key": "a",
+                "code": "KeyA",
+                "windowsVirtualKeyCode": 65,
+                "nativeVirtualKeyCode": 65,
+            },
+        ),
     ]
     raw = tk.parse_input_event({"type": "key", "key": "Escape", "action": "down"})
     assert tk.cdp_calls(raw) == [
-        ("Input.dispatchKeyEvent", {"modifiers": 0, "key": "Escape", "type": "rawKeyDown"})
+        (
+            "Input.dispatchKeyEvent",
+            {
+                "modifiers": 0,
+                "key": "Escape",
+                "windowsVirtualKeyCode": 27,
+                "nativeVirtualKeyCode": 27,
+                "type": "rawKeyDown",
+            },
+        )
     ]
+
+
+@pytest.mark.parametrize(
+    ("key", "code", "vk"),
+    [
+        ("1", "Digit1", 49),
+        ("!", "Digit1", 49),
+        ("2", "Numpad2", 98),
+        ("ArrowDown", "Numpad2", 40),
+        ("Backspace", "Backspace", 8),
+        ("Delete", "Delete", 46),
+        ("Enter", "NumpadEnter", 13),
+        ("ArrowLeft", "ArrowLeft", 37),
+        ("-", "Minus", 189),
+        ("F5", "F5", 116),
+        ("Backspace", "", 8),
+        ("7", "", 55),
+        ("é", "", 0),
+    ],
+)
+def test_every_key_carries_its_virtual_key_code(key: str, code: str, vk: int) -> None:
+    # Without it keyCode reads 0: Backspace deletes nothing and a page that
+    # filters by keyCode (a digits-only field) drops every digit.
+    assert tk.virtual_key_code(key, code) == vk
+
+
+def test_a_digit_and_a_numpad_digit_type_with_their_codes() -> None:
+    top = tk.cdp_calls(
+        tk.parse_input_event(
+            {"type": "key", "action": "down", "key": "1", "code": "Digit1", "text": "1"}
+        )
+    )
+    pad = tk.cdp_calls(
+        tk.parse_input_event(
+            {"type": "key", "action": "down", "key": "1", "code": "Numpad1", "text": "1"}
+        )
+    )
+    assert top[0][1]["windowsVirtualKeyCode"] == 49 and top[0][1]["text"] == "1"
+    assert pad[0][1]["windowsVirtualKeyCode"] == 97 and pad[0][1]["location"] == 3
+
+
+def test_enter_types_a_line_break_unless_a_chord() -> None:
+    down = tk.cdp_calls(
+        tk.parse_input_event({"type": "key", "action": "down", "key": "Enter", "code": "Enter"})
+    )
+    assert down[0][1]["type"] == "keyDown" and down[0][1]["text"] == "\r"
+    chord = tk.cdp_calls(
+        tk.parse_input_event(
+            {"type": "key", "action": "down", "key": "Enter", "code": "Enter", "modifiers": 4}
+        )
+    )
+    assert chord[0][1]["type"] == "rawKeyDown" and "text" not in chord[0][1]
+
+
+def test_keyless_text_is_inserted_as_typed() -> None:
+    # What a phone keyboard or an IME commits: no key behind it.
+    ev = tk.parse_input_event({"type": "key", "action": "press", "key": "", "text": "hello"})
+    assert tk.cdp_calls(ev) == [("Input.insertText", {"text": "hello"})]
+    up = tk.parse_input_event({"type": "key", "action": "up", "key": "", "text": "x"})
+    assert tk.cdp_calls(up) == []
+
+
+@pytest.mark.asyncio
+async def test_focused_field_reports_kind_never_value_and_bounds_the_reply() -> None:
+    relay = FakeRelay()
+    relay.answers["Runtime.evaluate"] = {
+        "result": {"value": {"editable": True, "kind": "number", "mode": "numeric"}}
+    }
+    assert await tk.focused_field(relay, SESSION) == {
+        "editable": True,
+        "kind": "number",
+        "mode": "numeric",
+    }
+    method, params, sid = relay.calls[0]
+    assert method == "Runtime.evaluate" and sid == SESSION and params["returnByValue"] is True
+    assert ".value" not in params["expression"]
+    relay.answers["Runtime.evaluate"] = {
+        "result": {"value": {"editable": True, "kind": "<script>", "mode": "x"}}
+    }
+    assert await tk.focused_field(relay, SESSION) == {"editable": False, "kind": "", "mode": ""}
+    relay.fail.add("Runtime.evaluate")
+    assert await tk.focused_field(relay, SESSION) == {"editable": False, "kind": "", "mode": ""}
 
 
 @pytest.mark.asyncio
