@@ -11,6 +11,7 @@ one reads, imports and patches as ``kiro_crew.work_ledger.<name>``.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -85,7 +86,14 @@ ACCEPTANCE_READ_FIELDS: dict[str, tuple[str, ...]] = {
     "file": ("path", "exists"),
     "human_approval": (),
     "cmd": (),
+    "edition_check": ("check", "ref"),
 }
+
+#: ``accept_eval.py``'s own ``edition_check`` field patterns, mirrored so a bar it
+#: can only answer ``error`` to is not called concrete. Applied with ``fullmatch``,
+#: as there. A test pins both equal to the script's.
+ACCEPTANCE_CHECK_NAME = re.compile(r"[a-z][a-z0-9-]{0,31}")
+ACCEPTANCE_CHECK_REF = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 
 #: The ``kind`` values that script dispatches on at all. Anything else is an error-only
 #: spec (its closing ``return ("error", f"unknown accept kind ...")``), so it is not

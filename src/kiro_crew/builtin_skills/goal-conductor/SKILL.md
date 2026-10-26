@@ -62,6 +62,12 @@ A candidate qualifies only if **all three** hold:
    green via `gh`; always set `repo` to `owner/name` — without it `gh` resolves
    the PR number against whatever checkout the evaluator runs in, which can be
    another repository's PR, and outside a checkout it cannot be evaluated),
+   `edition_check` (`{"kind": "edition_check", "check": "<name>", "ref":
+   "<id>"}`: a check an installed edition provides, for work that lands
+   somewhere this evaluator cannot read itself, such as an edition's own code
+   review system; the check names are the edition's to document. With no
+   edition providing the check it answers `error`, and a check that says a
+   person must decide answers `refused`),
    `file` (a path existing), or `human_approval` (the user accepts it —
    legitimate for design reviews and go/no-go gates, but never
    machine-evaluated). **There is deliberately no "run this command" kind**, so
@@ -805,7 +811,8 @@ what the composer renders:
   and `patrol_budget.py`; every call is
   audit-logged and every call prompts. The evaluator accepts **no command, argv
   array, or shell string from a spec** — it builds every argv it runs from a
-  fixed template, so `pr_checks` becomes `gh pr checks <n>` and nothing else
+  fixed template, so `pr_checks` becomes `gh pr checks <n>`, `edition_check`
+  becomes `kirocrew acceptance-check --json <check> <ref>`, and nothing else
   executes. That is deliberate and load-bearing: this script is invoked as an
   approved wrapper, so a spec that could name a command would turn it into a
   general way to run one, and Kiro Crew's denied-command floor cannot see inside
