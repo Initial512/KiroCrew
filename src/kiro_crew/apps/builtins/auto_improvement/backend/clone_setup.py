@@ -47,6 +47,7 @@ from kiro_crew.subprocess_utf8 import UTF8_TEXT
 from ..profiles import GITHUB_HOSTS as _GITHUB_HOSTS
 from ..profiles.gitlab_repo.glab_cli import GITLAB_SAAS_HOSTS as _GITLAB_SAAS_HOSTS
 from ..profiles.gitlab_repo.glab_cli import glab_prefers_ssh as _glab_prefers_ssh
+from ..profiles.gitlab_repo.glab_cli import host_pinned_env as _glab_host_pinned_env
 from ..spine.git_safety import GIT_SAFE_CONFIG, hook_off_args, require_pinned
 
 #: Alias the ONE shared safe-config so this helper cannot drift from the others (the
@@ -959,13 +960,24 @@ def _setup_safe_clone(url: str, scratch_root: Path, *, timeout_s: int = 300) -> 
     # parent (the scratch root, created above) is named as ``cwd``; the operand is made
     # absolute so it is not re-resolved against that cwd.
     dest_where = _git_cwd(dest)
+    # The credential helper belongs to the target's forge: `glab` holds GitLab logins,
+    # `gh` GitHub ones. Global/system git config is disabled above, so this one helper
+    # is the only way a private https clone authenticates. The glab helper runs under
+    # the same host pin as every other glab child, so an ambient gitlab.com token never
+    # answers a self-managed host's credential request.
+    clone_env = _git_env(network_protocol=protocol)
+    if spec.provider == PROVIDER_GITLAB:
+        helper = "credential.helper=!glab auth git-credential"
+        clone_env = _glab_host_pinned_env(clone_env, spec.host)
+    else:
+        helper = "credential.helper=!gh auth git-credential"
     try:
         proc = subprocess.run(
             [
                 "git",
                 *_GIT_SAFE_CONFIG,
                 "-c",
-                "credential.helper=!gh auth git-credential",
+                helper,
                 "clone",
                 "--origin",
                 "origin",
@@ -975,7 +987,7 @@ def _setup_safe_clone(url: str, scratch_root: Path, *, timeout_s: int = 300) -> 
             capture_output=True,
             timeout=timeout_s,
             shell=False,
-            env=_git_env(network_protocol=protocol),
+            env=clone_env,
             cwd=os.path.dirname(dest_where),
             **UTF8_TEXT,
         )

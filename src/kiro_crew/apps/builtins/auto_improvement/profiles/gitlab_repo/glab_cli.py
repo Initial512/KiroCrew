@@ -45,8 +45,17 @@ def glab_env(host: str) -> dict[str, str]:
     it. An empty ``host`` also leaves ``GITLAB_HOST`` unset (fail closed: no token, no
     chosen host).
     """
+    return host_pinned_env(dict(os.environ), host)
+
+
+def host_pinned_env(base: dict[str, str], host: str) -> dict[str, str]:
+    """``base`` with the same host pin and token fence :func:`glab_env` applies.
+
+    For a caller that builds its own environment first (the clone's scrubbed git
+    environment, whose ``glab auth git-credential`` helper is a ``glab`` child too).
+    """
     pinned = canonical_gitlab_host(host)
-    env = {k: v for k, v in os.environ.items() if k not in _HOST_STEERING_ENV}
+    env = {k: v for k, v in base.items() if k not in _HOST_STEERING_ENV}
     if not gitlab_ambient_token_allowed(pinned):
         for key in GITLAB_SAAS_TOKEN_ENV:
             env.pop(key, None)

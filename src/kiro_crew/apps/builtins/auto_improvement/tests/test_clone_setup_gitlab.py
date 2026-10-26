@@ -465,3 +465,64 @@ class TestDepsProviderSwitch:
         self._cfg(target_url="https://gl.corp.example/g/p")
         report = deps.check_deps()
         assert report["blocking"] == ["glab"]
+
+
+class TestTheCloneUsesTheTargetForgesCredentialHelper:
+    """A private https clone authenticates only through the one helper the clone names.
+
+    Global/system git config is disabled for the clone, so a GitLab target cloned with
+    the ``gh`` helper has no way to authenticate. The spawn is captured, not run.
+    """
+
+    @pytest.fixture
+    def captured(self, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+        seen: dict[str, Any] = {}
+
+        def _fake_run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess:
+            if "clone" in argv:
+                seen["argv"] = argv
+                seen["env"] = kwargs.get("env") or {}
+            return subprocess.CompletedProcess(argv, 1, "", "fatal: stub")
+
+        monkeypatch.setattr(clone_setup.subprocess, "run", _fake_run)
+        monkeypatch.setenv("GITLAB_TOKEN", "glpat-ambient-saas-token")
+        monkeypatch.setenv("GITLAB_HOST", "steer.example")
+        return seen
+
+    @staticmethod
+    def _helper(argv: list[str]) -> str:
+        return next(a for a in argv if a.startswith("credential.helper="))
+
+    def test_a_gitlab_com_target_uses_glab(
+        self, no_dns, https_transport, captured, tmp_path
+    ) -> None:
+        _result, err = clone_setup.setup_safe_clone(
+            "https://gitlab.com/group/project", tmp_path / "scratch"
+        )
+        assert "git clone failed" in err
+        assert self._helper(captured["argv"]) == "credential.helper=!glab auth git-credential"
+        assert captured["env"]["GITLAB_HOST"] == "gitlab.com"
+        assert captured["env"]["GITLAB_TOKEN"] == "glpat-ambient-saas-token"
+
+    def test_a_self_managed_target_never_sees_the_saas_token(
+        self, no_dns, https_transport, allowlist, captured, tmp_path
+    ) -> None:
+        allowlist("gl.corp.example:8443")
+        _result, err = clone_setup.setup_safe_clone(
+            "https://gl.corp.example:8443/team/svc", tmp_path / "scratch"
+        )
+        assert "git clone failed" in err
+        assert self._helper(captured["argv"]) == "credential.helper=!glab auth git-credential"
+        assert captured["env"]["GITLAB_HOST"] == "gl.corp.example:8443"
+        assert "GITLAB_TOKEN" not in captured["env"]
+
+    def test_a_github_target_keeps_the_gh_helper(
+        self, no_dns, https_transport, captured, tmp_path
+    ) -> None:
+        _result, err = clone_setup.setup_safe_clone(
+            "https://github.com/owner/repo", tmp_path / "scratch"
+        )
+        assert "git clone failed" in err
+        assert self._helper(captured["argv"]) == "credential.helper=!gh auth git-credential"
+        # The GitHub path is unchanged: no GitLab host pin is applied to its env.
+        assert captured["env"]["GITLAB_HOST"] == "steer.example"
