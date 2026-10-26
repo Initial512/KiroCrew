@@ -17,6 +17,7 @@ from kiro_crew import __version__ as _local_version
 from kiro_crew import shutdown_event
 from kiro_crew.constants import crew_log_enabled
 from kiro_crew.dashboard.chat_utils import effective_session_key, subagent_event_slot
+from kiro_crew.dashboard.kiro_relay.caller import RELAY_TEAMMATE_WS_FLAG, is_relay_teammate
 from kiro_crew.dashboard.origin import check_origin
 from kiro_crew.dashboard.slot_retention import note_foreground
 from kiro_crew.dashboard.state import (
@@ -974,6 +975,7 @@ async def _serve_ws(
     # False and ``_send_ws_all`` keeps its deny-by-default behaviour.
     ws["_app"] = ws_app
     ws["_is_dashboard_user"] = request.get("is_dashboard_user", False)
+    ws[RELAY_TEAMMATE_WS_FLAG] = is_relay_teammate(request)
     ws["_allowed_events"] = allowed_events
     # A tab whose bundle applies ``slot_patch`` frames says so in ``?caps=``;
     # without the declaration (an older bundle, a companion window, an app
