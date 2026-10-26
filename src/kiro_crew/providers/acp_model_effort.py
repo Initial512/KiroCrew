@@ -278,9 +278,9 @@ def _resolve_effort(self: AcpProvider) -> str | None:
     """
     # The fold the WRITE path takes, handed in so it runs BEFORE the
     # advertised-list check rather than after it. ``change_effort`` admits any
-    # level the dynamic validation set knows, so a stored ``max`` on a harness
-    # whose ceiling is ``xhigh`` is this harness's ``xhigh`` -- and a filter
-    # that ran first would drop the very level the live push applied.
+    # level the dynamic validation set knows, so a stored level a harness spells
+    # differently must be checked in that harness's spelling -- a filter that
+    # ran first would drop the very level the live push applied.
     return resolve_effort_for_model(
         self._effort_model,
         slot_overrides=self._effort_per_model,
