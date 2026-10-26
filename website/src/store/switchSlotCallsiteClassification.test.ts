@@ -40,6 +40,7 @@ const PINNED: Record<string, Counts> = {
   'src/components/ImportSessionItem.tsx': { announced: 1, keepTarget: 1, plain: 0, reason: 'on upload the just-imported slot is new, so a 404 is a create/fetch race (#6309); the shell notice\'s later Open announces' },
   'src/components/commandPalette/providers/recentsProvider.ts': { announced: 1, keepTarget: 0, plain: 0, reason: 'palette recents row announces' },
   'src/components/notifications/NotificationDetailPanel.tsx': { announced: 3, keepTarget: 0, plain: 0, reason: 'go-to-chat buttons announce; the two to-chat hand-offs open through openCreatedSlot' },
+  'src/hooks/useFrameOpenSession.ts': { announced: 1, keepTarget: 0, plain: 0, reason: 'the org-chart card opens a LISTED worker session the way that row\'s own click does, so it announces' },
   'src/hooks/useKeyboardShortcuts.ts': { announced: 1, keepTarget: 0, plain: 0, reason: 'keyboard session jump announces' },
   'src/hooks/useSceneInteraction.tsx': { announced: 1, keepTarget: 0, plain: 0, reason: 'worlds-scene click announces' },
   'src/hooks/useSessionActions.ts': { announced: 0, keepTarget: 0, plain: 1, reason: 'switches to a just-created slot (data.key)' },
