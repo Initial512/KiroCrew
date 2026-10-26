@@ -9624,6 +9624,10 @@
       "tooltip": "Diese Einstellung kann sich nicht ändern, während {{productName}} läuft. Der gespeicherte Wert bleibt erhalten und gilt beim nächsten Neustart von {{productName}} (Einstellungen → Über, oder das Terminal, aus dem du es gestartet hast).",
       "schema_unavailable": "Es konnte nicht geprüft werden, ob diese Einstellung einen Neustart braucht."
     },
+    "lockedByPolicyBadge": {
+      "label": "Per Richtlinie gesperrt",
+      "tooltip": "Die Richtlinie deiner Organisation steuert diese Einstellung. Eine Änderung hier hat keine Wirkung."
+    },
     "directDeploy": {
       "deploy_via_agent": "Über Agent bereitstellen",
       "deploy_as_permanent": "Dauerhaft bereitstellen",

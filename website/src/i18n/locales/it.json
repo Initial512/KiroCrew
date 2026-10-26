@@ -9767,6 +9767,10 @@
       "tooltip": "Questa impostazione non può cambiare mentre {{productName}} è in esecuzione. Il valore salvato viene conservato e applicato al prossimo riavvio di {{productName}} (Impostazioni → Informazioni, oppure il terminale da cui lo hai avviato).",
       "schema_unavailable": "Impossibile verificare se questa impostazione richiede un riavvio."
     },
+    "lockedByPolicyBadge": {
+      "label": "Bloccato dai criteri",
+      "tooltip": "I criteri della tua organizzazione controllano questa impostazione. Una modifica fatta qui non ha effetto."
+    },
     "directDeploy": {
       "deploy_via_agent": "Distribuisci tramite agente",
       "deploy_as_permanent": "Distribuisci come permanente",

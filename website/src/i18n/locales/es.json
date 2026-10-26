@@ -9767,6 +9767,10 @@
       "tooltip": "Este ajuste no puede cambiar mientras {{productName}} se está ejecutando. El valor guardado se conserva y se aplica la próxima vez que {{productName}} se reinicie (Ajustes → Acerca de, o la terminal desde la que lo iniciaste).",
       "schema_unavailable": "No se pudo comprobar si este ajuste requiere reiniciar."
     },
+    "lockedByPolicyBadge": {
+      "label": "Bloqueado por política",
+      "tooltip": "La política de tu organización controla este ajuste. Un cambio hecho aquí no tiene efecto."
+    },
     "directDeploy": {
       "deploy_via_agent": "Implementar con el agente",
       "deploy_as_permanent": "Implementar como permanente",

@@ -9481,6 +9481,10 @@
       "tooltip": "이 설정은 {{productName}}이(가) 실행 중인 동안에는 변경할 수 없습니다. 저장된 값은 유지되며 {{productName}}을(를) 다음에 다시 시작할 때 적용됩니다(설정 → 정보, 또는 실행한 터미널에서).",
       "schema_unavailable": "이 설정에 다시 시작이 필요한지 확인할 수 없습니다."
     },
+    "lockedByPolicyBadge": {
+      "label": "정책으로 잠김",
+      "tooltip": "이 설정은 조직의 정책이 관리합니다. 여기서 변경해도 적용되지 않습니다."
+    },
     "directDeploy": {
       "deploy_via_agent": "에이전트로 배포",
       "deploy_as_permanent": "영구 배포",

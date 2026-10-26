@@ -9767,6 +9767,10 @@
       "tooltip": "Ce réglage ne peut pas changer pendant que {{productName}} est en cours d'exécution. La valeur enregistrée est conservée et s'applique au prochain redémarrage de {{productName}} (Réglages → À propos, ou le terminal depuis lequel vous l'avez lancé).",
       "schema_unavailable": "Impossible de vérifier si ce réglage nécessite un redémarrage."
     },
+    "lockedByPolicyBadge": {
+      "label": "Verrouillé par la politique",
+      "tooltip": "La politique de ton organisation contrôle ce paramètre. Une modification faite ici n’a aucun effet."
+    },
     "directDeploy": {
       "deploy_via_agent": "Déployer via l'agent",
       "deploy_as_permanent": "Déployer en permanent",

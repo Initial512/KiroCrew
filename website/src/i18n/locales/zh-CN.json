@@ -9481,6 +9481,10 @@
       "tooltip": "{{productName}} 运行期间无法更改此设置。已保存的值会保留，并在 {{productName}} 下次重启后应用（设置 → 关于，或启动它的终端）。",
       "schema_unavailable": "无法检查此设置是否需要重启。"
     },
+    "lockedByPolicyBadge": {
+      "label": "已被策略锁定",
+      "tooltip": "此设置由你所在组织的策略控制。在这里更改不会生效。"
+    },
     "directDeploy": {
       "deploy_via_agent": "通过智能体部署",
       "deploy_as_permanent": "部署为永久",

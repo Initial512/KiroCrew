@@ -1727,6 +1727,8 @@ chat-mirror links, the Slack backfill's dashboard markers and the `send_message`
 Open-session button (`urls.tunnel_origin_if_opted_in` / `urls.dashboard_link_origin`);
 only `send_dashboard_link` keeps the host:port fallback.
 
+An enterprise build reads the opt-in as `false` (`urls.slack_tunnel_opt_in`, the `tunnel` row of `edition_locks.UNKEYED_LOCKS`), so it neither picks a tunnel origin nor reaches the on-demand provisioning seam below; see platform-context.md.
+
 The setting is independent of `tunnel.enabled` (which controls whether the
 tunnel itself runs). A user may run a tunnel for direct browser access while
 keeping Slack links pointed at the local origin.
