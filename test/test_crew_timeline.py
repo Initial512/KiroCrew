@@ -483,6 +483,46 @@ def test_a_lane_with_no_model_names_the_gateway_default(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_a_closed_root_is_drawn_from_saved_data_like_the_list_is(_route, monkeypatch):
+    """The Timeline answers a closed known root as the worker list does: the
+    conductor's lane from its saved transcript, first, then the live workers that
+    still name it, then the closed ones. Not a 404 the List does not give."""
+    crew_mode.note_roots(["root"])
+    # The root's tab is gone; w1 is still open and still its worker.
+    rows = [_slot_row("w1", created_by="root"), _slot_row("other")]
+    windows = {"w1": [_row("user", 2, "[sent by session root via session_send]\n\nhi")]}
+
+    class _Log(_SavedLog):
+        def get_metadata(self, key: str) -> dict[str, Any]:
+            return {"title": "Toy Flag Review", "agent": "kirocrew-conductor"} if key == "dashboard:root" else {}
+
+        def read_messages_chained_tail(self, key: str, limit: int) -> list[dict[str, Any]]:
+            self.tail_reads.append((key, limit))
+            if key == "dashboard:root":
+                return [_row("user", 0, "go"), _send(1, "w1", "s")]
+            return []
+
+    log = _Log({}, [])
+    state = _state(rows, windows, log)
+    state._slots = {"w1": object()}
+    resp = await _route.api_crew_timeline(_get(state, "root"))
+    assert resp.status == 200, resp.text
+    body = json.loads(resp.text)
+    assert [lane["key"] for lane in body["lanes"]] == ["root", "w1", "gone"]
+    assert [lane["role"] for lane in body["lanes"]] == ["conductor", "worker", "worker"]
+    root_lane = body["lanes"][0]
+    assert (root_lane["status"], root_lane["record"], root_lane["title"]) == ("closed", True, "Toy Flag Review")
+    assert [bar["kind"] for bar in root_lane["segments"]] == ["tool"]
+    # The saved send still pairs with the live worker's seed row.
+    assert body["handoffs"] == [{"from": "root", "to": "w1", "start": _at(1), "end": _at(2)}]
+    # A session that is no known root is still refused, and so is a live one that is no root.
+    assert (await _route.api_crew_timeline(_get(state, "nope"))).status == 404
+    live = _state([_slot_row("root")], {}, log)
+    live._slots = {"root": object()}
+    assert (await _route.api_crew_timeline(_get(live, "root"))).status == 404
+
+
+@pytest.mark.asyncio
 async def test_the_route_refuses_a_session_that_is_not_a_crew_mode_root(_route):
     resp = await _route.api_crew_timeline(_get(_state([_slot_row("other")], {}), "other"))
     assert resp.status == 404

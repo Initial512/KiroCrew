@@ -285,6 +285,30 @@ describe('CrewTimeline', () => {
     expect(onOpen).toHaveBeenLastCalledWith(gone.getAttribute('data-lane'), expect.any(String), true)
   })
 
+  it('draws a closed conductor first, under its saved title, and reopens it on click', async () => {
+    // What the route answers for a CLOSED known root: its own lane is closed and
+    // drawn from its saved transcript, as the worker list answers for that root.
+    api.crewTimeline.mockResolvedValue({
+      ...DONE,
+      lanes: [
+        lane('root-1', { title: 'Toy Flag Review', role: 'conductor', status: 'closed', model: '', model_source: 'default', record: true,
+          segments: [{ kind: 'tool', start: at(0), end: at(10), end_bound: 'next_row', label: '@x/session_send' }] }),
+        lane('w-1', { title: 'Welcome note', group: 'waiting' }),
+      ],
+    })
+    const onOpen = vi.fn()
+    renderWith(<CrewTimeline root="root-1" viewing="w-1" active onOpen={onOpen} />)
+    const lanes = await screen.findAllByTestId('crew-timeline-lane')
+    expect(lanes.map(l => l.getAttribute('data-lane'))).toEqual(['root-1', 'w-1'])
+    expect(within(lanes[0]).getByText('Conductor')).toBeInTheDocument()
+    expect(within(lanes[0]).getByTestId('crew-timeline-title')).toHaveTextContent('Toy Flag Review')
+    expect(within(lanes[0]).getAllByTestId('crew-timeline-bar')).toHaveLength(1)
+    fireEvent.click(within(lanes[0]).getByRole('button', { name: 'Reopen Toy Flag Review to read it' }))
+    expect(onOpen).toHaveBeenCalledWith('root-1', 'Toy Flag Review', true)
+    // The run is not finished: its open worker names the header.
+    expect(screen.getByTestId('crew-timeline-header')).toHaveTextContent('Waiting')
+  })
+
   it('says when it cannot be read', async () => {
     api.crewTimeline.mockRejectedValue(new Error('nope'))
     renderWith(<CrewTimeline root="root-1" viewing={null} active onOpen={vi.fn()} />)

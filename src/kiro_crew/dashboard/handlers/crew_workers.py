@@ -10,7 +10,7 @@ uses, so the worker's transcript shows it as the person's own message.
 Both are the side panel's, so both take the gate the root session's own dashboard
 read takes: app tokens are answered 404 and the caller must be the dashboard owner.
 Neither can reach a session outside the named root's own tree: the worker must be
-stamped with that root. The list also answers a CLOSED known root
+stamped with that root. The list and the timeline also answer a CLOSED known root
 (``crew_mode.known_roots``) from saved data, so a reload under a closed conductor
 still reads; steer and the approval card need a live Crew Mode root.
 
@@ -571,8 +571,11 @@ async def api_crew_timeline(request: web.Request) -> web.Response:
     then closed ones), each drawn from that session's own transcript window by
     :func:`kiro_crew.crew_timeline.derive_lane`. A closed worker carries the saved
     title the worker list shows and is drawn from the newest rows of its saved
-    transcript; ``record`` is false when none can be read. ``gaps`` names what the
-    transcript does not record, so the view can say it instead of drawing it.
+    transcript; ``record`` is false when none can be read. A CLOSED known root is
+    answered the same way, its own lane drawn from its saved transcript, so the
+    Timeline shows what the List shows under a closed conductor. ``gaps`` names
+    what the transcript does not record, so the view can say it instead of
+    drawing it.
     """
     refused = await _gate(request, "crew_mode.timeline")
     if refused is not None:
@@ -585,9 +588,15 @@ async def api_crew_timeline(request: web.Request) -> web.Response:
     root = request.match_info.get("slot", "")
     rows = _stamped_rows(state)
     root_row = _root_row(rows, root)
+    root_closed = False
     if root_row is None:
-        return _bad("not_crew_mode_root", "this session is not a Crew Mode root", status=404)
-    heads = [_lane_head(root_row, "conductor")]
+        # A closed root answers like the worker list does (``api_crew_workers``):
+        # its own lane is drawn from its saved transcript, so the Timeline under a
+        # closed conductor shows the same sessions the List does.
+        if root not in crew_mode.known_roots() or root in (getattr(state, "_slots", None) or {}):
+            return _bad("not_crew_mode_root", "this session is not a Crew Mode root", status=404)
+        root_closed = True
+    heads = [] if root_row is None else [_lane_head(root_row, "conductor")]
     heads.extend(_lane_head(row, "worker") for row in crew_mode.workers_of(rows, root))
     windows: list[list[dict[str, Any]]] = []
     for head in heads:
@@ -620,12 +629,12 @@ async def api_crew_timeline(request: web.Request) -> web.Response:
     live_keys = {str(row.get("key")) for row in rows}
     closed = _closed_workers(root, live_keys)
 
-    def closed_lanes() -> list[dict[str, Any]]:
+    def closed_lanes(keys: list[str], role: str) -> list[dict[str, Any]]:
         from kiro_crew.dashboard.chat_utils_display import _redact_for_display
 
-        names = _closed_titles(state, closed)
+        names = _closed_titles(state, keys)
         out: list[dict[str, Any]] = []
-        for key in closed:
+        for key in keys:
             title, agent = names.get(key, (_short_key(key), ""))
             saved = _closed_rows(state, key)
             # Drawn from its saved transcript like a live lane; with none left the
@@ -641,7 +650,7 @@ async def api_crew_timeline(request: web.Request) -> web.Response:
                         "agent": agent,
                         "model": "",
                         "model_source": MODEL_DEFAULT,
-                        "role": "worker",
+                        "role": role,
                         "status": STATUS_CLOSED,
                         "group": GROUP_DONE,
                         "running": False,
@@ -654,7 +663,10 @@ async def api_crew_timeline(request: web.Request) -> web.Response:
             )
         return out
 
-    lanes.extend(await asyncio.to_thread(closed_lanes))
+    if root_closed:
+        # The closed conductor's lane comes first, as a live one does.
+        lanes[:0] = await asyncio.to_thread(closed_lanes, [root], "conductor")
+    lanes.extend(await asyncio.to_thread(closed_lanes, closed, "worker"))
     no_record = any(lane.get("record") is False for lane in lanes)
     live = any(lane["running"] or lane["waiting"] for lane in lanes)
     # Off the event loop like the lane derivation: pairing scans every seed
