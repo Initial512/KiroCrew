@@ -1211,8 +1211,13 @@ persisted, because nothing outside one process orders by it.
 
 **The slot frame.** One kind, `slot_projection`, in two shapes. `{slot}` alone is the original
 growth signal and still means "re-read this slot". `{slot, fold, revision, value}` is what
-an eager advance sends. The client keeps the highest revision per (slot, fold), discards
-anything lower OR equal, and seeds its own cache from the value -- so the read is removed
+an eager advance of the `work` fold sends. Every other slot fold's advance is sent as
+`{slot, fold, revision}` with no value: the client caches only `work` by fold, so it
+would drop any other value and re-read the board either way, and a frame with no value
+takes that same path as the growth signal. The bus event keeps the whole value for every
+fold, so in-process subscribers are unaffected. For a valued frame the client keeps the
+highest revision per (slot, fold), discards anything lower OR equal, and seeds its own
+cache from the value -- so the read is removed
 rather than made cheaper. The seed never moves a cached value backwards: a REST read
 records no revision in the client's frame ledger, so a delayed frame can pass that
 ledger and still be older than what the cache holds, and then the held value stays --

@@ -78,6 +78,7 @@ from kiro_crew.dashboard.handlers.crew_log_scope import (
     _target_class_refusal,
     _workspace_refusal,
 )
+from kiro_crew.work_vocab import WORK_FOLD_NAME as _WORK_FOLD
 
 if TYPE_CHECKING:  # pragma: no cover - typing only, never imported at runtime
     from kiro_crew.crew_log.errors import CrewLogError
@@ -116,9 +117,16 @@ FRAME = "session_projection"
 #: run.
 #:
 #: ``{"slot": s, "fold": f, "revision": n, "value": {...}}`` is what an EAGER advance
-#: sends, and it carries the folded value so the client needs no re-read at all. The
-#: client keeps the highest ``revision`` per (slot, fold) and discards anything lower
-#: (:func:`kiro_crew.crew_log.projection.fold_slot_warm_revised` mints it).
+#: of the ``work`` fold sends, and it carries the folded value so the client needs no
+#: re-read at all. The client keeps the highest ``revision`` per (slot, fold) and
+#: discards anything lower (:func:`kiro_crew.crew_log.projection.fold_slot_warm_revised`
+#: mints it).
+#:
+#: Every OTHER slot fold's advance is sent as ``{"slot": s, "fold": f, "revision": n}``
+#: with no value. The browser caches only ``work`` by fold, so for any other fold it
+#: drops the value and re-reads the board either way; a valueless frame takes the
+#: same path (``takeFoldedSlotProjection`` reads it as the growth signal) without
+#: shipping a value per advance per tab that nothing reads.
 #:
 #: One frame kind rather than two, because the client already routes this one to the same
 #: query key the value belongs to, and a second channel would be a second place to keep
@@ -1025,16 +1033,23 @@ class CrewLogPublisher:
             logger.debug("session lineage push failed", exc_info=True)
 
     def _push_fold(self, slot: str, fold: str, revision: int, value: "dict[str, Any]") -> None:
-        """Broadcast one folded slot value. On the loop.
+        """Broadcast one slot fold's advance. On the loop.
+
+        Only the ``work`` fold's frame carries its value: it is the one fold the browser
+        seeds into a cache by fold. Every other slot fold is sent without ``value``,
+        which the browser reads as the growth signal and answers with the same
+        invalidations it runs for a valued frame of that fold (see :data:`SLOT_FRAME`).
+        The bus event itself is untouched, so in-process subscribers still get the
+        whole value.
 
         An empty room is still a broadcast, which costs the hub one membership check and
         keeps this path free of a second liveness rule to keep in step with
         :meth:`_watchers`.
         """
-        self._state.broadcast_ws_owners(
-            SLOT_FRAME,
-            {"slot": slot, "fold": fold, "revision": int(revision), "value": value},
-        )
+        data: dict[str, Any] = {"slot": slot, "fold": fold, "revision": int(revision)}
+        if fold == _WORK_FOLD:
+            data["value"] = value
+        self._state.broadcast_ws_owners(SLOT_FRAME, data)
 
     def _schedule_session(
         self, session_id: str, fold: str, revision: int, seq: int, value: "dict[str, Any]"
