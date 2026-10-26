@@ -279,6 +279,7 @@ class DispatchView:
     def dispatched_by(self, unit: str, root_slot: str) -> bool:
         """Whether *unit*'s session is *root_slot* or one it dispatched, transitively.
 
+
         Membership is what "this session was dispatched by that one" means: a
         conductor's slot appears above its child's slot and above its grandchild's.
         The walk stops at the first slot citing no creator or on a repeat, and it
@@ -324,7 +325,15 @@ _TREE: Final[session_tree.SessionTree] = session_tree.SessionTree()
 
 
 def dispatch_view(preferred: Iterable[str] = ()) -> DispatchView:
-    """One scan of the store as a :class:`DispatchView`. BLOCKING; runs off the loop.
+    """The store's lineage as a :class:`DispatchView`. BLOCKING; runs off the loop.
+
+    Served from the in-memory session tree projection (:func:`_projected_view`, an
+    identity-compare cache hit) when that projection is seeded for this store and
+    COMPLETE, and every unit *preferred* names is either held by it or has no log
+    on disk (one by-name probe each). Anything else -- unseeded, a failed or
+    incomplete seed, a named log the projection does not hold -- takes the scan
+    below, so the answer and its ``incomplete`` flag are the scan's own whenever
+    the projection cannot vouch for every edge.
 
     *preferred* names unit ids to admit FIRST, which the caller uses to put the
     units a request is actually about ahead of the scanner's cap.
@@ -344,6 +353,21 @@ def dispatch_view(preferred: Iterable[str] = ()) -> DispatchView:
     every dispatch test is therefore false, and which says so through
     ``incomplete`` instead of reading as a store that holds no lineage.
     """
+    preferred = tuple(preferred)
+    try:
+        held = _projected_view()
+    except Exception:
+        log_exception_text(
+            logger, logging.DEBUG, "session tree projection unreadable; scanning instead"
+        )
+        held = None
+    if held is not None and not held.incomplete and not _names_an_unheld_log(held, preferred):
+        return held
+    return _scanned_view(preferred)
+
+
+def _scanned_view(preferred: tuple[str, ...]) -> DispatchView:
+    """The dispatch view from one :class:`SessionTree` scan, the cold path."""
     try:
         reading = _TREE.reading(preferred)
     except Exception:
@@ -351,6 +375,97 @@ def dispatch_view(preferred: Iterable[str] = ()) -> DispatchView:
         return DispatchView(slot_of_unit={}, nodes={}, incomplete=True)
     slots = {record.sid: record.slot for record in reading.records if record.sid and record.slot}
     return DispatchView(slot_of_unit=slots, nodes=reading.nodes, incomplete=reading.incomplete)
+
+
+#: The last view folded from the session tree projection, keyed by the identity of
+#: the projection's own ``nodes`` object, which stays the same object until the
+#: projection's state moves. ``(key, view)`` or ``None``.
+_PROJECTED: "tuple[object, DispatchView] | None" = None
+_PROJECTED_LOCK: Final = threading.Lock()
+
+
+def _projected_view() -> "DispatchView | None":
+    """The dispatch view folded from the in-memory session tree, or ``None``.
+
+    ``None`` when the projection is not seeded for the store configured now; the
+    caller then scans, which is the cold path this replaces on every later request.
+    A hit costs one identity compare: the projection hands out the SAME ``nodes``
+    object until a unit is opened, adopted, released or removed, and only then is
+    the view folded again, once, from the records it holds.
+
+    Folded from the records ALONE -- no adoption or release decisions and no spawn
+    records -- because that is the reading the scan this replaces produced
+    (:meth:`~kiro_crew.crew_log.session_tree.SessionTree.reading` without edges),
+    and every consumer of this view decides a scope fence on it. Moving the fence
+    onto the decisions is a policy change this path does not make.
+    """
+    global _PROJECTED
+    from kiro_crew.crew_log.session_tree_projection import projection
+
+    tree = projection()
+    if not tree.seeded_for_current_store or tree.seed_given_up:
+        # Unseeded, or a failed seed's empty stand-in: an empty tree would refuse
+        # every grandchild, so this request scans as it did before.
+        return None
+    key = tree.nodes()
+    with _PROJECTED_LOCK:
+        cached = _PROJECTED
+    if cached is not None and cached[0] is key:
+        return cached[1]
+    reading = tree.reading()
+    records = reading.records
+    view = DispatchView(
+        slot_of_unit={r.sid: r.slot for r in records if r.sid and r.slot},
+        nodes=session_tree.fold_tree(records),
+        incomplete=reading.incomplete,
+    )
+    with _PROJECTED_LOCK:
+        _PROJECTED = (reading.nodes, view)
+    return view
+
+
+def _names_an_unheld_log(view: DispatchView, preferred: tuple[str, ...]) -> bool:
+    """Whether a unit the request names has a log on disk that *view* does not hold.
+
+    The projection holds at most the tree's cap, evicting its oldest records first,
+    and learns only of logs this process opened, so a named unit can be on disk and
+    absent from it. Each absent name costs one by-name read
+    (:meth:`~kiro_crew.crew_log.session_tree.SessionTree.read_named`): a name with no
+    log answers here, and the request is served from *view*; one with a log sends the
+    request to the scan, which admits named units first and folds them by the same
+    rules as everything else. A guessed id therefore costs one read, never a scan.
+    """
+    for unit in preferred[: session_tree.TREE_UNIT_CAP]:
+        if not unit:
+            continue
+        if unit in view.slot_of_unit:
+            if _cites_an_unheld_slot(view, view.slot_of_unit[unit]):
+                return True
+            continue
+        record, faulted = _TREE.read_named(unit)
+        if record is not None or faulted:
+            return True
+    return False
+
+
+def _cites_an_unheld_slot(view: DispatchView, slot: str) -> bool:
+    """Whether *slot*'s creator chain in *view* cites a slot the view holds no node for.
+
+    Such a citation names a log the projection never saw (another writer's), so the
+    cached fold cannot rule out a cycle or a different creator through it; the
+    request takes the scan. A chain that ends at a slot citing no creator, or loops
+    back on itself (the fold's cycle mark refuses it), needs no scan. Bounded by the
+    nodes held: every step visits a slot not seen before.
+    """
+    seen: set[str] = set()
+    cursor: str | None = slot
+    while cursor and cursor not in seen:
+        seen.add(cursor)
+        node = view.nodes.get(cursor)
+        if node is None:
+            return cursor != slot
+        cursor = node.parent_slot
+    return False
 
 
 def slot_chain(head_sid: str) -> session_tree.ChainReading:
@@ -653,7 +768,9 @@ def list_session_units(
     # One scan for the whole listing, and only when a dispatch tree is in scope:
     # every candidate is tested against the same fold, so the scope test costs one
     # pass over the store rather than one walk per candidate.
-    view = dispatch_view() if scope_slot else None
+    # The scan, not the projection: this listing walks the whole root anyway, and
+    # the projection may lack a log another process wrote, which the listing finds.
+    view = _scanned_view(()) if scope_slot else None
     global_counts: Counter[str] = Counter()
     candidates, truncated = _candidate_dirs(KIND_SESSION)
     for directory in candidates:

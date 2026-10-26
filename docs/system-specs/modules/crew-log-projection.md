@@ -1265,10 +1265,22 @@ The tree (`crew_log/session_tree.py`) folds EVERY log and keys the result by
 SLOT, because it answers "what does the whole tree look like" for a display, and
 the live row a child nests under is the slot's -- a slot outlives its ACP
 session. The fence (`crew_log/read.py`, `dispatch_view`) keys on SLOT for the
-same reason, and does not fold the collection a second time: it calls
-`session_tree.SessionTree.records` and `session_tree.fold_tree` and adds only the
+same reason, and folds with the same `session_tree.fold_tree` over the head
+records only (no adoption, release or spawn decisions), adding only the
 unit-to-slot map a read needs, because a request names a unit while the lineage
-is recorded between slots. So the two readers share one fold and cannot disagree
+is recorded between slots. Its records come from one of two places. The fast path
+folds the in-memory session tree projection's records once per projection state
+and serves later requests from that fold while the projection hands out the same
+`nodes` object. It is taken only when the projection is seeded for this store, not
+a failed seed's stand-in (`seed_given_up`), and COMPLETE (no head fault at seed,
+nothing past the cap, no open decision or spawn re-read fault in `_fault_sids`;
+a later clean re-read of the unit clears its fault and a forgotten or evicted unit
+takes its fault with it); and only when every unit the request names is held, or
+has no log on disk (one by-name probe each), and no held named unit's creator chain
+cites a slot the projection holds no log for. Anything else takes the old
+`SessionTree.reading` scan, so the scan's own answer and `incomplete` flag decide.
+The scoped listing (`list_session_units`) always takes the scan: it walks the root
+anyway, and the projection may lack a child log another process wrote. So the two readers share one fold and cannot disagree
 about who dispatched whom -- an earlier sid-keyed walk here could not, since a
 restart gives a tab a new session id and the recorded `parent.sid` then named a
 unit the re-attached creator no longer writes to. `sid` stays on the entry as the
@@ -1514,12 +1526,15 @@ on the walk, reachable only through forged or damaged records. `cap` means the b
 was reached. `unknown` means the log the walk was ASKED to start from answered no
 usable record, so there is no slot to walk.
 
-**Completeness travels with the answer.** `SessionTree.chain` returns a
-`ChainReading` pairing the walk with the scan's own `incomplete`, for the reason
-`TreeReading` is a pair and with a sharper consequence: a predecessor the scan never
-admitted -- past `TREE_UNIT_CAP`, or a unit whose bytes faulted -- is absent from
-the records, so the walk reports `missing` for a log that is on disk and readable.
-The walk cannot tell those apart; only the scan can.
+**Completeness travels with the answer.** `SessionTree.chain` reads the chain's own
+units by name (`_chain_records`: the head, then each cited `previous_sid` while the
+walk stays on the head's slot, at most `SLOT_CHAIN_CAP` units), never listing the
+root, and returns a `ChainReading` pairing the walk with whether any of those reads
+FAULTED, for the reason `TreeReading` is a pair: a predecessor whose bytes faulted is
+absent from the records, so the walk reports `missing` for a log that is on disk.
+The walk cannot tell those apart; only the read can. Because every cited predecessor
+is probed by name, `missing` without `incomplete` means the log is gone, never that a
+cap hid it.
 
 **Order comes from the edges, never from a timestamp.** `header.createdAt` is wall
 clock, so a backward step across a restart gives the newer log the earlier stamp and
