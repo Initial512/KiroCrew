@@ -11,6 +11,7 @@ one reads, imports and patches as ``kiro_crew.work_ledger.<name>``.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -82,10 +83,16 @@ ACCEPTANCE_PLACEHOLDERS: frozenset[str] = frozenset({"tbd", ""})
 #: A test derives this map's keys from the script's own dispatch and fails on drift.
 ACCEPTANCE_READ_FIELDS: dict[str, tuple[str, ...]] = {
     "pr_checks": ("pr", "repo"),
+    "pr_merged": ("pr", "repo"),
     "file": ("path", "exists"),
     "human_approval": (),
     "cmd": (),
 }
+
+#: ``accept_eval.py``'s own ``pr_merged`` ``repo`` pattern, mirrored so a bar it can
+#: only answer ``error`` to is not called concrete. Applied with ``fullmatch``, as
+#: there. A test pins the two equal.
+ACCEPTANCE_GH_REPO = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}")
 
 #: The ``kind`` values that script dispatches on at all. Anything else is an error-only
 #: spec (its closing ``return ("error", f"unknown accept kind ...")``), so it is not

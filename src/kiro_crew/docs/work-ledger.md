@@ -84,8 +84,8 @@ wherever a conductor runs, rather than discovering the refusal from a worker tha
 cannot report.
 
 **The acceptance condition is named before dispatch, not after.** It is one of
-three kinds: `pr_checks` (a pull request's checks are all green), `file` (a path
-exists), or `human_approval` (you accept it — legitimate for a design review,
+four kinds: `pr_checks` (a pull request's checks are all green), `pr_merged` (a
+pull request has merged), `file` (a path exists), or `human_approval` (you accept it — legitimate for a design review,
 and never machine-evaluated). There is deliberately no "run this command" kind,
 so "the tests pass" is expressed as `pr_checks` on the pull request that carries
 the work, and CI's verdict is the one that counts.

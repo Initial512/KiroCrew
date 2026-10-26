@@ -756,6 +756,12 @@ def test_the_concreteness_rules_are_exactly_accept_evals_error_only_guards():
         {"kind": "file", "path": "/nowhere-at-all", "exists": False},
         {"kind": "human_approval"},
         {"kind": "cmd", "argv": ["git", "status"]},
+        {"kind": "pr_merged", "pr": "TBD", "repo": "owner/name"},
+        {"kind": "pr_merged", "pr": 0, "repo": "owner/name"},
+        {"kind": "pr_merged", "pr": True, "repo": "owner/name"},
+        {"kind": "pr_merged", "pr": 7},
+        {"kind": "pr_merged", "pr": 7, "repo": "TBD"},
+        {"kind": "pr_merged", "pr": 7, "repo": "-owner/name"},
     ]
     batch = {"items": [{"id": f"it_{n:08d}", "accept": spec} for n, spec in enumerate(specs)]}
     proc = subprocess.run(
@@ -773,6 +779,9 @@ def test_the_concreteness_rules_are_exactly_accept_evals_error_only_guards():
         concrete = wl.is_acceptance_concrete(spec)
         assert concrete is (verdict != "error"), (spec, verdict, concrete)
     assert wl.is_acceptance_concrete({"kind": "pr_checks", "pr": 7, "repo": "owner/name"}) is True
+    # ``pr_merged`` shells out too, so its valid form is asserted concrete and
+    # evaluated nowhere, as for ``pr_checks`` above.
+    assert wl.is_acceptance_concrete({"kind": "pr_merged", "pr": 7, "repo": "owner/name"}) is True
 
 
 def test_accept_batch_carries_status_and_does_not_filter_on_it():
