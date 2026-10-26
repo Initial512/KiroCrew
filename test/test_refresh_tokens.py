@@ -1190,7 +1190,6 @@ def test_tr_u_19_atomic_write_no_partial_state(tmp_path: Path):
     """Concurrent writes don't produce a partial file readable as truncated state."""
     state_file = tmp_path / "rt.json"
     mgr = RefreshStateManager(state_path=state_file)
-    # Write a big payload
     for i in range(100):
         mgr.mark_consumed(
             f"jti{i}",

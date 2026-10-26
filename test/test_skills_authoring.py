@@ -224,7 +224,6 @@ class TestUpdateAutoSkill:
 
     def test_updates_auto_skill(self, tmp_path):
         loader = SkillsLoader(skills_path=tmp_path / "skills", install_builtins=False)
-        # Create then refine
         loader.create_auto_skill(
             "refine-me",
             description="original desc",

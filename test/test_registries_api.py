@@ -45,14 +45,12 @@ def _setup_env(tmp_path, monkeypatch):
     home = tmp_path / "kirocrew-home"
     home.mkdir()
     monkeypatch.setenv("KIROCREW_HOME", str(home))
-    # Create empty config
     cfg = home / "config.json"
     cfg.write_text("{}", encoding="utf-8")
     monkeypatch.setattr(
         "kiro_crew.apps.routes.config_path",
         lambda: str(cfg),
     )
-    # Mock SEL
     mock_sel = MagicMock()
     monkeypatch.setattr("kiro_crew.apps.routes.sel", lambda: mock_sel)
     # Mock bridges/backend to avoid side effects
@@ -143,7 +141,6 @@ class TestPutRegistries:
             assert len(data["registries"]) == 1
             assert data["registries"][0]["repo"] == "IdentityApps"
 
-            # Verify persisted to config
             saved = json.loads(cfg.read_text(encoding="utf-8"))
             assert len(saved["registries"]) == 1
 

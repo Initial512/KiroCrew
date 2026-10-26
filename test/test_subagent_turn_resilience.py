@@ -299,7 +299,6 @@ async def test_cancel_recovery_text_only_respawn_gets_resume_preamble():
         assert not build_msgs[0].startswith(_CANCEL_RESUME_PREFIX)
         assert build_msgs[1].startswith(_CANCEL_RESUME_PREFIX)
 
-        # Cleanup: terminate the respawned run.
         task2 = mgr._tasks.get(info.id)
         if task2 is not None:
             task2.cancel()

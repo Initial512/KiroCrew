@@ -124,8 +124,8 @@ def test_label_honours_a_hermetic_unit_prefix(cfg, monkeypatch):
     hermetic = PodConfig.load()
     assert launchd.pod_label(hermetic, "smoke") == "dev.kirocrew.pod.kirocrew-pod-test.smoke"
     # The default plane carries its prefix segment too: without it, the default
-    # prefix was a strict prefix of every custom plane's labels and a hermetic
-    # plane's pods surfaced in the default plane's listing (review finding).
+    # prefix is a strict prefix of every custom plane's labels and a hermetic
+    # plane's pods surface in the default plane's listing.
     assert launchd.pod_label(cfg, "smoke") == "dev.kirocrew.pod.kirocrew-pod.smoke"
     assert not launchd.pod_label(cfg, "").startswith(launchd.pod_label(hermetic, ""))
     assert not launchd.pod_label(hermetic, "").startswith(launchd.pod_label(cfg, ""))
