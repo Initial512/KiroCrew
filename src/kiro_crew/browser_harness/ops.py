@@ -604,7 +604,12 @@ async def _press_key(ctx: OpContext, args: dict[str, Any]) -> dict[str, Any]:
             # Neither a character nor any modified key (select, copy, cut) on the
             # person's field: a copy would carry its value into one the agent reads.
             return _asked_refusal(None)
-        if focused and active.get("password") and not modifiers & _NON_TEXT_MODIFIERS:
+        if (
+            focused
+            and active.get("password")
+            and len(key) == 1
+            and not modifiers & _NON_TEXT_MODIFIERS
+        ):
             return _password_refusal(None)
     await _step(ctx, f"Press {key.strip() or 'Space'}")
     await ctx.helper("press_key", key=key, modifiers=modifiers)

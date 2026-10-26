@@ -601,10 +601,12 @@ def test_press_key_still_lets_the_agent_leave_a_password_field(fake: FakeBrowser
         {"key": "Enter"},
         {"key": "a", "modifiers": ["control"]},
         {"key": "a", "modifiers": 4},
+        {"key": "Tab", "modifiers": ["shift"]},
+        {"key": "ArrowUp", "modifiers": ["alt"]},
     ):
         out = run(ops.run_op("press_key", args, fake.ctx()))
         assert out["ok"] is True, args
-    assert fake.helper_names().count("press_key") == 5
+    assert fake.helper_names().count("press_key") == 7
 
 
 def test_press_key_asks_the_page_only_for_printable_keys(fake: FakeBrowser) -> None:
