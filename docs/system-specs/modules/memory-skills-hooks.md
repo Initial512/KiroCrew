@@ -579,9 +579,13 @@ Neither path owns a timer. The prefs path is checked inline on every
 `maybe_consolidate()`; the history path is driven entirely by the heartbeat
 calling `check_idle_sessions()`. Every embed-bearing step
 (`_write_structured_memory`, `_save_lessons`, `append_history`) is dispatched
-through `run_in_embed_pool` (the bounded `mc-embed` bulkhead) because
+through `run_in_memory_background_pool` (the two-worker `mc-membg` pool) because
 `_consolidate` runs on the gateway event loop, and a slow or hung embed inline
-would stall heartbeats, Slack, and the dashboard.
+would stall heartbeats, Slack, and the dashboard. It is not `mc-embed`: turn
+context (`build_message`) runs there, and a backlog of consolidation passes once
+held seven of its eight workers. The gateway's embedding backfill and member
+repair loops run on `mc-membg` too, so background memory work waits only for
+itself.
 
 Structured `[Monitor wake]` turns never call `maybe_consolidate()`: their prompt
 and resulting action are automation evidence, not user-authored memory. Monitor
@@ -706,7 +710,7 @@ crew lineage has:
 
 | Module | Owns |
 |---|---|
-| `vector_memory_lifecycle` | `init`, `_init_database`, `close`, owner-only file lockdown, and the V1 schema (`_SCHEMA_V1`, `_migrate_v2`, `_MEMORY_META_TABLE`, `_MIGRATIONS`) |
+| `vector_memory_lifecycle` | `init`, `_init_database`, `close`, owner-only file lockdown, the writer lock (`StoreDbLock`), the pool of read-only connections (`ReaderPool`), and the V1 schema (`_SCHEMA_V1`, `_migrate_v2`, `_MEMORY_META_TABLE`, `_MIGRATIONS`) |
 | `vector_memory_member` | Member-database provisioning and admission identity (`create_member_database`, `read_member_database_identity`, `open_member_database`, `declared_store`), the history files and their FTS index, `consolidation_receipt`, `apply_consolidation` and `seed_item_if_absent` |
 | `vector_memory_semantic_write` | `_write_semantic` with its consolidation branches |
 | `vector_memory_inventory` | `get_episodic_list`, the facet readers (`list_by_facets`, `count_by_facet`) and `memory_stats` |
@@ -714,7 +718,8 @@ crew lineage has:
 A runtime function that works on a store takes it as its first argument. Every
 statement it runs, its commits and its `memory_meta` and `memory_events` writes
 included, goes through `store.db` under `store._db_lock` or `store._vector_commit`.
-None opens a connection or keeps store state; the only module-level state is the
+None opens a connection or keeps store state (the read-only connections the
+fetch helpers use come from the store's `ReaderPool`); the only module-level state is the
 per-thread stemmer and the text-keyed stem memos in `text_scoring`. A runtime
 function reaches other store behaviour through the store (`store._try_embed(...)`,
 never the function that implements it), so a class-level patch of a method reaches
@@ -792,14 +797,39 @@ loop (readers) and several worker threads (writers: consolidation via
 per path is an invariant, not an optimization — two instances over one file do not
 share `_db_lock`, which voids everything below — and it is why `ensure_store`
 closes the loser of a construction race rather than keeping both. It holds ONE
-`sqlite3` connection and ONE FAISS index, and neither is thread-safe: `sqlite3` caches
+shared `sqlite3` connection for writes and ONE FAISS index, and neither is thread-safe: `sqlite3` caches
 prepared statements per connection, so two threads stepping a statement at the
 same time corrupt each other's row iteration (observed as
 `DatabaseError("another row available")`, and on Windows CI as a `None` value for
 a column the `WHERE` clause excluded), while a concurrent FAISS `add` during a
 `search` can corrupt the C++ index outright. `self._db_lock` (a reentrant
-`threading.RLock`, so a locked method may call another locked method)
-serializes every statement on that connection. The structural regression guard
+`StoreDbLock` wrapping a `threading.RLock`, so a locked method may call another
+locked method) serializes every statement on that connection.
+
+**Plain reads do not take it.** Once `init()` has the file open, migrated and in
+WAL mode, `_fetch_all_locked` and `_fetch_one_locked` called outside any locked
+section run their SELECT on a read-only connection from the store's `ReaderPool`
+(`?mode=ro`, `query_only`, `isolation_level=None`). WAL lets those readers run
+beside each other and beside the one writer, so a full-table read
+(`get_all_semantic`, `_ineligible_ids`, `count_lessons`, `get_lessons`) waits
+neither for another read nor for a write. A connection serves one thread at a time
+and goes back to the pool once its rows are materialized, so it never holds a
+read snapshot between calls; at most four idle ones are kept. A read still runs on
+the shared connection under the lock when the calling thread already holds the
+lock (it must see its own section's uncommitted rows), when the pool is off
+(before `init()` finished, after `close()`, a file not in WAL mode), when the
+shared connection has a transaction open that no thread is inside, or when the
+pooled connection fails. A read that runs while another thread writes sees the
+last committed state. `close()` and a repeated `init()` interrupt reads in flight,
+wait up to five seconds for their connections, and close every one before the
+shared connection and the store-use lock go. Reads the lock already scopes (the
+resident scoring-set builds, `_check_recall_query`, the FAISS search) stay under
+it.
+
+`StoreDbLock` logs a warning, once per call site, when a blocking acquisition
+happens on a thread that is running an event loop; tests set
+`vector_memory_lifecycle.LOOP_THREAD_LOCK_RAISES` to make it raise.
+`test/test_vector_memory_read_pool.py` pins all of the above on a real file. The structural regression guard
 scans `vector_memory.py`, the owners beside it and every `vector_memory_runtime`
 module (where the store is `self` in a bound owner function and `store` in a
 delegated rule), recognizes explicit lock scopes and `_vector_commit`,
@@ -1220,7 +1250,7 @@ Six monotonic per-store-instance integer totals recording how much the store REA
 
 The marked scan sites (`_fetch_all_locked(..., scan=...)`, plus one direct `record()` inside `_build_episodic_scoring_set`'s own locked block) are exactly the whole-population reads: the V1 and V2 semantic candidate helpers used by `get_semantic_context`, `get_lessons()` unbounded (what the `_stored_similarity_scorer` callers score over), `_sqlite_vector_search`'s per-call read, the resident scoring-set build, and the V2 episodic candidate scan. A bounded read — V1 `get_semantic_context` with no query, `get_lessons(limit=N)`, any keyed lookup — contributes to the all-tables totals only, so a rising `*_full_scans` always means a population was re-read. On the episodic side both rungs land on the same counter, so `episodic_full_scans` rising with WRITES rather than with searches is what the resident set looks like from outside; the semantic surface carries the same resident set (`_SemanticScoringSet`, above), so `semantic_full_scans` likewise rises with a semantic write rather than with a repeated query — an oversized store or a library without `data_version` is the exception that keeps a per-call scan.
 
-Semantics that matter to a caller: per instance and per process (two processes over one file report their own reads independently, never a shared total), never persisted, never reset, and no timing metric is recorded or derived. Every increment happens under `_db_lock`, so `read_counters()` — which takes the same lock — returns an untorn snapshot and no count is lost to a concurrent reader. Two identical `GET /api/memory/observability?q=…` calls with no write in between, compared field by field, are the intended probe.
+Semantics that matter to a caller: per instance and per process (two processes over one file report their own reads independently, never a shared total), never persisted, never reset, and no timing metric is recorded or derived. Every increment and `read_counters()` take the counters' own lock (pooled reads run outside `_db_lock`), so a snapshot is untorn and no count is lost to a concurrent reader. Two identical `GET /api/memory/observability?q=…` calls with no write in between, compared field by field, are the intended probe.
 
 #### The admission gate is a loose cut, not a tuned one
 
