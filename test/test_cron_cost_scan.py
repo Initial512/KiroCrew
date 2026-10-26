@@ -11,7 +11,7 @@ direction of every wrong answer it could give:
 * A half-typed or malformed payload must produce a plain message, not a crash.
 
 The four prompts in `test_ticket_examples_are_caught` are the real cases from the
-ASBX cost analysis, kept verbatim so a pattern change cannot quietly stop
+cost analysis that motivated the skill, kept verbatim so a pattern change cannot quietly stop
 catching the traffic this skill was written for.
 
 Input is the JSON `cron_list json=true` produces. The script reads nothing from

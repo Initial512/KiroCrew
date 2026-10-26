@@ -55,7 +55,10 @@ __all__ = [
 ]
 
 #: kiro-cli keeps every server named here out of Tool Search deferral. It reads
-#: the variable from the process environment once, at spawn.
+#: the variable from the process environment once, at spawn. The name is the
+#: engine's own interface, read by the public kiro-cli and KAS alike, so it is
+#: spelled verbatim here and in the operator docs; it is the one place that
+#: prefix belongs in this tree.
 MANDATORY_MCPS_ENV = "ASBX_KIRO_MANDATORY_MCPS"
 
 
