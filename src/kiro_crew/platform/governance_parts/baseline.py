@@ -13,9 +13,12 @@ default, with the reason. Every catalog scope (aliases aside) is in exactly one
 of the two; ``test_governance_enterprise_baseline.py`` fails on a new scope that
 is in neither.
 
-Two rows differ from the appendix. ``tools`` is off, not read-only tools: read-only
-tools wait on the tools/commands classifier fix (a separate item), because the gate
-also asks ``commands`` about every bare tool name and ``commands`` is off.
+Two rows differ from the appendix in detail. ``tools`` holds the LOCAL read-only
+built-ins only (``fs_read``, ``glob``, ``grep``): ``web_fetch`` and ``web_search``
+are read-only but reach the network, and ``network.egress`` is off. The gate
+judges a proven built-in in its own row (``gate_decision``'s ``own_scopes``), so
+``commands`` being off does not refuse these; a search with no path is refused,
+because the directory it searches cannot be checked against ``filesystem.read``.
 ``approval_modes`` carries the catalog's undeniable floor (``normal``, ``trust``,
 ``trust_reads``), so only ``yolo`` is off.
 """
@@ -40,11 +43,9 @@ _DEFAULT_WORKSPACE_ROOTS = (
 )
 
 BASELINE_CONTROLS: Dict[str, Mapping[str, object]] = {
-    # Off, although the appendix's minimal set is read-only tools. The gate asks
-    # ``commands`` about every bare tool name too (``classify_tool_title``), so
-    # with ``commands`` off a read-only set here could never pass. Read-only tools
-    # wait on the tools/commands classifier fix, a separate item.
-    "tools": _OFF,
+    # The local read-only built-ins: each one's ``BUILTIN_TOOL_SCOPES`` row is
+    # ``filesystem.read`` alone, so its reads still meet the row below.
+    "tools": {"mode": "allow", "allow": ["fs_read", "glob", "grep"]},
     # The catalog's ``always_permitted`` floor: only ``yolo`` is off.
     "approval_modes": {"mode": "allow", "allow": ["normal", "trust", "trust_reads"]},
     "mcp": {"mode": "allow", "allow": ["@kirocrew-core"]},

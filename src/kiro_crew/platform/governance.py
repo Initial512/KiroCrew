@@ -1250,6 +1250,7 @@ if TYPE_CHECKING:  # every owner-defined name in _EXPORTS, for type checkers and
         _KIND_EDIT,
         _KIND_FETCH,
         _KIND_READ,
+        _NO_TARGET_ITEM,
         _PATH_ARG_KEYS,
         _READING_PREFIX,
         _RUNNING_PREFIX,
