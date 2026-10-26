@@ -14876,6 +14876,7 @@
         "loading_graph_data": "Caricamento dei dati del grafo…",
         "memory_graph": "Grafo della memoria",
         "no_memory_data_to_visualize_add_preferences_proj": "Nessun dato di memoria da visualizzare. Aggiungi prima preferenze, progetti o lezioni.",
+        "partial_notice": "Qui è mostrata solo una parte della tua memoria, quindi la ricerca trova solo questi nodi.",
         "refresh": "Aggiorna",
         "search_memory_nodes": "Cerca tra i nodi della memoria",
         "search_nodes": "Cerca tra i nodi…"

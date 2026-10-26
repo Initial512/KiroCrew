@@ -853,10 +853,23 @@ class VectorMemoryStore:
         return dict(row) if row else None
 
     def get_all_semantic(
-        self, limit: int | None = None, offset: int = 0, *, q: str = ""
+        self,
+        limit: int | None = None,
+        offset: int = 0,
+        *,
+        q: str = "",
+        after_key: str | None = None,
+        exclude_lessons: bool = False,
     ) -> list[dict]:
         """Get active semantic memory entries."""
-        return _semantic.get_all_semantic(self, limit, offset, q=q)
+        return _semantic.get_all_semantic(
+            self,
+            limit,
+            offset,
+            q=q,
+            after_key=after_key,
+            exclude_lessons=exclude_lessons,
+        )
 
     def _stamp_facets(self, item_id: str, facets: "memory_schema.MemoryFacets | None") -> None:
         """Stamp the carve axes on a crew row. A no-op on the v1 lineage."""

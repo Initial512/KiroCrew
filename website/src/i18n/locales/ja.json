@@ -14410,6 +14410,7 @@
         "loading_graph_data": "グラフデータを読み込み中…",
         "memory_graph": "メモリグラフ",
         "no_memory_data_to_visualize_add_preferences_proj": "可視化するメモリデータがありません。まず優先設定、プロジェクト、またはレッスンを追加してください。",
+        "partial_notice": "ここにはメモリの一部だけが表示されているため、検索ではこれらのノードしか見つかりません。",
         "refresh": "更新",
         "search_memory_nodes": "メモリノードを検索",
         "search_nodes": "ノードを検索…"

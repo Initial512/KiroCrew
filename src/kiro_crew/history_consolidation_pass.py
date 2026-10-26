@@ -49,6 +49,7 @@ from kiro_crew.history_consolidation_memory import (
     _bounded_semantic_table,
     _is_plausible_memory_file,
     _reroute_lesson_semantic_keys,
+    _semantic_snapshot_in_pages,
     _session_facets,
     _withhold_unseen_deletes,
 )
@@ -593,11 +594,11 @@ async def _consolidate(
         has_vector = vector_store is not None
         if has_vector and vector_store is not None:
             private_policy = getattr(vector_store, "algorithm_version", "v1") == "v2"
-            # Offload: the fetch serializes on the store's _db_lock,
+            # Offload: each page of the fetch serializes on the store's _db_lock,
             # and this coroutine runs on the gateway event loop — a worker
             # holding the lock (backfill's FAISS rebuild, reconcile's bulk
             # UPDATEs) would otherwise block the whole loop here.
-            current_semantic = await asyncio.to_thread(vector_store.get_all_semantic)
+            current_semantic = await asyncio.to_thread(_semantic_snapshot_in_pages, vector_store)
 
             def _prompt_value(e: dict) -> object:
                 # A lesson row stores a mapping; the consolidation model

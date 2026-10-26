@@ -14548,7 +14548,8 @@
         "group_lessons_count": "[Ĺèşşøñş ({{count}}) ···············]",
         "group_preferences_count": "[Þŕèƒèŕèñçèş ({{count}}) ·············]",
         "group_projects_count": "[Þŕøĵèçţş ({{count}}) ··········]",
-        "group_semantic_count": "[Şèɱàñţìç ({{count}}) ··········]"
+        "group_semantic_count": "[Şèɱàñţìç ({{count}}) ··········]",
+        "partial_notice": "[Øñĺý þàŕţ øƒ ýøùŕ ɱèɱøŕý ìş ðŕàẁñ ĥèŕè, şø şèàŕçĥ ƒìñðş øñĺý ţĥèşè ñøðèş. ······················]"
       },
       "memoryTab": {
         "actions": "[Àçţìøñş ···········]",

@@ -6856,7 +6856,8 @@
         "group_lessons_count": "Lessons ({{count}})",
         "group_preferences_count": "Preferences ({{count}})",
         "group_projects_count": "Projects ({{count}})",
-        "group_semantic_count": "Semantic ({{count}})"
+        "group_semantic_count": "Semantic ({{count}})",
+        "partial_notice": "Only part of your memory is drawn here, so search finds only these nodes."
       },
       "memoryTab": {
         "consolidated_sessions_failed": "Summarized {{succeeded}}/{{total}} sessions ({{failed}} failed)",

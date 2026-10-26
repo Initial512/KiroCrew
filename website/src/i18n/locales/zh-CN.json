@@ -14410,6 +14410,7 @@
         "loading_graph_data": "正在加载图谱数据…",
         "memory_graph": "记忆图谱",
         "no_memory_data_to_visualize_add_preferences_proj": "没有可视化的记忆数据。请先添加偏好设置、项目或经验。",
+        "partial_notice": "这里只显示了你的部分记忆，因此搜索只能找到这些节点。",
         "refresh": "刷新",
         "search_memory_nodes": "搜索记忆节点",
         "search_nodes": "搜索节点…"

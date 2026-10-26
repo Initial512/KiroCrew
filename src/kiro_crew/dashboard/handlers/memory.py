@@ -1437,8 +1437,9 @@ async def api_memory_graph(request: web.Request) -> web.Response:
     mem = _get_memory(state)
 
     try:
+        partial: dict[str, bool] = {}
         nodes, edges = await asyncio.to_thread(
-            lambda: _build_memory_graph(mem, state.lessons.load_all())
+            lambda: _build_memory_graph(mem, state.lessons.load_all(), partial)
         )
 
         for n in nodes:
@@ -1448,7 +1449,8 @@ async def api_memory_graph(request: web.Request) -> web.Response:
         _sel().log_tool_invocation(
             session_key="dashboard", tool_name="memory_graph", outcome="success"
         )
-        return web.json_response({"nodes": nodes, "edges": edges})
+        # ``partial`` says which capped populations left rows out of the graph.
+        return web.json_response({"nodes": nodes, "edges": edges, "partial": partial})
     except Exception:
         logging.getLogger(__name__).exception("memory_graph failed")
         _sel().log_tool_invocation(
@@ -1475,6 +1477,10 @@ if TYPE_CHECKING:  # every owner-defined name in _EXPORTS, for type checkers and
         api_memory_embedding_model,
         api_memory_embedding_status,
         api_memory_enable_embeddings,
+    )
+    from kiro_crew.dashboard.handlers.memory_graph import (  # noqa: F401
+        GRAPH_LESSON_LIMIT,
+        GRAPH_SEMANTIC_LIMIT,
     )
     from kiro_crew.dashboard.handlers.memory_services import (  # noqa: F401
         _get_vector_store,

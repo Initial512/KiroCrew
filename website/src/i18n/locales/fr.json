@@ -14876,6 +14876,7 @@
         "loading_graph_data": "Chargement des données du graphe…",
         "memory_graph": "Graphe de mémoire",
         "no_memory_data_to_visualize_add_preferences_proj": "Aucune donnée de mémoire à visualiser. Ajoutez d'abord des préférences, des projets ou des leçons.",
+        "partial_notice": "Seule une partie de ta mémoire est affichée ici, la recherche ne trouve donc que ces nœuds.",
         "refresh": "Actualiser",
         "search_memory_nodes": "Rechercher des nœuds de mémoire",
         "search_nodes": "Rechercher des nœuds…"

@@ -14410,6 +14410,7 @@
         "loading_graph_data": "그래프 데이터를 불러오는 중…",
         "memory_graph": "메모리 그래프",
         "no_memory_data_to_visualize_add_preferences_proj": "시각화할 메모리 데이터가 없습니다. 먼저 환경설정, 프로젝트 또는 학습 내용을 추가하세요.",
+        "partial_notice": "여기에는 메모리의 일부만 표시되므로 검색은 이 노드들만 찾습니다.",
         "refresh": "새로 고침",
         "search_memory_nodes": "메모리 노드 검색",
         "search_nodes": "노드 검색…"

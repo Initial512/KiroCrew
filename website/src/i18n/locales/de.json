@@ -14643,6 +14643,7 @@
         "loading_graph_data": "Graphdaten werden geladen…",
         "memory_graph": "Erinnerungsgraph",
         "no_memory_data_to_visualize_add_preferences_proj": "Keine Erinnerungsdaten zur Visualisierung. Fügen Sie zuerst Präferenzen, Projekte oder Lektionen hinzu.",
+        "partial_notice": "Hier ist nur ein Teil deiner Erinnerungen dargestellt, daher findet die Suche nur diese Knoten.",
         "refresh": "Aktualisieren",
         "search_memory_nodes": "Erinnerungsknoten suchen",
         "search_nodes": "Knoten suchen…"

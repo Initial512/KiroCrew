@@ -445,7 +445,9 @@ occupy a worker thread for minutes.
 
 The prompt's `## Current Semantic Memory` block is bounded too, on BOTH passes
 (the preference-only pass builds the same block): the active table is read
-whole with `get_all_semantic()`, rendered as the JSON array the model updates
+whole, in key-ordered pages of 500 (`_semantic_snapshot_in_pages`, keyset
+`get_all_semantic(limit=500, after_key=...)` from a `""` cursor, on the key index,
+the store lock released between pages), rendered as the JSON array the model updates
 against, and the rendering is held under
 `_SEMANTIC_PROMPT_CAP_PER_CONSOLIDATION = 65_536` characters
 (`_bounded_semantic_table`). A table that fits renders byte-identical to the
@@ -3060,7 +3062,7 @@ before reading transcript bodies, opening learned memory or billing a model.
 | PUT | `/api/memory/semantic` | Create/update (validates key, allowlist, injection; gated) |
 | DELETE | `/api/memory/semantic/{key}` | Tombstone + log event (gated). Optional JSON body for `kirocrew memory forget`: `expect_value_json` (compare-and-delete, 409 `value_changed`) and `superseded_by` (must be live and differ from the key: 409 `superseded_by_absent` / 400 `superseded_by_self`); other fields 400 `invalid_forget_body`. The dashboard sends no body |
 | GET | `/api/memory/events` | Recent audit trail |
-| GET | `/api/memory/graph` | All memory as nodes and edges for the graph view |
+| GET | `/api/memory/graph` | Memory as nodes and edges for the graph view: preferences, projects, recent history, at most 200 semantic rows (first by key, lessons excluded, read on the key index) and the 200 newest lessons; `partial` (`{"semantic": bool, "lessons": bool}`) says which capped population left rows out |
 | GET/PUT | `/api/memory/settings` | Consolidation settings; see the memory settings card above |
 | GET | `/api/memory/carve` | Filter or count one crew store by carve facet. Query: the five facet names, `kind`, `count_by`, `limit`, `offset`, plus the shared `?store=`. Absent, it reads the global store; present, it is owner-gated like every other store-scoped route. 409 `facets_unsupported` on the v1 lineage, 400 `unknown_facet`, 400 `invalid_pagination`, 503 `store_unavailable`. Every answer echoes the `store` it read. See [Who reads a facet](#who-reads-a-facet) |
 | GET | `/api/memory/episodic` | Paginated episodic list |
