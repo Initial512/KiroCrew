@@ -1063,6 +1063,45 @@ class TunnelConfig:
             restart=True,
         ),
     )
+    relay_enabled: bool = field(
+        default=False,
+        metadata=_meta(
+            "Kiro Relay",
+            "Let this Crew dial the Kiro relay and serve the requests it delivers, with "
+            "the caller named by the relay. Off by default and not yet available: no "
+            "build ships a host token source yet, so turning it on starts a relay "
+            "client that reports it cannot connect. While it is off, Crew starts no "
+            "relay client, strips every x-kiro-relay-* header from every request and "
+            "trusts none of them.",
+            restart=True,
+        ),
+    )
+    relay_region: str = field(
+        default="us-east-1",
+        metadata=_meta(
+            "Relay Region",
+            "The AWS Region of the Kiro relay this Crew dials, for example 'us-east-1'.",
+            restart=True,
+        ),
+    )
+    relay_host_url: str = field(
+        default="",
+        metadata=_meta(
+            "Relay Host URL",
+            "The relay's host dial URL. Empty uses wss://kiro-relay.<region>.api.aws/v1/host. "
+            "Must be wss:// (ws:// only for a loopback test relay).",
+            restart=True,
+        ),
+    )
+    relay_crew_domain: str = field(
+        default="",
+        metadata=_meta(
+            "Relay Crew Domain",
+            "The domain this Crew's relay URL sits under, as https://<endpoint>.<domain>. "
+            "Empty uses kiro-relay.<region>.on.aws.",
+            restart=True,
+        ),
+    )
 
 
 @dataclass

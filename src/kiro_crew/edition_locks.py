@@ -38,13 +38,14 @@ UNKEYED_LOCKS: Dict[str, str] = {
     "app_dev_mode": "app dev mode toggles are ignored; every app is served as installed",
     "updates.channel": "the release channel file is ignored; the install follows stable",
     "computer_use": "the computer_use.json opt-in is ignored; desktop control stays off",
-    "tunnel": "tunnel.enabled is ignored; no tunnel is started",
+    "tunnel": "tunnel.enabled and tunnel.relay_enabled are ignored; no tunnel or relay is started",
     "telemetry.otlp_hosts": "telemetry.otlp_endpoint is ignored; no metrics leave the host",
 }
 
 #: config.json path -> the control whose lock makes that local value inert.
 CONFIG_PATH_LOCKS: Dict[str, str] = {
     "tunnel.enabled": "tunnel",
+    "tunnel.relay_enabled": "tunnel",
     "telemetry.otlp_endpoint": "telemetry.otlp_hosts",
 }
 

@@ -26,9 +26,8 @@ request carrying any relay header it does exactly one of three things:
   :data:`~.caller.RELAY_REMOTE`, and the caller published under
   :data:`~.caller.RELAY_CALLER_KEY` for token auth.
 
-Off: the gateway builds its :class:`RelayIngress` off until the relay client, and the
-setting that turns it on, land together. Off, no ingress accepts a stamp, so the only
-behaviour left is the strip.
+Off by default. With ``tunnel.relay_enabled`` false no :class:`RelayIngress` accepts a
+stamp, so the only behaviour left is the strip.
 """
 
 from __future__ import annotations
