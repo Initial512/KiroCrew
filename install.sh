@@ -160,6 +160,17 @@ node_supported() {
     [ "$_pat" -ge "$_fpat" ] 2>/dev/null
 }
 
+# Install a supported Node through ensure-node.sh (pinned, checksum-verified
+# mise or glibc-217 build; an existing nvm is reused), then put the node it
+# recorded on this shell's PATH. Never pipes a remote installer into a shell.
+install_node_via_ensure() {
+    bash "$KIROCREW_APP_DIR/ensure-node.sh" || true
+    if [ -s "$KIROCREW_DATA_DIR/node-bin-dir" ]; then
+        PATH="$(cat "$KIROCREW_DATA_DIR/node-bin-dir"):$PATH"
+        export PATH
+    fi
+}
+
 # ── Pre-flight ──
 
 banner
@@ -183,7 +194,10 @@ step "Dependencies"
 if [ "$USE_MISE" -eq 1 ]; then
     if ! has mise; then
         info "Installing mise…"
-        curl -fsSL https://mise.run | sh || true
+        # A pinned release checked against a recorded sha256, never a piped script.
+        # shellcheck source=scripts/lib/pinned-mise.sh
+        . "$KIROCREW_APP_DIR/scripts/lib/pinned-mise.sh"
+        MISE_INSTALL_PATH="$HOME/.local/bin/mise" install_pinned_mise || true
         export PATH="$HOME/.local/bin:$PATH"
         has mise || die "mise installation failed. Install manually: https://mise.jdx.dev/installing-mise.html"
     fi
@@ -346,17 +360,9 @@ elif has node; then
         brew install node >/dev/null 2>&1 || true
     fi
     if ! node_supported; then
-        # Distro package still too old (the common case on AL2023/Debian):
-        # nvm is the only channel that reliably provides a current Node.
-        info "Installing Node.js $NODE_VERSION via nvm…"
-        if [ ! -d "$HOME/.nvm" ]; then
-            curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash 2>/dev/null
-        fi
-        export NVM_DIR="$HOME/.nvm"
-        # shellcheck disable=SC1091
-        [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
-        nvm install "$NODE_VERSION" >/dev/null 2>&1
-        nvm alias default "$NODE_VERSION" >/dev/null 2>&1
+        # Distro package still too old (the common case on AL2023/Debian).
+        info "Installing Node.js $NODE_VERSION via ensure-node.sh…"
+        install_node_via_ensure
     fi
     node_supported \
         && ok "Node.js $(node --version) now active" \
@@ -374,20 +380,13 @@ elif has brew; then
     brew install node >/dev/null 2>&1
     has node && ok "Node.js $(node --version) installed via brew" || warn "Node.js install failed — run: brew install node"
 else
-    info "Installing Node.js via nvm…"
-    if [ ! -d "$HOME/.nvm" ]; then
-        curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash 2>/dev/null
-    fi
-    export NVM_DIR="$HOME/.nvm"
-    # shellcheck disable=SC1091
-    [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
-    nvm install "$NODE_VERSION" >/dev/null 2>&1
-    nvm alias default "$NODE_VERSION" >/dev/null 2>&1
+    info "Installing Node.js via ensure-node.sh…"
+    install_node_via_ensure
     if has node; then
-        ok "Node.js $(node --version) installed via nvm"
+        ok "Node.js $(node --version) installed"
     else
         warn "Node.js install failed — frontend build will be skipped"
-        detail "Install manually: nvm install $NODE_VERSION"
+        detail "Install Node.js $NODE_VERSION (LTS): https://nodejs.org"
     fi
 fi
 fi # USE_MISE -eq 0 (Node.js)

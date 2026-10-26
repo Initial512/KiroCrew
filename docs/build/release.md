@@ -213,6 +213,15 @@ code.
      version prefix, which is also why a hotfix rebuild of an older tag keeps
      working after upstream releases. See [desktop-app](desktop-app.md) "Bundled
      kiro-cli".
+   - *Installer tool pins*: the source installers download mise
+     (`scripts/lib/pinned-mise.sh`) and the AWS CLI and Session Manager plugin
+     (`packaging/pins/aws-tools.env`) at pinned versions and refuse a sha256
+     mismatch. Compare each pin with upstream and bump the stale ones: pick a
+     release at least 7 days old, record each artifact's sha256 (mise: its
+     release `SHASUMS256.txt`; AWS: two downloads that match), keep
+     `AWSCLI_VERSION` equal to the crew runtime Dockerfile's, and run
+     `test/test_installer_tool_pins.py`. The procedure is in each file's header. A
+     stale pin is not a failure; the pinned artifacts stay downloadable.
 2. **Cut the RC — verify content, not PR status.** On the target commit confirm:
    `github-release` has an `if:`; `CHANGELOG.md` line 5 is `## [X.Y.Z]` with zero
    non-bare-release `##` headings; no `### Contributors` (the GitHub Release
