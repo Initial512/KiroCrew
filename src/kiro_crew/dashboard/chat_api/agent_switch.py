@@ -268,17 +268,26 @@ def agent_switch_outcome(resp: web.Response) -> tuple[bool, dict[str, Any]]:
 CREW_MODE_LOCKED = "crew_mode_locked"
 
 
+def _has_user_message(slot: _ChatSlot) -> bool:
+    """Whether *slot*'s transcript has a user message: in its window, or trimmed to disk."""
+    if getattr(slot, "_disk_older_count", 0):
+        return True
+    return any(isinstance(row, dict) and row.get("role") == "user" for row in slot.messages)
+
+
 def _crew_mode_lock_refusal(
     slot: _ChatSlot, agent_name: str, agent_kind: Any, caller: SlotAgentSwitchCaller
 ) -> web.Response | None:
     """409 ``crew_mode_locked`` when *slot* is a Crew Mode root and this switch moves it.
 
-    Crew Mode is one way: a Crew Mode root never moves to another agent, whoever
-    asks (the picker, the in-turn ``/agent`` command, a session-control send of
+    Until the chat's first user message, Crew Mode can be turned off again: a
+    switch onto a template that is not a conductor passes. From the first message
+    on it is locked: a Crew Mode root never moves to another agent, whoever asks
+    (the picker, the in-turn ``/agent`` command, a session-control send of
     ``/agent``). A re-pick of the agent it is on is a session reset and passes.
-    The one move allowed is the Crew Mode migration onto the configured conductor
-    (``agent.crew_mode_agent``), in the template namespace. Read under the slot
-    lock, so a switch that turned Crew Mode on just before this one is seen.
+    The one other move allowed is the Crew Mode migration onto the configured
+    conductor (``agent.crew_mode_agent``), in the template namespace. Read under
+    the slot lock, so a switch that turned Crew Mode on just before this one is seen.
     """
     from kiro_crew import crew_mode
 
@@ -286,6 +295,12 @@ def _crew_mode_lock_refusal(
         return None
     same = agent_name == slot.agent and agent_kind in ("", "template", slot.agent_kind)
     if same:
+        return None
+    if (
+        agent_kind in ("", "template")
+        and not crew_mode.stamp_for_switch(agent_name, "template")
+        and not _has_user_message(slot)
+    ):
         return None
     if (
         caller.crew_mode_migration

@@ -445,27 +445,35 @@ session list and History (`history_reads._without_crew_workers`) by the persiste
 lineage. Session search (`GET /api/sessions/search` and the federated local search)
 applies the same rule over a wider ranked window, so hidden workers do not shorten
 the page. A remote peer's `crew_root` and `crew_mode_root` stamps survive the peer
-row allowlist (`crew_mode_root` only as a real `true`). Switching a Crew Mode root to any other agent is refused `409
+row allowlist (`crew_mode_root` only as a real `true`). Once the root has a user message (in its window, or rows trimmed to disk), switching it to any other agent is refused `409
 crew_mode_locked` (`agent_switch._crew_mode_lock_refusal`), and a provider-side switch
-mid-turn is vetoed in `chat_runner`; the migration is the one exception. The agent
+mid-turn is vetoed in `chat_runner`; the migration is the one exception. Before the
+first user message a switch onto a template that is not a conductor passes: that is
+Crew Mode turned off. The agent
 catalog (`GET /api/agents/catalog`) carries `crew_mode_agent` and `conductor_agents`, which the dashboard reads instead of naming a
 conductor itself (`runsCrewMode` adds the slot's stamp).
-The composer switch is one way: an ordinary
+The composer switch is an ordinary
 `POST /api/chat/slots/{slot}/agent` naming the configured conductor in the `template`
-namespace. The chip shows only on an empty chat's welcome state, and its hint
+namespace. The chip shows only on an empty chat's welcome state, reads just
+"Crew Mode", and its hint (tooltip)
 reads "Turn on Crew Mode: each task runs in its own chat and reports back here."
 Pressing it hides both the memory-mode chip and the Crew Mode chip for that chat
-at once, and neither comes back: the composer has no off control and no off note.
-If the server refuses the switch, the chat never turned on and both chips return.
+at once. If the server refuses the switch, the chat never turned on and both chips return.
+Until the first user message the composer's Crew Mode mark is a pressed toggle
+(`aria-pressed`, named "Crew Mode", hint "Turn off Crew Mode. You can do this until
+you send your first message."): pressing it switches back to the default agent,
+both chips and the agent picker come back at once, and the mark moves back into
+the chip. From the first message on there is no off control.
 A normal chat's agent picker lists no conductor at all (`withoutConductors` over the catalog's `conductor_agents`),
 and the keyboard agent cycle steps over the same list (`agentCycleTarget`; a
 Crew Mode chat does not cycle at all), so Crew Mode is the way into one. A
 Crew Mode chat's composer offers no agent picker: a Crew Mode mark
-(`CrewModeComposerChip`, a read-only status named "Crew Mode is on for this
-chat": the ghost and gradient text, no pill, no hover or pressed state, not
-focusable) sits where the agent chip would, and the workspace and model
-controls stay. The pressed chip moves into that mark (a shared Framer Motion
-`layoutId`); under reduced motion the mark only fades in. An empty agent name on the
+(`CrewModeComposerChip`; after the first message a read-only status named "Crew
+Mode is on for this chat": the ghost and gradient text, no pill, no hover or
+pressed state, not focusable) sits where the agent chip would, and the workspace
+and model controls stay. The pressed chip moves into that mark, and turned off it
+moves back (a shared Framer Motion `layoutId`); under reduced motion it is a
+plain swap. An empty agent name on the
 switch route still stamps the configured default template.
 
 Every slot row says where it sits in Crew Mode (`crew_mode.stamp_rows`, run by

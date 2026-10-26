@@ -9897,8 +9897,8 @@
     },
     "crewMode": {
       "chip_off": "Crew Mode",
-      "chip_off_explained": "Crew Mode : découper en tâches",
       "chip_hint_off": "Active Crew Mode : chaque tâche tourne dans son propre chat et rend compte ici.",
+      "chip_hint_on": "Désactive Crew Mode. Possible jusqu'à l'envoi de ton premier message.",
       "chip_hint_busy": "Disponible après la réponse.",
       "title": "Crew Mode",
       "tagline_lead": "Tu fixes l’objectif.",

@@ -9754,8 +9754,8 @@
     },
     "crewMode": {
       "chip_off": "Crew Mode",
-      "chip_off_explained": "Crew Mode: in Aufgaben aufteilen",
       "chip_hint_off": "Crew Mode einschalten: Jede Aufgabe läuft in einem eigenen Chat und meldet sich hier zurück.",
+      "chip_hint_on": "Crew Mode ausschalten. Das geht, bis du deine erste Nachricht sendest.",
       "chip_hint_busy": "Verfügbar nach der Antwort.",
       "title": "Crew Mode",
       "tagline_lead": "Du setzt das Ziel.",

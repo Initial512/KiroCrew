@@ -38,6 +38,9 @@ def _slot(key: str, agent: str = "kirocrew", **over: Any) -> SimpleNamespace:
         instance_id="",
         running=False,
         turn_running=False,
+        # A chat the person has written in: its Crew Mode is locked.
+        messages=[{"role": "user", "content": "go"}],
+        _disk_older_count=0,
     )
     base.update(over)
     return SimpleNamespace(**base)
@@ -79,6 +82,22 @@ def test_a_crew_mode_root_refuses_another_agent_with_crew_mode_locked(_sel):
     assert isinstance(resp, web.Response) and resp.status == 409
     assert json.loads(resp.text)["code"] == "crew_mode_locked"
     assert _sel.calls and _sel.calls[0]["outcome"] == "denied"
+
+
+def test_crew_mode_turns_off_before_the_first_user_message_and_locks_after(_sel):
+    # No user message yet (the switch notice is not one): back to a plain agent passes.
+    fresh = _slot(
+        "r", "kirocrew-conductor", messages=[{"role": "assistant", "content": "Switched"}]
+    )
+    assert _refusal(fresh, "kirocrew") is None
+    # Not onto another conductor, and not onto a crewmate.
+    assert _refusal(fresh, "kirocrew-team-lead").status == 409
+    assert _refusal(fresh, "kirocrew", kind="member").status == 409
+    # From the first user message on, it is locked, in the window or trimmed to disk.
+    sent = _slot("r", "kirocrew-conductor")
+    assert _refusal(sent, "kirocrew").status == 409
+    trimmed = _slot("r", "kirocrew-conductor", messages=[], _disk_older_count=3)
+    assert _refusal(trimmed, "kirocrew").status == 409
 
 
 def test_the_lock_refuses_the_configured_conductor_too_unless_it_is_the_migration(_sel):

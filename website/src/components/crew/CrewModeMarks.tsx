@@ -66,11 +66,32 @@ export function CrewModeMarkSource({ children }: { children: ReactNode }) {
   return <motion.span layoutId={reduceMotion ? undefined : CREW_MODE_MARK_LAYOUT_ID} className="inline-flex">{children}</motion.span>
 }
 
-/** The composer's Crew Mode mark on a conductor chat: a read-only status, not a
- *  control. No pill, no hover or pressed state, not focusable; gradient text and
- *  the ghost keep it easy to see. */
-export function CrewModeComposerChip() {
+/** The composer's Crew Mode mark on a conductor chat. Gradient text and the ghost
+ *  keep it easy to see. With `onTurnOff` (no message sent yet) it is a pressed
+ *  toggle: pressing it turns Crew Mode off and it moves back into the chip.
+ *  Without it, a read-only status: no pill, no hover or pressed state, not focusable. */
+export function CrewModeComposerChip({ onTurnOff }: { onTurnOff?: () => void } = {}) {
   const reduceMotion = useReducedMotion()
+  if (onTurnOff) {
+    return (
+      <motion.button
+        type="button"
+        data-testid="crew-mode-composer-chip"
+        aria-label={i18nT('components.crewMode.chip_off')}
+        aria-pressed={true}
+        title={i18nT('components.crewMode.chip_hint_on')}
+        onClick={onTurnOff}
+        layoutId={reduceMotion ? undefined : CREW_MODE_MARK_LAYOUT_ID}
+        initial={reduceMotion ? { opacity: 0 } : false}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.2 }}
+        className="inline-flex items-center gap-1.5 h-7 px-1.5 -mx-1.5 rounded-md text-[12px] font-semibold shrink-0 cursor-pointer hover:bg-bg-hover"
+      >
+        <KiroGhostMark size={13} className="inline-block shrink-0 text-aim" />
+        <span className="crew-grad-text">{i18nT('components.crewMode.chip_off')}</span>
+      </motion.button>
+    )
+  }
   return (
     <motion.span
       data-testid="crew-mode-composer-chip"

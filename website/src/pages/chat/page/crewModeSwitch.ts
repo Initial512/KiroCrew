@@ -22,10 +22,12 @@ import { openActivityPanel } from '../../../store/chatSlice'
 import { crewModeAgent, isDefaultAgentName, memoryModeAllowsCrewMode, runsConductor, runsCrewMode } from '../../../lib/crewMode'
 import { isRootSession } from '../command-center/model'
 
-export function useCrewModeSwitch({ currentSlot, defaultAgent, switchAgent, openView }: {
+export function useCrewModeSwitch({ currentSlot, defaultAgent, hasUserMessage, switchAgent, openView }: {
   currentSlot: ChatSlot | undefined
   /** The catalog's default template: the agent a plain chat runs on. */
   defaultAgent: string
+  /** The chat's transcript has a user message: Crew Mode can no longer be turned off. */
+  hasUserMessage: boolean
   switchAgent: (agentName: string, kind?: 'member' | 'template') => Promise<void>
   /** The side panel's view opener (`usePanelTabs().openView`). */
   openView: (kind: ViewKind) => void
@@ -56,9 +58,11 @@ export function useCrewModeSwitch({ currentSlot, defaultAgent, switchAgent, open
   // (which `switchAgent` reports as its own notice) the chat never turned on and
   // its chips come back.
   const [turningOn, setTurningOn] = useState<string | null>(null)
-  // One way only: the composer offers no way back to a plain chat. The template
-  // namespace is named, since a bare name would be read as a crewmate whenever the
-  // slot's kind is unset. Turning it on also opens the task board.
+  // The chat whose switch back to the default agent is in flight: its chips come
+  // back the moment the mark is pressed, the same way they leave on turning on.
+  const [turningOff, setTurningOff] = useState<string | null>(null)
+  // The template namespace is named, since a bare name would be read as a crewmate
+  // whenever the slot's kind is unset. Turning it on also opens the task board.
   const turnOnCrewMode = useCallback(() => {
     if (crewModeOn || !currentSlot) return
     const key = currentSlot.key
@@ -71,8 +75,23 @@ export function useCrewModeSwitch({ currentSlot, defaultAgent, switchAgent, open
       openView('workers')
     }
   }, [crewModeOn, currentSlot, switchAgent, taskBoardOffered, openTaskBoard, openView])
+  const crewModeLeaving = !!currentSlot && turningOff === currentSlot.key
   /** Crew Mode is on, or being turned on, for this chat: the composer then shows
-   *  neither the memory-mode chip nor the Crew Mode chip, and never again. */
-  const crewModeChosen = crewModeOn || (!!currentSlot && turningOn === currentSlot.key)
-  return { crewModeEligible, crewModeOn, crewModeChosen, turnOnCrewMode, openTaskBoard: taskBoardOffered ? openTaskBoard : undefined }
+   *  neither the memory-mode chip nor the Crew Mode chip. */
+  const crewModeChosen = (crewModeOn || (!!currentSlot && turningOn === currentSlot.key)) && !crewModeLeaving
+  // Until the first user message Crew Mode can be turned off again (the server
+  // allows it only then): back to the default agent this chat had before, which
+  // is the only agent the switch is offered on. After that it is locked.
+  const crewModeCancellable = crewModeOn && !crewModeLeaving && !hasUserMessage && !currentSlot?.running
+  const turnOffCrewMode = useCallback(() => {
+    if (!crewModeCancellable || !currentSlot) return
+    const key = currentSlot.key
+    setTurningOff(key)
+    void switchAgent(defaultAgent || 'kirocrew', 'template').finally(() => setTurningOff(k => (k === key ? null : k)))
+  }, [crewModeCancellable, currentSlot, switchAgent, defaultAgent])
+  return {
+    crewModeEligible, crewModeOn, crewModeChosen, crewModeLeaving, turnOnCrewMode,
+    turnOffCrewMode: crewModeCancellable ? turnOffCrewMode : undefined,
+    openTaskBoard: taskBoardOffered ? openTaskBoard : undefined,
+  }
 }

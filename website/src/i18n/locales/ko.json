@@ -9611,8 +9611,8 @@
     },
     "crewMode": {
       "chip_off": "Crew Mode",
-      "chip_off_explained": "Crew Mode: 작업으로 나누기",
       "chip_hint_off": "Crew Mode를 켭니다. 각 작업이 별도의 채팅에서 실행되고 여기로 결과를 알려 줍니다.",
+      "chip_hint_on": "Crew Mode를 끕니다. 첫 메시지를 보내기 전까지 끌 수 있습니다.",
       "chip_hint_busy": "답변이 끝나면 사용할 수 있습니다.",
       "title": "Crew Mode",
       "tagline_lead": "목표는 당신이 정하고,",

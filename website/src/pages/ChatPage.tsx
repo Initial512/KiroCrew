@@ -651,7 +651,8 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
   })
 
   const currentSlot = slots.find(s => s.key === activeSlot)
-  const { crewModeEligible, crewModeOn, crewModeChosen, turnOnCrewMode, openTaskBoard } = useCrewModeSwitch({ currentSlot, defaultAgent, switchAgent, openView: tabsCtl.openView })
+  const hasUserMessage = messages.some(m => m.role === 'user')
+  const { crewModeEligible, crewModeOn, crewModeChosen, crewModeLeaving, turnOnCrewMode, turnOffCrewMode, openTaskBoard } = useCrewModeSwitch({ currentSlot, defaultAgent, hasUserMessage, switchAgent, openView: tabsCtl.openView })
   const steerWorkerDone = useCrewWorkerIsDone(currentSlot?.crew_root ?? '', currentSlot?.key ?? '')
   // From the chip press to the first message the transcript shows the Crew Mode
   // welcome without a break: a slot reload in that window (the switch's own reads,
@@ -1092,15 +1093,17 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
               handleCancelQueued={handleCancelQueued} handleEditQueued={handleEditQueued} handleInterruptQueued={handleInterruptQueued} handleReorderQueued={handleReorderQueued}
               keepQuestionAnswer={keepQuestionAnswer} queuedMessages={queuedMessages} queuePendingIds={queuePendingIds} steer={steer} stopTurn={stopTurn} systemDeliveryCount={systemDeliveryCount}
               handleEditLastRequest={handleEditLastRequest} composerOptimizing={composerOptimizing} handleOptimizingChange={handleOptimizingChange} memorySwitching={memorySwitching}
-              // Crew Mode is a one-way choice made on the welcome state: once it is
-              // chosen the chat stays on the conductor, so neither the memory-mode
-              // chip nor the Crew Mode chip is offered again.
+              // Crew Mode is chosen on the welcome state: while it is on neither the
+              // memory-mode chip nor the Crew Mode chip is offered. Until the first
+              // message the composer mark turns it off and both come back; after
+              // that the chat stays on the conductor.
               showComposerMemoryChip={showComposerMemoryChip && !crewModeChosen} switchMemoryMode={switchMemoryMode} composerAbove={composerAbove} composerSessionControls={composerSessionControls}
               // Beside the memory chip on the welcome state only, and not while the chat
               // is still loading: drawn alone first, the Crew Mode chip would slide
               // across the memory chip arriving beside it.
               crewModeOffered={crewModeEligible && !crewModeChosen && !slotLoading && showComposerMemoryChip} turnOnCrewMode={turnOnCrewMode}
-              agentPickerHidden={crewModeChosen || runsCrewMode(currentSlot?.agent, currentSlot?.agent_kind, currentSlot?.crew_mode_agent)}
+              agentPickerHidden={crewModeChosen || (!crewModeLeaving && runsCrewMode(currentSlot?.agent, currentSlot?.agent_kind, currentSlot?.crew_mode_agent))}
+              turnOffCrewMode={turnOffCrewMode}
               steerWorker={currentSlot?.crew_root ? (currentSlot.title || i18nT('commandCenter.worker_untitled')) : undefined}
               steerWorkerDone={steerWorkerDone}
               steerWorkerRoot={currentSlot?.crew_root || ''}

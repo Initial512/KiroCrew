@@ -81,6 +81,7 @@ from kiro_crew.dashboard.chat_api.agent_switch import (  # noqa: F401
     SlotAgentSwitchCaller,
     _append_session_switch_notice,
     _crew_mode_lock_refusal,
+    _has_user_message,
     _MemberMemoryRequiresNewConversation,
     agent_switch_outcome,
     api_chat_slot_agent,

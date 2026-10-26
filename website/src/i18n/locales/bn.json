@@ -9754,8 +9754,8 @@
     },
     "crewMode": {
       "chip_off": "Crew Mode",
-      "chip_off_explained": "Crew Mode: কাজ ভাগ করে দাও",
       "chip_hint_off": "Crew Mode চালু করো: প্রতিটি কাজ নিজের চ্যাটে চলে আর এখানে ফলাফল জানায়।",
+      "chip_hint_on": "Crew Mode বন্ধ করো। প্রথম মেসেজ পাঠানোর আগে পর্যন্ত এটা করা যায়।",
       "chip_hint_busy": "উত্তর শেষ হলে পাওয়া যাবে।",
       "title": "Crew Mode",
       "tagline_lead": "তুমি লক্ষ্য ঠিক করো।",

@@ -12,9 +12,10 @@ to its side panel. No session, folder or transcript is deleted or moved for that
 ``agent.crew_mode_agent`` is the one place that names THE conductor: the agent a chat
 switches to when Crew Mode is turned on, and the agent every Crew Mode root is moved
 onto when that key changes or an update ships a new default
-(``dashboard/crew_mode_migration.py``). The switch is one way: the server refuses to
-move a Crew Mode root onto another agent (``crew_mode_locked``), except that
-migration.
+(``dashboard/crew_mode_migration.py``). Until the chat's first user message the
+person can turn it off again (a switch back to a non-conductor template); after that
+the server refuses to move a Crew Mode root onto another agent
+(``crew_mode_locked``), except that migration.
 
 The chat keeps a stamp (``crew_mode_agent`` on the slot, persisted with it) only to
 mark it as Crew Mode: a root on a custom conductor that the config no longer names

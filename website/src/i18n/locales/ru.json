@@ -10040,8 +10040,8 @@
     },
     "crewMode": {
       "chip_off": "Crew Mode",
-      "chip_off_explained": "Crew Mode: разбить на задачи",
       "chip_hint_off": "Включи Crew Mode: каждая задача выполняется в отдельном чате и отчитывается сюда.",
+      "chip_hint_on": "Выключи Crew Mode. Это можно сделать до отправки первого сообщения.",
       "chip_hint_busy": "Доступно после ответа.",
       "title": "Crew Mode",
       "tagline_lead": "Ты ставишь цель.",

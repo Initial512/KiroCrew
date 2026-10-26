@@ -8,10 +8,14 @@ describe('CrewModeChip', () => {
     render(<CrewModeChip onTurnOn={vi.fn()} />)
     const chip = screen.getByTestId('crew-mode-chip')
     expect(chip).toHaveAttribute('aria-pressed', 'false')
-    // Only one label is displayed: the short name below `sm`, the explained one
-    // from `sm` up.
-    expect(within(chip).getByText('Crew Mode')).toHaveClass('sm:hidden')
-    expect(within(chip).getByText('Crew Mode: split into tasks')).toHaveClass('hidden', 'sm:inline')
+    expect(chip).toHaveAttribute('aria-label', 'Crew Mode')
+  })
+
+  it('shows only the text "Crew Mode", at every width', () => {
+    render(<CrewModeChip onTurnOn={vi.fn()} />)
+    const chip = screen.getByTestId('crew-mode-chip')
+    expect(chip.textContent).toBe('Crew Mode')
+    expect(chip.querySelector('.hidden, .sm\\:hidden, .sm\\:inline')).toBeNull()
   })
 
   it('says what turning it on does in its hint', () => {

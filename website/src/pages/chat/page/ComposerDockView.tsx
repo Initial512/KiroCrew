@@ -256,9 +256,12 @@ interface ComposerDockViewProps {
   switchMemoryMode: (newMode: MemoryMode) => Promise<void>
   composerAbove: JSX.Element
   composerSessionControls: ReturnType<typeof useSessionControlChips>
-  /** The Crew Mode chip (crewModeSwitch): offered on this chat, and its one-way switch on. */
+  /** The Crew Mode chip (crewModeSwitch): offered on this chat, and its switch on. */
   crewModeOffered: boolean
   turnOnCrewMode: () => void
+  /** Set only while Crew Mode is on and no message is sent yet: the composer's
+   *  Crew Mode mark is then a toggle that turns it off. */
+  turnOffCrewMode?: () => void
   /** A conductor session (Crew Mode): the composer offers no agent picker, since
    *  the conductor is chosen by Crew Mode itself. Workspace and model stay. */
   agentPickerHidden?: boolean
@@ -295,7 +298,7 @@ export default function ComposerDockView({
   effortSupported, modelMarker, pinModelToAgentMut, projectBranch, projectGit, projectGitError, shownModel, cardOwnsRecovery, continuable, continuing, handleContinue, interrupted, dockGutter, dockRef,
   endQuoteFlight, flyingQuote, inputAreaRef, isAtBottom, answerQuestionCard, handleCancelQueued, handleEditQueued, handleInterruptQueued, handleReorderQueued, keepQuestionAnswer, queuedMessages,
   queuePendingIds, steer, stopTurn, systemDeliveryCount, handleEditLastRequest, composerOptimizing, handleOptimizingChange, memorySwitching, showComposerMemoryChip, switchMemoryMode, composerAbove,
-  composerSessionControls, crewModeOffered, turnOnCrewMode, agentPickerHidden = false, steerWorker, steerWorkerDone = false, steerWorkerRoot = '',
+  composerSessionControls, crewModeOffered, turnOnCrewMode, turnOffCrewMode, agentPickerHidden = false, steerWorker, steerWorkerDone = false, steerWorkerRoot = '',
 }: ComposerDockViewProps) {
   const crewModeNoteId = useId()
   // Disabled while a reply runs (the agent switch refuses mid-turn): the
@@ -497,8 +500,9 @@ export default function ComposerDockView({
                 // `w-fit`, not a full-width flex row: the box is a `dock-inert` child, so
                 // it catches input, and it should be no wider than the chips it holds.
                 // The Crew Mode chip sits right of the memory chip, on the welcome state
-                // only. Crew Mode is one way: once it is chosen the parent stops offering
-                // both chips, so this row leaves with them and nothing turns it off.
+                // only. Once Crew Mode is chosen the parent stops offering both chips,
+                // so this row leaves with them; turned off before the first message,
+                // they come back.
                 // The row wraps, so on a phone the chip's note drops under the chip
                 // instead of overlapping it.
                 <div className="relative z-10 mx-auto w-fit max-w-full px-4 pt-2 pb-2 flex flex-wrap items-center justify-center gap-x-2 gap-y-1" data-testid="composer-memory-chip">
@@ -636,7 +640,7 @@ export default function ComposerDockView({
               // would hide every routed turn. Same `jevRouteOn` the picker's row is
               // drawn from, so chip, menu and gate cannot disagree.
               modelIsJevRouted={jevRouteOn && isUnpinnedModel(currentSlot?.model)}
-              agentBadge={agentPickerHidden ? <CrewModeComposerChip /> : undefined}
+              agentBadge={agentPickerHidden ? <CrewModeComposerChip onTurnOff={turnOffCrewMode} /> : undefined}
               onAgentClick={provider.capabilities.agentTemplates && !agentPickerHidden ? (rect, trigger) => { anchorAgentBtn(rect, trigger); setAgentDropdown(!agentDropdown) } : undefined}
               onModelClick={(rect, trigger, composerHadFocus) => {
                 modelPickerReturnsFocusRef.current = !!composerHadFocus

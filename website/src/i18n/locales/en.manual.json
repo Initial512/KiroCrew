@@ -4005,8 +4005,8 @@
     },
     "crewMode": {
       "chip_off": "Crew Mode",
-      "chip_off_explained": "Crew Mode: split into tasks",
       "chip_hint_off": "Turn on Crew Mode: each task runs in its own chat and reports back here.",
+      "chip_hint_on": "Turn off Crew Mode. You can do this until you send your first message.",
       "chip_hint_busy": "Available after the reply.",
       "title": "Crew Mode",
       "tagline_lead": "You set the goal.",

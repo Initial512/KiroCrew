@@ -4,7 +4,8 @@ import { KiroGhostMark } from './KiroGhostMark'
 import { i18nT } from '../i18n/t'
 
 interface CrewModeChipProps {
-  /** Turns this chat into a Crew Mode chat. One way: there is no off. */
+  /** Turns this chat into a Crew Mode chat. The composer's mark turns it off
+   *  again until the first message is sent. */
   onTurnOn: () => void
   /** Greyed out while the chip cannot be pressed (a memory-mode switch). */
   disabled?: boolean
@@ -19,7 +20,8 @@ interface CrewModeChipProps {
 /** The composer's Crew Mode switch, to the right of the memory-mode chip on a new
  *  chat. Same glass chip primitive as `MemoryModeChip`. Its accessible name is
  *  always "Crew Mode" and `aria-pressed` stays false: pressing it turns the chat
- *  into a Crew Mode chat, after which the composer stops showing it at all. */
+ *  into a Crew Mode chat and the chip moves into the composer's mark, which is
+ *  the pressed toggle until the first message. */
 export function CrewModeChip({ onTurnOn, disabled = false, busy = false, describedBy }: CrewModeChipProps) {
   const hint = busy ? i18nT('components.crewMode.chip_hint_busy') : i18nT('components.crewMode.chip_hint_off')
   const state = busy
@@ -42,10 +44,8 @@ export function CrewModeChip({ onTurnOn, disabled = false, busy = false, describ
       className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1 text-[12px] transition-colors cursor-pointer ${state} border-transparent glass-hover text-muted hover:text-text`}
     >
       <KiroGhostMark size={13} />
-      {/* The label says what turning it on does; a phone keeps the short name so
-          the chip row stays on one line. */}
-      <span className="sm:hidden">{i18nT('components.crewMode.chip_off')}</span>
-      <span className="hidden sm:inline">{i18nT('components.crewMode.chip_off_explained')}</span>
+      {/* Just the name; what it does is in the tooltip. */}
+      <span>{i18nT('components.crewMode.chip_off')}</span>
     </Glass>
   )
 }

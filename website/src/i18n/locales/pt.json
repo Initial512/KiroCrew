@@ -9897,8 +9897,8 @@
     },
     "crewMode": {
       "chip_off": "Crew Mode",
-      "chip_off_explained": "Crew Mode: dividir em tarefas",
       "chip_hint_off": "Ative o Crew Mode: cada tarefa roda em um chat próprio e informa aqui.",
+      "chip_hint_on": "Desative o Crew Mode. Dá para fazer isso até enviar a primeira mensagem.",
       "chip_hint_busy": "Disponível depois da resposta.",
       "title": "Crew Mode",
       "tagline_lead": "Você define a meta.",

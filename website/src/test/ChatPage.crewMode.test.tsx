@@ -1,9 +1,9 @@
 /**
  * Crew Mode on ChatPage: the switch sits right of the memory chip on a new chat,
  * turns the chat to the existing conductor through the ordinary agent switch, and
- * swaps the empty chat's welcome page for the Crew Mode one. It is one way: once
- * pressed, both the memory-mode chip and the Crew Mode chip leave the composer for
- * good, and nothing there turns the mode off. WelcomeView is mocked to nothing, so
+ * swaps the empty chat's welcome page for the Crew Mode one. Once pressed, both the
+ * memory-mode chip and the Crew Mode chip leave the composer; until the first
+ * message the composer's mark turns it off again, after that nothing does. WelcomeView is mocked to nothing, so
  * a Crew Mode page found here comes from ChatPage's own branch.
  */
 import { afterEach, describe, it, expect, vi } from 'vitest'
@@ -349,12 +349,24 @@ describe('Crew Mode on ChatPage', () => {
     expect(screen.getByTestId('memory-mode-chip')).toBeInTheDocument()
   })
 
-  it.each([
-    ['a new Crew Mode chat', [] as Msg[]],
-    ['a Crew Mode chat mid-conversation', [{ role: 'user', content: 'hello' }]],
-  ])('offers no chip and no way off on %s', async (_label, messages) => {
+  it('turns off from the mark before the first message, back to the agent it had', async () => {
     chatSlotAgent.mockClear()
-    await renderWith({ messages, agent: 'kirocrew-conductor', agentKind: 'template' })
+    const store = await renderWith({ messages: [], agent: 'kirocrew-conductor', agentKind: 'template' })
+    const mark = screen.getByRole('button', { name: 'Crew Mode', pressed: true })
+    expect(mark).toHaveAttribute('title', 'Turn off Crew Mode. You can do this until you send your first message.')
+    fireEvent.click(mark)
+    // The chips come back at once, the mark goes, and the switch is the ordinary one.
+    expect(screen.getByTestId('crew-mode-chip')).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getByTestId('memory-mode-chip')).toBeInTheDocument()
+    expect(screen.queryByTestId('crew-mode-composer-chip')).toBeNull()
+    await waitFor(() => expect(chatSlotAgent).toHaveBeenCalledWith('slot-a', 'default', 'template'))
+    await waitFor(() => expect(store.getState().dashboard.slots[0].agent).toBe('default'))
+    expect(screen.queryByTestId('crew-mode-welcome')).toBeNull()
+  })
+
+  it('offers no chip and no way off once a message is sent', async () => {
+    chatSlotAgent.mockClear()
+    await renderWith({ messages: [{ role: 'user', content: 'hello' }], agent: 'kirocrew-conductor', agentKind: 'template' })
     expect(screen.queryByTestId('crew-mode-chip')).toBeNull()
     expect(screen.queryByTestId('memory-mode-chip')).toBeNull()
     expect(screen.queryByTestId('crew-mode-note')).toBeNull()

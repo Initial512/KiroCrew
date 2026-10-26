@@ -2648,7 +2648,8 @@ async def _run_chat(
                     # out of a turn that must not continue.
                     break
                 elif new_agent and new_agent != slot.agent and crew_mode_is_root(slot):
-                    # Crew Mode is one way (``crew_mode_locked`` on every switch
+                    # Crew Mode is locked once the chat has a message, and a turn
+                    # means it has one (``crew_mode_locked`` on every switch
                     # route): the backend switching its own agent mid-turn would
                     # take the chat off its conductor by the one door the HTTP
                     # lock cannot reach. Vetoed like a member pin: the slot keeps

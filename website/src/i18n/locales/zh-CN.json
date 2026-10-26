@@ -9611,8 +9611,8 @@
     },
     "crewMode": {
       "chip_off": "Crew Mode",
-      "chip_off_explained": "Crew Mode：拆成任务",
       "chip_hint_off": "打开 Crew Mode：每个任务在单独的聊天中运行，并在这里汇报结果。",
+      "chip_hint_on": "关闭 Crew Mode。发送第一条消息之前都可以关闭。",
       "chip_hint_busy": "回复结束后可用。",
       "title": "Crew Mode",
       "tagline_lead": "你定目标。",
