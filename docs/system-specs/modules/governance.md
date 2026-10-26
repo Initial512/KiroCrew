@@ -133,6 +133,7 @@ In an `oss` build a scope the policy does not name is ungoverned and permitted (
 - **Who may widen.** The remote policy, by naming the scope. A profile only narrows.
 - **Not gated.** `BASELINE_UNGATED` lists the two ordinals (`approval_mode`, `sandbox.min_level`), which keep Crew's own default. A scope in neither table (one registered at run time) is denied.
 - **Minimal sets that differ from the appendix wording.** `approval_modes` is `normal`, `trust`, `trust_reads` (the catalog floor; only `yolo` is off). `filesystem.read` is Crew's fixed default workspace root (`config.paths._default_workspace_base()` + `_WORKSPACE_DIR_NAME`), never the configured one, because the configured root is a local source. `tools` is off, not read-only tools: `classify_tool_title` also asks `commands` about every bare tool name, so a read-only set could never pass while `commands` is off. Read-only tools wait on the tools/commands classifier fix, a separate item. `updates.source` is not a catalog scope and has no baseline.
+- **Inner lists the remote leaves out.** `BASELINE_INNER_LISTS` names inner lists that keep their baseline even when the remote policy names their capability: today `capabilities.publish` `regions`, `audience` and `accounts`, all off. `parsing.with_inner_baseline` fills them into a remote-named gate, in `evaluator._policy_level` and in `tiers._with_enterprise_baseline` for a central authority, so a local tier cannot supply a list the remote left out.
 - **Local policy tiers.** `compose_tier_ladder` first fills the authority tier's unnamed scopes from the baseline (`tiers._with_enterprise_baseline`), so the tighten-only `_intersect_ceilings` composes a local tier (`env`, `home`, `bundled`) WITH the baseline: a local tier can narrow it and never supply a scope's whole answer. With no central document the authority is itself local, so it is intersected with the baseline scope by scope rather than filled; only a central authority's named scopes replace the baseline. The installed ceiling therefore names every gated scope in an enterprise build, and `kirocrew policy show` lists the baseline rows beside the document's own.
 - **Not covered here.** The `ceiling is None and profile is None` early returns in `hook_runtime/governance_gate.py`, `mcp_gateway/app_call.py` and `governance_profiles.governance_permits` still permit before `resolve` runs; an enterprise host with no policy at all is the enterprise gate's to refuse (RFC Migration plan phase 2).
 
@@ -2853,6 +2854,16 @@ deploy path shares `publish.allowed_destinations`, an operator who had already
 narrowed that list for the registry must add `deploy-web-aws` to keep deploying —
 intentional: the list states which destinations are permitted, and the core
 deploy provider was previously the one destination exempt from it.
+
+**Regions, audience and accounts.** Three more inner lists (`identifier` matcher) bound where a deploy writes and who may read what is published (RFC [crew-enterprise-edition](../../request-for-change/rfc-crew-enterprise-edition.md), appendix rows "Deploy regions", "Publish audiences", "Deploy accounts"). `_do_deploy` (`deploy/handlers_sites.py`) asks `publish_governance.deploy_target_denied_reason` right after the profile resolves, on preview and again on confirm, before any content is staged or uploaded: `audience:public` (a web deploy is world-readable), then `regions:<region>`, then `accounts:<id>`. The account id comes from the credentials (`sts get-caller-identity`, `_deploy_account`), never from the registry's editable `account` field, and is read only when the policy or the active profile carries an `accounts` list (`publish_list_governed`), so an unbounded deploy makes no extra cloud call. An account that cannot be read denies. A denial is 403 `publish_destination_disabled` with an SEL `governance_decision` row naming the item. Artifact publish asks `audience:<public|shared|private>` after the destination gate in `api_artifact_publish` and `api_artifact_update_sharing` (the requested visibility) and `api_artifact_overwrite_remote` (the publication's current visibility), through `_publish_audience_denied`. The `personal-drive` destination writes to the operator's cloud account but does not report its region or account yet, so `publish_denied_reason` refuses it while either list is bounded. With no list, or no policy, every answer is unchanged.
+
+```json
+{"version": 1, "capabilities": {"publish": {"enabled": true, "scopes": {
+  "destinations": {"mode": "allow", "allow": ["deploy-web-aws"]},
+  "regions": {"mode": "allow", "allow": ["us-east-1"]},
+  "audience": {"mode": "allow", "allow": ["public"]},
+  "accounts": {"mode": "allow", "allow": ["123456789012"]}}}}}
+```
 
 Unlike the messaging/cron chokepoints (which degrade-to-permit on a transient
 governance-evaluation error so a latent regression can't wedge the surface),
