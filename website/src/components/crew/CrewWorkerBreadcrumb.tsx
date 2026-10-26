@@ -25,12 +25,14 @@ export function CrewWorkerBreadcrumb({ root, worker }: { root: string; worker: C
   const isMobile = useIsMobile()
   const [reopenFailed, setReopenFailed] = useState(false)
   // The server's group, as the panel and the root's row show it; the row's own
-  // live flags until the worker list answers. The last group read stays while a
-  // re-read is in flight (a finished worker stays done).
+  // live flags until the worker list first answers. The last group read stays
+  // while a re-read is in flight or has failed (a finished worker stays done):
+  // the row's flags cannot say "done", so falling back to them on a failed poll
+  // would flip a done worker to Waiting under the read-failed line.
   const listed = workers?.find(w => w.key === worker.key)
   const lastGroup = useRef<CrewWorkerGroup | null>(null)
   if (listed) lastGroup.current = crewWorkerGroup(listed)
-  const group = listed ? crewWorkerGroup(listed) : (rootClosed && lastGroup.current) || crewWorkerGroupOfRow(worker)
+  const group = listed ? crewWorkerGroup(listed) : lastGroup.current ?? crewWorkerGroupOfRow(worker)
   const back = () => {
     if (!rootClosed) {
       openCrewSession(dispatch, root, !isMobile)

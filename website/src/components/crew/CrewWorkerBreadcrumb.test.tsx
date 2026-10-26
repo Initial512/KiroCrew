@@ -5,15 +5,15 @@
  * pinned on the classes that carry them; the pod check measures the pixels.
  */
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Provider } from 'react-redux'
 import { createTestStore } from '../../test/helpers'
 
 const mobile = vi.hoisted(() => ({ value: true }))
 vi.mock('../../hooks/useIsMobile', () => ({ useIsMobile: () => mobile.value }))
-const fail = vi.hoisted(() => ({ on: false }))
-vi.mock('../../api/client', () => ({ api: { crewWorkers: () => (fail.on ? Promise.reject(new Error('down')) : Promise.resolve({ root: 'root', workers: [] })) } }))
+const fail = vi.hoisted(() => ({ on: false, workers: [] as unknown[] }))
+vi.mock('../../api/client', () => ({ api: { crewWorkers: () => (fail.on ? Promise.reject(new Error('down')) : Promise.resolve({ root: 'root', workers: fail.workers })) } }))
 
 import { CrewWorkerBreadcrumb } from './CrewWorkerBreadcrumb'
 
@@ -57,6 +57,25 @@ describe('CrewWorkerBreadcrumb on a phone', () => {
       expect(screen.getByTestId('crew-worker-breadcrumb')).toBeInTheDocument()
     } finally {
       fail.on = false
+    }
+  })
+
+  it('keeps the last group read when a later poll fails: a done worker stays Done', async () => {
+    // The list answered once (the worker is done); a 5s poll then fails. The
+    // row's own flags cannot say done, so the last read stands under the notice.
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    fail.workers = [{ key: 'w1', title: 'First-week checklist', agent: 'kirocrew-worker', status: 'idle', group: 'done', last_activity: '', ledger_item: '', summary: '', created_by: '' }]
+    try {
+      renderCrumb()
+      expect(await screen.findByText('Done')).toBeInTheDocument()
+      fail.on = true
+      await act(async () => { vi.advanceTimersByTime(16_000) })
+      expect(await screen.findByText('Could not load the workers.')).toBeInTheDocument()
+      expect(screen.getByTestId('crew-status')).toHaveAttribute('data-group', 'done')
+    } finally {
+      vi.useRealTimers()
+      fail.on = false
+      fail.workers = []
     }
   })
 })
