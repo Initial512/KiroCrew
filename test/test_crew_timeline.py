@@ -494,7 +494,11 @@ async def test_a_closed_root_is_drawn_from_saved_data_like_the_list_is(_route, m
 
     class _Log(_SavedLog):
         def get_metadata(self, key: str) -> dict[str, Any]:
-            return {"title": "Toy Flag Review", "agent": "kirocrew-conductor"} if key == "dashboard:root" else {}
+            return (
+                {"title": "Toy Flag Review", "agent": "kirocrew-conductor"}
+                if key == "dashboard:root"
+                else {}
+            )
 
         def read_messages_chained_tail(self, key: str, limit: int) -> list[dict[str, Any]]:
             self.tail_reads.append((key, limit))
@@ -511,7 +515,11 @@ async def test_a_closed_root_is_drawn_from_saved_data_like_the_list_is(_route, m
     assert [lane["key"] for lane in body["lanes"]] == ["root", "w1", "gone"]
     assert [lane["role"] for lane in body["lanes"]] == ["conductor", "worker", "worker"]
     root_lane = body["lanes"][0]
-    assert (root_lane["status"], root_lane["record"], root_lane["title"]) == ("closed", True, "Toy Flag Review")
+    assert (root_lane["status"], root_lane["record"], root_lane["title"]) == (
+        "closed",
+        True,
+        "Toy Flag Review",
+    )
     assert [bar["kind"] for bar in root_lane["segments"]] == ["tool"]
     # The saved send still pairs with the live worker's seed row.
     assert body["handoffs"] == [{"from": "root", "to": "w1", "start": _at(1), "end": _at(2)}]
