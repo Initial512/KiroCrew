@@ -982,6 +982,12 @@ from kiro_crew.dashboard.handlers.aws_project_profile import (  # noqa: E402, F4
     api_aws_project_profile_put,
 )
 
+# Quick asks: the parked ``ask`` op's poll (internal) and the owner's answer.
+from kiro_crew.dashboard.handlers.browser_ask import (  # noqa: E402, F401
+    api_browser_ask_answer,
+    api_browser_ask_poll,
+)
+
 # The live browser card's owner-only legs: visibility, frame acks, takeover
 # (claim / release / event) and open-in-browser. Cookie-authed; the internal
 # secret is refused in the handler.

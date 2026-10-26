@@ -480,6 +480,8 @@ def _register_mcp_routes(app: web.Application) -> None:
     app.router.add_post("/api/browser/op", handlers.api_browser_op)
     # The parked ``browser`` tool's hand-back poll while the person holds the browser.
     app.router.add_post("/api/browser/handback", handlers.api_browser_handback)
+    # The parked ``ask`` op's poll: an outcome word, never what the person typed.
+    app.router.add_post("/api/browser/ask/poll", handlers.api_browser_ask_poll)
     # The live-view (PiP) frame ingress. Registered alongside ``invoke`` (not in
     # the dashboard-only block) because the capture that produces a frame runs on
     # BOTH entrypoints — a ``--slack-only`` gateway drives the desktop too, and its

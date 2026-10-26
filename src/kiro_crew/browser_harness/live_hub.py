@@ -162,6 +162,11 @@ class LiveSession:
     #: The hand-back choices the agent's parked op offered, or ``[]``: the card then
     #: shows its own defaults (:meth:`LiveHub.set_handback_options`).
     handback_options: list[str] = field(default_factory=list)
+    #: The pending quick ask (``browser_harness.quick_ask.QuickAsk``), or ``None``.
+    ask: Any = None
+    #: A scoped takeover's frame-pixel rect (x, y, w, h): while set, card input
+    #: outside it is dropped (:meth:`LiveHub.input_event`). Cleared on release.
+    input_rect: tuple[int, int, int, int] | None = None
 
     @property
     def relay(self) -> Relay | None:
@@ -247,6 +252,7 @@ def live_event(sess: LiveSession) -> dict[str, Any]:
         "tab": sess.tab,
         "loop": dict(sess.loop) if sess.loop is not None else None,
         "handback_options": list(sess.handback_options),
+        "ask": sess.ask.wire() if sess.ask is not None and not sess.ask.outcome else None,
     }
 
 
@@ -286,6 +292,18 @@ def handback_options(raw: Any) -> list[str]:
         if len(out) == HANDBACK_OPTIONS_MAX:
             break
     return out
+
+
+def _inside_scope(event: Any, rect: tuple[int, int, int, int]) -> bool:
+    """Whether a scoped takeover lets *event* through: a pointer inside *rect*, or a
+    key that is not Tab (Tab would walk focus out of the widget). Wheel never: a
+    scroll moves the page under a rect measured before it."""
+    if event.type == "key":
+        return event.key != "Tab"
+    if event.type == "wheel":
+        return False
+    x, y, w, h = rect
+    return x <= event.x <= x + w and y <= event.y <= y + h
 
 
 def _step_wire(step: Step) -> dict[str, Any]:
@@ -504,6 +522,11 @@ class LiveHub:
         self._fold(sess)
 
     def _fold(self, sess: LiveSession) -> None:
+        if sess.ask is not None:
+            # The turn is over: nobody is left to read the answer.
+            sess.ask.settle("cancelled")
+            sess.ask = None
+        sess.input_rect = None
         sess.fold_on_release = False
         sess.parked = False
         sess.ended = True
@@ -900,6 +923,7 @@ class LiveHub:
         else:
             delivered = ""
         sess.handback_options = []
+        sess.input_rect = None
         sess.lock.release()
         sess.released.set()
         if sess.stream is not None:
@@ -933,6 +957,12 @@ class LiveHub:
         sess.handback_options = options
         self._emit(sess)
 
+    async def ask_changed(self, session_key: str) -> None:
+        """Publish the card's ``ask`` field after a quick ask was set, moved or ended."""
+        sess = self._sessions.get(session_key)
+        if sess is not None:
+            await self._emit_now(sess)
+
     def _record_handback(self, sess: LiveSession, note: str, choice: str) -> None:
         rec = self.recorder
         if rec is None:
@@ -957,6 +987,11 @@ class LiveHub:
         stream = sess.stream
         if stream is None or not stream.session_id:
             raise LookupError("no_stream")
+        if sess.input_rect is not None and not _inside_scope(
+            parse_input_event(event), sess.input_rect
+        ):
+            # A scoped takeover (a human_check): only the widget's box takes input.
+            return 0
         scale = float(getattr(stream, "scale", 1.0) or 1.0)
         sent = await dispatch_input(stream.relay, stream.session_id, event, scale=scale)
         stream.note_input()

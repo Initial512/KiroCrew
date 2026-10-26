@@ -69,6 +69,15 @@ HANDBACK_WAIT_S = 3.0
 #: The shim's HTTP timeout for one hand-back poll.
 HANDBACK_CALL_TIMEOUT_S = HANDBACK_WAIT_S + SHIM_MARGIN_S
 
+#: A quick ask (the ``ask`` op, ``browser_harness.quick_ask``) waits this long for
+#: the person's answer; a human_check takeover is bounded tighter. The agent's
+#: tool parks on ``/api/browser/ask/poll`` like the hand-back hold, each poll
+#: waiting at most ``ASK_WAIT_S`` on the ask's own settle signal.
+ASK_TIMEOUT_S = 10 * 60.0
+HUMAN_CHECK_TIMEOUT_S = 5 * 60.0
+ASK_WAIT_S = HANDBACK_WAIT_S
+ASK_CALL_TIMEOUT_S = ASK_WAIT_S + SHIM_MARGIN_S
+
 #: The credential re-pull before a ``navigate`` or ``tabs`` op
 #: (``HarnessSupervisor.refresh_credentials_if_source_changed``): the provider's
 #: ``fingerprint()``, the wait for a start in flight, then the re-pull itself.
@@ -105,6 +114,10 @@ SHIM_FAST_TIMEOUT_S = GATEWAY_FAST_WORST_S + SHIM_MARGIN_S
 SHIM_SLOW_TIMEOUT_S = GATEWAY_SLOW_WORST_S + SHIM_MARGIN_S
 
 __all__ = [
+    "ASK_CALL_TIMEOUT_S",
+    "ASK_TIMEOUT_S",
+    "ASK_WAIT_S",
+    "HUMAN_CHECK_TIMEOUT_S",
     "DECISION_HEADROOM_S",
     "DECISION_POST_OP_S",
     "DECISION_PRE_OP_S",

@@ -440,8 +440,10 @@ async def api_browser_op(request: web.Request) -> web.Response:
         return _held(request, hub, key, op, interrupted=True)
     assert isinstance(result, dict)
     # The turn replay's event for this op: generic, from the step it reported and
-    # the result it answered (``browser_harness.recording.agent_event``).
-    hub.record_op(key, op, args, result, mark)
+    # the result it answered (``browser_harness.recording.agent_event``). An ask
+    # records its own ``person`` events instead.
+    if op != "ask":
+        hub.record_op(key, op, args, result, mark)
     # A note left for a parked poll that never came back to take it reaches this op.
     said = hub.take_handback(key)
     if result.get("ok"):
@@ -563,6 +565,15 @@ async def _fenced_op(
         if hub.in_control(key):
             # A claim landed during the bind; the op has not touched the page yet.
             return _HELD
+        if op == "ask":
+            # A quick ask binds to the card's own stream: make sure one runs on the
+            # tab just bound, then put the ask on the card (it never runs ``run_op``).
+            await follow_current_tab(hub, key, supervisor)
+            from kiro_crew.dashboard.handlers.browser_ask import run_ask
+
+            result = await asyncio.wait_for(run_ask(hub, key, args), timeout=OP_TIMEOUT_S)
+            _audit(request, "allowed")
+            return result
         task = asyncio.ensure_future(harness_ops.run_op(op, args, ctx))
         hub.op_started(key, task)
         try:

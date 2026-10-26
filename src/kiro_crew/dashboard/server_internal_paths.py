@@ -30,6 +30,9 @@ _STRICT_INTERNAL_API_PATHS = frozenset(
         "/api/browser/op",
         # Its hand-back poll: the parked tool asks whether the person let go.
         "/api/browser/handback",
+        # Its quick-ask poll: the parked ``ask`` op asks whether the person answered.
+        # Only an outcome word comes back; the answer itself is the owner's route.
+        "/api/browser/ask/poll",
         # External terminal grant redemption. Its only caller is the desktop
         # shell's main process, loopback + internal-secret; the browser holds
         # the grant but must never redeem it, so

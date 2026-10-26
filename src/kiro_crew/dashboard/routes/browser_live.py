@@ -44,6 +44,8 @@ def register(app: web.Application) -> None:
     app.router.add_post("/api/browser/input/claim", handlers.api_browser_input_claim)
     app.router.add_post("/api/browser/input/release", handlers.api_browser_input_release)
     app.router.add_post("/api/browser/input/event", handlers.api_browser_input_event)
+    # The card's answer to a quick ask (owner-only, ``handlers/browser_ask.py``).
+    app.router.add_post("/api/browser/ask/answer", handlers.api_browser_ask_answer)
     # The turn replay (owner-only GETs, ``handlers/browser_recordings.py``). Every
     # path segment is matched against a strict pattern inside the handler.
     app.router.add_get(

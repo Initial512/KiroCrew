@@ -109,6 +109,7 @@ async def test_steps_build_the_strip_and_each_change_publishes_one_event(hub) ->
         "tab": "",
         "loop": None,
         "handback_options": [],
+        "ask": None,
     }
 
 

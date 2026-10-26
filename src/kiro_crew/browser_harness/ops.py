@@ -70,6 +70,9 @@ OPS: tuple[str, ...] = (
     "screenshot",
     "tabs",
     "reflex",
+    # Served by the gateway route itself (``dashboard/handlers/browser_ask.py``):
+    # it needs the live card, which this module never sees. ``run_op`` refuses it.
+    "ask",
 )
 
 # Ops that legitimately take longer than one CDP round trip (a page load, an
@@ -558,8 +561,8 @@ def _password_refusal(ref: Any) -> dict[str, Any]:
     return refusal(
         "password_field",
         f"{ref or 'the focused field'} is a password field. The agent never types a "
-        "password: ask the user to take over the browser (click the live view) and "
-        "sign in themselves, then continue.",
+        "password: use the `ask` op (kind credentials) so the user fills it in on the "
+        "live card, or ask them to take over and sign in themselves, then continue.",
     )
 
 
@@ -729,6 +732,11 @@ async def _reflex(ctx: OpContext, args: dict[str, Any]) -> dict[str, Any]:
     return await module.run(ctx, args)  # type: ignore[no-any-return]
 
 
+async def _ask_elsewhere(_ctx: OpContext, _args: dict[str, Any]) -> dict[str, Any]:
+    """``ask`` needs the live card; the op route serves it and never calls here."""
+    return refusal("not_available", "ask is served by the gateway's op route")
+
+
 _HANDLERS: dict[str, Callable[[OpContext, dict[str, Any]], Awaitable[dict[str, Any]]]] = {
     "navigate": _navigate,
     "back": _back,
@@ -745,6 +753,7 @@ _HANDLERS: dict[str, Callable[[OpContext, dict[str, Any]], Awaitable[dict[str, A
     "screenshot": _screenshot,
     "tabs": _tabs,
     "reflex": _reflex,
+    "ask": _ask_elsewhere,
 }
 
 
