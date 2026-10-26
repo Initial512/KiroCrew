@@ -291,7 +291,13 @@ async def api_artifact_post_comment(request: web.Request) -> web.Response:
     # must be denied too. Denial keeps the comment LOCAL (local_only) rather than
     # 403-ing — the local comment store is unaffected.
     gov_denied = (
-        _publish_governance_denied(request, comment.target_provider or DEFAULT_PROVIDER)
+        (
+            await _run_off_loop(
+                lambda: _publish_governance_denied(
+                    request, comment.target_provider or DEFAULT_PROVIDER
+                )
+            )
+        )
         if scope == "shared" and comment.target_external_id
         else "not shared"
     )
@@ -430,7 +436,14 @@ async def api_artifact_reply_comment(request: web.Request) -> web.Response:
         parent.origin
         and parent.origin != "local"
         and reply.target_external_id
-        and _publish_governance_denied(request, reply.target_provider or DEFAULT_PROVIDER) is None
+        and (
+            await _run_off_loop(
+                lambda: _publish_governance_denied(
+                    request, reply.target_provider or DEFAULT_PROVIDER
+                )
+            )
+        )
+        is None
     ):
         try:
 
@@ -501,7 +514,14 @@ async def api_artifact_mark_review(request: web.Request) -> web.Response:
         target.origin
         and target.origin != "local"
         and target.target_external_id
-        and _publish_governance_denied(request, target.target_provider or DEFAULT_PROVIDER) is None
+        and (
+            await _run_off_loop(
+                lambda: _publish_governance_denied(
+                    request, target.target_provider or DEFAULT_PROVIDER
+                )
+            )
+        )
+        is None
     ):
         try:
 
@@ -725,7 +745,14 @@ async def api_artifact_delete_comment(request: web.Request) -> web.Response:
         target
         and is_provider_origin
         and target.target_external_id
-        and _publish_governance_denied(request, target.target_provider or DEFAULT_PROVIDER) is None
+        and (
+            await _run_off_loop(
+                lambda: _publish_governance_denied(
+                    request, target.target_provider or DEFAULT_PROVIDER
+                )
+            )
+        )
+        is None
     ):
         try:
 
@@ -842,7 +869,14 @@ async def api_artifact_edit_comment(request: web.Request) -> web.Response:
         target.origin
         and target.origin != "local"
         and target.target_external_id
-        and _publish_governance_denied(request, target.target_provider or DEFAULT_PROVIDER) is None
+        and (
+            await _run_off_loop(
+                lambda: _publish_governance_denied(
+                    request, target.target_provider or DEFAULT_PROVIDER
+                )
+            )
+        )
+        is None
     ):
         try:
             provider = get_provider(target.target_provider or DEFAULT_PROVIDER)
