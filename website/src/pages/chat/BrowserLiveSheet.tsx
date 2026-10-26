@@ -46,9 +46,13 @@ export default function BrowserLiveSheet({ sessionKey }: { sessionKey: string })
             paddingBottom: 'env(safe-area-inset-bottom)',
           }}
           data-testid="browser-live-sheet"
-          // While the person holds the browser, Esc is the canvas's hand back; the
-          // dialog listens in the capture phase, so it must stand aside here.
-          onEscapeKeyDown={e => { if (browserLiveStore.inControl(sessionKey)) e.preventDefault() }}
+          // While the person holds the browser, Esc is the canvas's hand back, and
+          // inside a quick ask's sheet it folds that sheet; the dialog listens in
+          // the capture phase, so it must stand aside for both.
+          onEscapeKeyDown={e => {
+            const inAsk = e.target instanceof Element && !!e.target.closest('[data-quick-ask-sheet]')
+            if (inAsk || browserLiveStore.inControl(sessionKey)) e.preventDefault()
+          }}
         >
           <DialogTitle className="sr-only">{i18nT('pages.chat.browserLiveStage.sheet_title')}</DialogTitle>
           {/* Only the stage's header row makes room for the dialog's close button;

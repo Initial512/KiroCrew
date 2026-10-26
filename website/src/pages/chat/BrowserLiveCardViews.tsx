@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode, type RefObject } from 'react'
+import { useRef, useState, type RefObject } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
 import {
   Check, ExternalLink, Globe, Hand, History, Lock, LogIn, Maximize2,
@@ -18,6 +18,8 @@ import BrowserLiveCardCanvas, { type BrowserLiveCanvasHandle } from './BrowserLi
 import { frameBoxStyle, useFrameMaxHeight } from './browserLiveFit'
 import { BrowserLiveHandbackBar } from './BrowserLiveHandback'
 import { BrowserLiveLoopLine, FoldedSteps, foldLoopRuns, useOpenRuns } from './BrowserLiveLoop'
+import { QuickAskZoom } from './quickAsk/QuickAskParts'
+import { useQuickAsk } from './quickAsk/useQuickAsk'
 
 /**
  * The three faces of BrowserLiveCard. Each is the INSIDE of the card's one
@@ -108,12 +110,8 @@ export function BrowserLiveAllowView({ turn, onSwitchToBrowser, onUseKiroBrowser
 
 // ---- Live and In control -----------------------------------------------------
 
-export function BrowserLiveLiveView({ turn, onScreen, canvasRef, onClaim, onRelease, onOpenInBrowser, onExpand, onCloseLive, frameOverlay, askSlot }: {
+export function BrowserLiveLiveView({ turn, onScreen, canvasRef, onClaim, onRelease, onOpenInBrowser, onExpand, onCloseLive }: {
   turn: BrowserLiveTurn
-  /** Drawn over the frame (a quick ask's target ring or focused sheet). */
-  frameOverlay?: ReactNode
-  /** Drawn under the frame, above the steps (an inline quick ask). */
-  askSlot?: ReactNode
   onScreen: boolean
   canvasRef: RefObject<BrowserLiveCanvasHandle>
   onClaim: () => void
@@ -137,6 +135,7 @@ export function BrowserLiveLiveView({ turn, onScreen, canvasRef, onClaim, onRele
   const [frameSize, setFrameSize] = useState<FrameSize | null>(null)
   const maxHeight = useFrameMaxHeight(rootRef, boxRef)
   const [openRuns, toggleRun] = useOpenRuns()
+  const quick = useQuickAsk(turn.sessionKey, turn.ask, 1)
 
   // Narrow-first: one column at every width. The header's address pill is the
   // only flexible item (min-w-0 + truncate), the browser chip leaves below `sm`,
@@ -241,25 +240,27 @@ export function BrowserLiveLiveView({ turn, onScreen, canvasRef, onClaim, onRele
       )}
 
       {/* Frame */}
-      <div ref={boxRef} data-testid="browser-live-frame-box" className="group relative bg-card" style={frameBoxStyle(frameSize, maxHeight)}>
+      <div ref={boxRef} data-testid="browser-live-frame-box" className={`group relative bg-card ${quick.zoom ? 'overflow-hidden' : ''}`} style={frameBoxStyle(frameSize, maxHeight)}>
         {turn.hasFrame ? (
-          <BrowserLiveCardCanvas
-            ref={canvasRef}
-            sessionKey={turn.sessionKey}
-            turnId={turn.turnId}
-            visible={onScreen}
-            interactive={inControl}
-            onHandBack={() => onRelease()}
-            onClaim={inControl ? undefined : onClaim}
-            onFrameSize={setFrameSize}
-            aria-label={inControl ? i18nT('pages.chat.browserLiveCard.frame_label_in_control', { host: hostOf(turn.url) }) : frameLabel}
-          />
+          <QuickAskZoom zoom={quick.zoom}>
+            <BrowserLiveCardCanvas
+              ref={canvasRef}
+              sessionKey={turn.sessionKey}
+              turnId={turn.turnId}
+              visible={onScreen}
+              interactive={inControl || quick.scoped}
+              onHandBack={() => onRelease()}
+              onClaim={inControl || quick.scoped ? undefined : onClaim}
+              onFrameSize={setFrameSize}
+              aria-label={inControl || quick.scoped ? i18nT('pages.chat.browserLiveCard.frame_label_in_control', { host: hostOf(turn.url) }) : frameLabel}
+            />
+          </QuickAskZoom>
         ) : (
           <div className="absolute inset-0 grid place-items-center text-[13px] text-muted" role="status">
             {i18nT('pages.chat.browserLiveCard.waiting_for_first_frame')}
           </div>
         )}
-        {!inControl && turn.hasFrame && (
+        {!inControl && !quick.scoped && turn.hasFrame && (
           // The hover cue. Pointer-events off: the click lands on the canvas.
           <div
             aria-hidden="true"
@@ -277,12 +278,12 @@ export function BrowserLiveLiveView({ turn, onScreen, canvasRef, onClaim, onRele
             <span className="truncate">{step}</span>
           </div>
         )}
-        {!inControl && frameOverlay}
+        {!inControl && quick.frameOverlay}
       </div>
 
-      {!inControl && askSlot}
+      {(!inControl || quick.scoped) && quick.askSlot}
 
-      {inControl && <BrowserLiveHandbackBar offered={turn.handbackOptions} onHandBack={onRelease} />}
+      {inControl && !quick.scoped && <BrowserLiveHandbackBar offered={turn.handbackOptions} onHandBack={onRelease} />}
 
       {!inControl && turn.loop && <BrowserLiveLoopLine loop={turn.loop} className="px-3 py-2 border-t border-border" />}
 

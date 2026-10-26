@@ -144,6 +144,7 @@ export function ReplayCanvas({ rec, index, label }: { rec: Recording; index: num
 
 /** What an event says in a few words: its own label, else a description of its op. */
 export function eventLabel(e: ReplayEvent): string {
+  if (e.op === 'person') return personLabel(e)
   const own = sanitizeLlmOutput(e.label).slice(0, 80)
   if (own) return own
   switch (e.op) {
@@ -155,6 +156,29 @@ export function eventLabel(e: ReplayEvent): string {
     case 'navigate': return e.url ? e.url : i18nT('pages.chat.browserLiveStage.op_navigate')
     default: return i18nT('pages.chat.browserLiveStage.op_other')
   }
+}
+
+/** "Sign-in · you filled it": our own words for a quick ask the person answered. */
+function personLabel(e: ReplayEvent): string {
+  const p = e.person
+  const kinds: Record<string, string> = {
+    credentials: i18nT('pages.chat.quickAsk.replay_kind_credentials'),
+    text: i18nT('pages.chat.quickAsk.replay_kind_text'),
+    otp: i18nT('pages.chat.quickAsk.replay_kind_otp'),
+    human_check: i18nT('pages.chat.quickAsk.replay_kind_human_check'),
+    confirm: i18nT('pages.chat.quickAsk.replay_kind_confirm'),
+  }
+  const actions: Record<string, string> = {
+    fill: i18nT('pages.chat.quickAsk.replay_action_fill'),
+    decline: i18nT('pages.chat.quickAsk.replay_action_decline'),
+    take_over: i18nT('pages.chat.quickAsk.replay_action_take_over'),
+    done: i18nT('pages.chat.quickAsk.replay_action_done'),
+    confirm: i18nT('pages.chat.quickAsk.replay_action_confirm'),
+    cancel: i18nT('pages.chat.quickAsk.replay_action_cancel'),
+  }
+  const kind = (p && kinds[p.kind]) || i18nT('pages.chat.quickAsk.replay_kind_other')
+  const action = p ? actions[p.action] : ''
+  return action ? i18nT('pages.chat.quickAsk.replay_label', { kind, action }) : kind
 }
 
 const SCROLL_ICON = { up: ArrowUp, down: ArrowDown, left: ArrowLeft, right: ArrowRight } as const

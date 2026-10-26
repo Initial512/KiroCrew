@@ -9,6 +9,7 @@
 
 import type { ClientTransport } from './transport'
 import type { BrowserInputEvent } from '../../hooks/useBrowserLive.input'
+import type { QuickAskAction, QuickAskValues } from '../../pages/chat/quickAsk/types'
 
 export type { BrowserInputEvent }
 
@@ -66,6 +67,11 @@ export function createBrowserLiveEndpoints({ get, post, j }: ClientTransport) {
        *  when that tab is closed, `stale_turn` when a newer card owns the session. */
       browserLiveReopen: (sessionKey: string, turnId: string) =>
         post('/api/browser/live/reopen', { session_key: sessionKey, turn_id: turnId }).then(j) as Promise<BrowserLiveOk>,
+      /** Answer a quick ask. Owner-only. `values` are the person's typed values and
+       *  travel in this body only; the gateway refuses with `origin_changed` or
+       *  `stale` when the page moved on, and fills nothing. */
+      browserAskAnswer: (body: { session_key: string; ask_id: string; action: QuickAskAction; values?: QuickAskValues }) =>
+        post('/api/browser/ask/answer', body).then(j) as Promise<unknown>,
       /** Fold a reopened view back to its done line. */
       browserLiveClose: (sessionKey: string) =>
         post('/api/browser/live/close', { session_key: sessionKey }).then(j) as Promise<BrowserLiveOk>,

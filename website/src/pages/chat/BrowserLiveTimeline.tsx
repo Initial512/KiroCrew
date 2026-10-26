@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import {
   ChevronsDown, Dot, Keyboard, MousePointerClick, Move, Navigation, Pause, Play, RotateCcw,
-  SkipBack, SkipForward, Type,
+  SkipBack, SkipForward, Type, UserRound,
 } from 'lucide-react'
 
 import { Btn } from '../../components/ui'
@@ -109,12 +109,12 @@ export function clockLabel(ms: number): string {
 }
 
 const OP_ICON: Record<ReplayOp, typeof Dot> = {
-  click: MousePointerClick, type: Type, key: Keyboard, drag: Move, scroll: ChevronsDown, navigate: Navigation, other: Dot,
+  click: MousePointerClick, type: Type, key: Keyboard, drag: Move, scroll: ChevronsDown, navigate: Navigation, person: UserRound, other: Dot,
 }
 /** Marker colours: tokens only, one per op family. */
 const OP_TONE: Record<ReplayOp, string> = {
   click: 'var(--accent)', type: 'var(--aim)', key: 'var(--muted-strong)', drag: 'var(--danger)',
-  scroll: 'var(--warn)', navigate: 'var(--info)', other: 'var(--border-strong)',
+  scroll: 'var(--warn)', navigate: 'var(--info)', person: 'var(--ok)', other: 'var(--border-strong)',
 }
 
 export function OpIcon({ op, size = 12 }: { op: ReplayOp; size?: number }) {
@@ -313,7 +313,8 @@ function StepRow({ rec, e, i, current, onSeekStep }: {
       >
         <OpIcon op={e.op} />
         <span className="min-w-0 flex-1 truncate">{eventLabel(e)}</span>
-        {e.actor === 'user' && <span className="shrink-0 text-[11px] text-muted">{i18nT('pages.chat.browserLiveStage.by_you')}</span>}
+        {e.op === 'person' && <span className="shrink-0 rounded-full border border-border px-1.5 text-[10px] leading-4 text-muted" data-testid="browser-replay-person">{i18nT('pages.chat.quickAsk.replay_badge')}</span>}
+        {e.actor === 'user' && e.op !== 'person' && <span className="shrink-0 text-[11px] text-muted">{i18nT('pages.chat.browserLiveStage.by_you')}</span>}
         {e.status === 'error' && <span className="shrink-0 text-[11px] text-danger">{i18nT('pages.chat.browserLiveStage.failed')}</span>}
         <span className="shrink-0 text-[12px] text-muted tabular-nums">{clockLabel(offsetOf(rec, i))}</span>
       </button>

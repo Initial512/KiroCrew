@@ -850,6 +850,7 @@
     "pages.settings.browserPanel.waiting_allow_desc": "Status line while Chrome shows its Allow remote debugging prompt.",
     "pages.settings.browserPanel.preparing_desc": "Status line while the browser engine installs, whether the gateway started the install itself at startup or the user pressed Install or Retry.",
     "pages.settings.browserPanel.credentials_pending": "Status line under the Settings > Browser sign-in switch when it is on but Kiro's own browser has not used the sign-in yet: it is used from the next web page that browser opens (which is also when it first starts).",
+    "pages.chat.quickAsk.replay_badge": "Small badge on a replay step the person answered through a quick ask (sign-in, code, human check); means the person, not Kiro, did this step.",
     "pages.settings.browserPanel.credentials_disabled": "Status line under the Settings > Browser sign-in switch when it is turned off; the adjective (switched off), not a command."
   }
 }

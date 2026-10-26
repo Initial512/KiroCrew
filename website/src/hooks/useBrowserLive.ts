@@ -34,6 +34,7 @@ import { api } from '../api/client'
 import { BROWSER_HANDBACK_CHAT_EVENT, type BrowserHandbackSaid } from '../api/client/browserLive'
 import type { BrowserInputEvent } from './useBrowserLive.input'
 import { FrameRing, decodeBrowserFrame, type DecodedBrowserFrame } from './useBrowserLive.frame'
+import { readQuickAsk, type QuickAsk, type QuickAskAction, type QuickAskAnswer, type QuickAskValues } from '../pages/chat/quickAsk/types'
 
 export type BrowserLiveState = 'waiting_allow' | 'live' | 'in_control' | 'done' | 'login_needed' | 'error'
 export type BrowserKind = 'user_chrome' | 'edge' | 'kiro_chromium'
@@ -95,6 +96,8 @@ export interface BrowserLiveEvent {
   loop?: BrowserLiveLoop | null
   /** The hand-back choices the agent's waiting op offered; empty: the card's own. */
   handback_options?: string[]
+  /** The quick ask the agent's browser is waiting on, or null once there is none. */
+  ask?: QuickAsk | null
 }
 
 export type BrowserLiveTab = '' | 'open' | 'closed'
@@ -136,6 +139,8 @@ export interface BrowserLiveTurn {
   loop: BrowserLiveLoop | null
   /** The hand-back choices the agent offered (empty: the card shows its own). */
   handbackOptions: string[]
+  /** The quick ask waiting for the person (see `pages/chat/quickAsk`), else null. */
+  ask: QuickAsk | null
 }
 
 interface SessionRecord {
@@ -256,6 +261,7 @@ export function readBrowserLiveEvent(raw: unknown): BrowserLiveEvent | null {
     tab: d.tab === 'open' || d.tab === 'closed' || d.tab === '' ? d.tab : undefined,
     loop: d.loop === undefined ? undefined : readLoop(d.loop),
     handback_options: d.handback_options === undefined ? undefined : readOptions(d.handback_options),
+    ask: d.ask === undefined ? undefined : readQuickAsk(d.ask),
   }
 }
 
@@ -300,6 +306,7 @@ class BrowserLiveStore {
     open: (k: string) => api.browserLiveOpenInBrowser(k) as Promise<unknown>,
     reopen: (k: string, turnId: string) => api.browserLiveReopen(k, turnId) as Promise<unknown>,
     close: (k: string) => api.browserLiveClose(k) as Promise<unknown>,
+    answer: (body: Parameters<typeof api.browserAskAnswer>[0]) => api.browserAskAnswer(body) as Promise<unknown>,
   }
 
   private session(key: string): SessionRecord {
@@ -399,6 +406,8 @@ class BrowserLiveStore {
       log,
       loop: ev.loop !== undefined ? ev.loop : prev?.loop ?? null,
       handbackOptions: ev.handback_options ?? prev?.handbackOptions ?? [],
+      // An ended turn has nothing left to answer.
+      ask: isEnded(ev.state) ? null : ev.ask !== undefined ? ev.ask : prev?.ask ?? null,
     }
     s.turns.set(next.turnId, next)
     s.current = next
@@ -665,6 +674,33 @@ class BrowserLiveStore {
         this.notify()
       }
       return false
+    }
+  }
+
+  /**
+   * Answer a quick ask. `values` go into this one POST and nowhere else: not
+   * the record, not the error text, not a log. A refusal resolves with the
+   * gateway's `error` code (or `send_failed`), never throws.
+   */
+  async answerAsk(sessionKey: string, askId: string, action: QuickAskAction, values?: QuickAskValues): Promise<QuickAskAnswer> {
+    try {
+      const r = await this.writes.answer({ session_key: sessionKey, ask_id: askId, action, ...(values ? { values } : {}) })
+      const d = (r ?? {}) as { ok?: unknown; outcome?: unknown; error?: unknown }
+      return {
+        ok: d.ok === true,
+        ...(typeof d.outcome === 'string' ? { outcome: d.outcome } : {}),
+        ...(d.ok === true ? {} : { error: typeof d.error === 'string' && d.error ? d.error : 'send_failed' }),
+      }
+    } catch (e) {
+      const body = (e as { body?: unknown } | null)?.body
+      let code = ''
+      if (typeof body === 'string' && body) {
+        try {
+          const parsed = JSON.parse(body) as { error?: unknown; code?: unknown }
+          code = typeof parsed.error === 'string' ? parsed.error : typeof parsed.code === 'string' ? parsed.code : ''
+        } catch { /* not JSON */ }
+      }
+      return { ok: false, error: code || 'send_failed' }
     }
   }
 

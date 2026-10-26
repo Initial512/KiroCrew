@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import { memo, useCallback, useEffect, useId, useRef, useState } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
 import { useInRouterContext, useNavigate } from 'react-router-dom'
 
@@ -78,9 +78,6 @@ export interface BrowserLiveCardProps {
   running: boolean
   /** Navigate to a dashboard path (Settings -> Browser). */
   goTo: (to: string) => void
-  /** A pending quick ask, drawn over the frame / under it (live view only). */
-  frameOverlay?: ReactNode
-  askSlot?: ReactNode
 }
 
 type View = 'allow' | 'live' | 'done'
@@ -94,7 +91,7 @@ function viewFor(turn: BrowserLiveTurn): View {
   }
 }
 
-function BrowserLiveCard({ sessionKey, anchorKey, anchorTs, running, goTo, frameOverlay, askSlot }: BrowserLiveCardProps) {
+function BrowserLiveCard({ sessionKey, anchorKey, anchorTs, running, goTo }: BrowserLiveCardProps) {
   useLanguageGeneration()
   const turn = useBrowserLiveTurn(sessionKey, anchorKey, running, anchorTs)
   const reduce = useReducedMotion()
@@ -214,8 +211,6 @@ function BrowserLiveCard({ sessionKey, anchorKey, anchorTs, running, goTo, frame
             onOpenInBrowser={openInBrowser}
             onExpand={expand}
             onCloseLive={closeLive}
-            frameOverlay={frameOverlay}
-            askSlot={askSlot}
           />
         )}
         {!staged && view === 'done' && (

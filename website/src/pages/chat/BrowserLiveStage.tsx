@@ -22,6 +22,8 @@ import { BrowserLiveHandbackBar } from './BrowserLiveHandback'
 import { BrowserLiveLoopLine } from './BrowserLiveLoop'
 import type { BrowserHandbackSaid } from '../../api/client/browserLive'
 import { ReplayStepList, ReplayTimeline, replayKeyAction, useReplayPlayer } from './BrowserLiveTimeline'
+import { QuickAskZoom } from './quickAsk/QuickAskParts'
+import { useQuickAsk } from './quickAsk/useQuickAsk'
 
 /**
  * The agent's browser, big: the side panel's "Agent browser" view and the
@@ -157,6 +159,8 @@ export default function BrowserLiveStage({ sessionKey, stage, active }: BrowserL
   }, [inControl, mode, recording, player, sessionKey, turnId])
 
   const [frameSize, setFrameSize] = useState<FrameSize | null>(null)
+  // The big view outranks the card for the ask's sheet while it is showing.
+  const quick = useQuickAsk(sessionKey, mode === 'live' ? turn?.ask ?? null : null, active ? 2 : 0)
   if (!turn && !recording) {
     return (
       <div className="h-full grid place-items-center p-6 text-center text-[13px] text-muted" data-testid="browser-live-stage-empty">
@@ -278,24 +282,27 @@ export default function BrowserLiveStage({ sessionKey, stage, active }: BrowserL
             {mode === 'live' && turn ? (
               <PictureBox ratio={liveRatio} testId="browser-live-stage-picture">
                 {turn.hasFrame ? (
-                  <BrowserLiveCardCanvas
-                    ref={canvasRef}
-                    sessionKey={sessionKey}
-                    turnId={turn.turnId}
-                    visible={active}
-                    interactive={inControl}
-                    onHandBack={() => release()}
-                    onClaim={inControl ? undefined : claim}
-                    onFrameSize={setFrameSize}
-                    aria-label={inControl
-                      ? i18nT('pages.chat.browserLiveCard.frame_label_in_control', { host })
-                      : i18nT('pages.chat.browserLiveCard.frame_label', { host })}
-                  />
+                  <QuickAskZoom zoom={quick.zoom}>
+                    <BrowserLiveCardCanvas
+                      ref={canvasRef}
+                      sessionKey={sessionKey}
+                      turnId={turn.turnId}
+                      visible={active}
+                      interactive={inControl || quick.scoped}
+                      onHandBack={() => release()}
+                      onClaim={inControl || quick.scoped ? undefined : claim}
+                      onFrameSize={setFrameSize}
+                      aria-label={inControl || quick.scoped
+                        ? i18nT('pages.chat.browserLiveCard.frame_label_in_control', { host })
+                        : i18nT('pages.chat.browserLiveCard.frame_label', { host })}
+                    />
+                  </QuickAskZoom>
                 ) : (
                   <div className="absolute inset-0 grid place-items-center text-[13px] text-muted" role="status">
                     {i18nT('pages.chat.browserLiveCard.waiting_for_first_frame')}
                   </div>
                 )}
+                {!inControl && quick.frameOverlay}
               </PictureBox>
             ) : recording && recording.frames.length > 0 ? (
               <PictureBox ratio={replayRatio} testId="browser-live-stage-picture">
@@ -309,7 +316,8 @@ export default function BrowserLiveStage({ sessionKey, stage, active }: BrowserL
             )}
           </div>
 
-          {inControl && mode === 'live' && turn && (
+          {mode === 'live' && (!inControl || quick.scoped) && quick.askSlot}
+          {inControl && !quick.scoped && mode === 'live' && turn && (
             <BrowserLiveHandbackBar offered={turn.handbackOptions} onHandBack={release} className="shrink-0" />
           )}
           {mode === 'live' && !inControl && turn?.loop && (

@@ -25,8 +25,16 @@ import { browserLiveFrameUrl } from '../api/client/browserLive'
 import type { BrowserLiveTurn } from './useBrowserLive'
 import type { DecodedBrowserFrame } from './useBrowserLive.frame'
 
-export type ReplayOp = 'click' | 'type' | 'key' | 'drag' | 'scroll' | 'navigate' | 'other'
-const OPS: ReadonlySet<string> = new Set(['click', 'type', 'key', 'drag', 'scroll', 'navigate', 'other'])
+export type ReplayOp = 'click' | 'type' | 'key' | 'drag' | 'scroll' | 'navigate' | 'person' | 'other'
+const OPS: ReadonlySet<string> = new Set(['click', 'type', 'key', 'drag', 'scroll', 'navigate', 'person', 'other'])
+
+/**
+ * A quick ask the person answered (`op: 'person'`): which kind, what they did
+ * and how it ended, and the origin it was for. The gateway never records the
+ * values; the card draws only these four words, never the event's own label
+ * or args.
+ */
+export interface ReplayPerson { kind: string; action: string; outcome: string; origin: string }
 
 export interface ReplayPoint { x: number; y: number }
 
@@ -48,6 +56,8 @@ export interface ReplayEvent {
   fh?: number
   /** A move a loop op (`reflex`) made inside itself; the step list folds a run of them. */
   loop: boolean
+  /** Set for `op: 'person'`. */
+  person?: ReplayPerson
 }
 
 export interface ReplayFrame {
@@ -100,6 +110,14 @@ function readPath(v: unknown): ReplayPoint[] | null {
   return out.length >= 2 ? out : null
 }
 
+const PERSON_FAILED: ReadonlySet<string> = new Set(['origin_changed', 'stale', 'error', 'failed'])
+
+/** A person event's four words, from the event itself or its `args`. */
+function readPerson(r: Record<string, unknown>, args: Record<string, unknown>): ReplayPerson {
+  const word = (k: string) => (str(r[k]) || str(args[k])).slice(0, 40)
+  return { kind: word('kind'), action: word('action'), outcome: word('outcome'), origin: (str(r.origin) || str(args.origin)).slice(0, 200) }
+}
+
 /** The recordings list, or [] for anything that is not one. */
 export function readRecordingList(raw: unknown): RecordingSummary[] {
   const turns = raw && typeof raw === 'object' ? (raw as Record<string, unknown>).turns : null
@@ -149,16 +167,21 @@ export function readRecording(raw: unknown, sessionKey: string): Recording | nul
     if (ts === null) continue
     const op = typeof r.op === 'string' && OPS.has(r.op) ? (r.op as ReplayOp) : 'other'
     n += 1
+    const args = r.args && typeof r.args === 'object' && !Array.isArray(r.args) ? r.args as Record<string, unknown> : {}
+    const person = op === 'person' ? readPerson(r, args) : undefined
     events.push({
       id: str(r.id) || `e${n}`,
       ts,
       op,
-      label: str(r.label),
-      args: r.args && typeof r.args === 'object' && !Array.isArray(r.args) ? r.args as Record<string, unknown> : {},
+      // A person event carries no text of its own on screen: only its four words.
+      label: person ? '' : str(r.label),
+      args: person ? {} : args,
+      ...(person ? { person } : {}),
       point: readPoint(r.point),
       path: readPath(r.path),
       url: str(r.url),
-      status: r.status === 'error' ? 'error' : 'ok',
+      // A person event that filled nothing (the page moved on) reads as failed.
+      status: r.status === 'error' || (person && PERSON_FAILED.has(person.outcome)) ? 'error' : 'ok',
       actor: r.actor === 'user' ? 'user' : 'agent',
       loop: r.loop === true,
       ...(num(r.fw) && num(r.fh) ? { fw: num(r.fw) as number, fh: num(r.fh) as number } : {}),
