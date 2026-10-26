@@ -49,7 +49,6 @@ import { SessionSourceChips } from './SessionSourceChips'
 import { CrewEyebrow, CrewGhostBadge, CrewWorkerStack } from '../../components/crew/CrewModeMarks'
 import { summarizeCrewWorkers } from '../../lib/crewWorkers'
 import { useCrewWorkerSummary } from '../chat/command-center/CrewWorkerList'
-import ErrorNotice from '../../components/ErrorNotice'
 
 /**
  * Session-row type scale, quantized to a 4px baseline grid.
@@ -239,18 +238,12 @@ interface SessionRowProps {
 function CrewRootSummaryLine({ root, fallback }: { root: string; fallback: ReactNode }) {
   // The server's groups (the worker list API), so the row, the panel and the
   // breadcrumb agree; the fallback until the list has answered.
-  const { workers, failed } = useCrewWorkerSummary(root)
+  // A failed background poll keeps the last summary the list gave, and with none
+  // the row keeps its normal line: the read error and its retry live only in the
+  // Workers panel, never as a red notice on a list row.
+  const { lastWorkers } = useCrewWorkerSummary(root)
   // Only tool approvals reach the person; a worker's question is its conductor's.
-  const { groups, approval, done, total } = summarizeCrewWorkers(workers ?? [])
-  // A failed read is said on the same one line, never as stale counts. The draft
-  // is saved per chat, so the hand-off has nothing to lose.
-  if (failed) {
-    return (
-      <div className={ROW_STATUS_LINE_CLS} data-testid="crew-root-summary-error">
-        <ErrorNotice variant="inline" message={i18nT('commandCenter.workers_error')} askAgent />
-      </div>
-    )
-  }
+  const { groups, approval, done, total } = summarizeCrewWorkers(lastWorkers ?? [])
   if (total === 0) return <>{fallback}</>
   return (
     <div className={ROW_STATUS_LINE_CLS} data-testid="crew-root-summary">

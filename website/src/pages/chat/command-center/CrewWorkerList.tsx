@@ -40,7 +40,11 @@ export function useCrewWorkers(root: string, active: boolean) {
  *  query (and cache) the panel reads, re-read every 15s when the panel is not.
  *  `failed` is true while the latest read failed: the caller says so rather than
  *  showing counts from an older read, or nothing at all. */
-export function useCrewWorkerSummary(root: string): { workers: CrewWorker[] | undefined; failed: boolean; savedTitle: string } {
+export function useCrewWorkerSummary(root: string): {
+  workers: CrewWorker[] | undefined; failed: boolean; savedTitle: string
+  /** The last list a read gave, kept through a failed poll (the cache's data). */
+  lastWorkers: CrewWorker[] | undefined
+} {
   const query = useQuery({
     queryKey: crewWorkersQueryKey(root),
     queryFn: () => api.crewWorkers(root),
@@ -49,7 +53,7 @@ export function useCrewWorkerSummary(root: string): { workers: CrewWorker[] | un
   })
   // A closed root's list is read from saved data and names the root's saved title.
   const savedTitle = query.data?.root_closed ? query.data.root_title || '' : ''
-  return { workers: query.isError ? undefined : query.data?.workers, failed: query.isError, savedTitle }
+  return { workers: query.isError ? undefined : query.data?.workers, failed: query.isError, savedTitle, lastWorkers: query.data?.workers }
 }
 
 /** Whether `key` is a done worker on `root`'s worker list: the server's group,

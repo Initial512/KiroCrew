@@ -13,7 +13,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { act, fireEvent, render, within } from '@testing-library/react'
-import { screen } from '@testing-library/react'
+import { screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Provider } from 'react-redux'
 import { MemoryRouter } from 'react-router-dom'
@@ -173,7 +173,7 @@ function renderSidebar(
    *  rows. What a re-render cannot stand in for is exactly what the adoption tests
    *  need, since the lane tells a move from a creation by comparing two frames. */
   const pushFrame = (rows: TestSlot[]) => utils.rerender(tree(rows))
-  return { ...utils, store, pushFrame }
+  return { ...utils, store, pushFrame, qc }
 }
 
 /** Row keys in the conductor lane, in render order. */
@@ -248,15 +248,26 @@ describe('chat sidebar — conductor lane', () => {
     expect(within(card).queryByText('Dispatched two workers')).toBeNull()
   })
 
-  it("says a failed workers read on the row's line instead of showing older counts", async () => {
-    mocks.crewWorkersFail = true
+  it('a failed workers poll keeps the summary, and with no data keeps the normal line', async () => {
     const slots = [
-      { key: 'k-root', title: 'Crew root', agent: 'kirocrew-conductor', messages: 1, running: false, modified: 4000, crew_mode_root: true },
+      { key: 'k-root', title: 'Crew root', agent: 'kirocrew-conductor', messages: 1, running: false, modified: 4000, crew_mode_root: true, last_message: 'Dispatched two workers' },
       { key: 'k-w1', title: 'W1', messages: 2, running: false, modified: 3000, created_by: 'k-root', crew_root: 'k-root' },
     ]
-    renderSidebar(slots, [], null, {}, [], slots)
-    expect(await screen.findByTestId('crew-root-summary-error')).toHaveTextContent('Could not load the workers.')
-    expect(screen.queryByTestId('crew-worker-stack')).toBeNull()
+    // A failed poll after a good read: the summary the card showed stays.
+    const { qc, unmount } = renderSidebar(slots, [], null, {}, [], slots)
+    expect(await screen.findByTestId('crew-root-summary')).toHaveTextContent('Approval needed · 1')
+    mocks.crewWorkersFail = true
+    await qc.refetchQueries({ queryKey: ['crew-workers', 'k-root'] })
+    await waitFor(() => expect(qc.getQueryState(['crew-workers', 'k-root'])?.status).toBe('error'))
+    expect(screen.getByTestId('crew-root-summary')).toHaveTextContent('Approval needed · 1')
+    expect(screen.queryByText('Could not load the workers.')).toBeNull()
+    unmount()
+    // Never any data: the row keeps its normal line, with no red notice on it.
+    const second = renderSidebar(slots, [], null, {}, [], slots)
+    await waitFor(() => expect(second.qc.getQueryState(['crew-workers', 'k-root'])?.status).toBe('error'))
+    expect(screen.getByText('Dispatched two workers')).toBeInTheDocument()
+    expect(screen.queryByText('Could not load the workers.')).toBeNull()
+    expect(screen.queryByTestId('crew-root-summary')).toBeNull()
   })
 
   it("leaves a Crew Mode root's workers out of the person's list and keeps the root", () => {
