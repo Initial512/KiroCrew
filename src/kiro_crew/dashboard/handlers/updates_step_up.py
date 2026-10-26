@@ -571,6 +571,24 @@ async def api_update_approve(request: web.Request) -> web.Response:
                 status=409,
             )
         )
+    # The request was armed on a channel; a policy pinned since (``updates.channel``)
+    # decides which channel this host may take code from, as the source pin does.
+    from kiro_crew.platform.update_layout import policy_release_channel
+
+    required_channel = await asyncio.to_thread(policy_release_channel)
+    if required_channel and pending.channel != required_channel:
+        error = f"updates on this host follow the {required_channel} channel"
+        await _audit(
+            "denied",
+            error=error,
+            resources=f"v{pending.version} ({pending.channel})",
+        )
+        return await _refuse(
+            web.json_response(
+                {"error": error, "code": "approve_blocked_by_policy", "governance": True},
+                status=403,
+            )
+        )
     try:
         await _audit("granted", resources=f"v{pending.version} ({pending.channel})", required=True)
     except Exception:

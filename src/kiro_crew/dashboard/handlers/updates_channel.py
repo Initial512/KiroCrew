@@ -323,10 +323,13 @@ async def api_update_channel(request: web.Request) -> web.Response:
             status=409,
         )
 
-    # An enterprise build follows stable; a file write here would be ignored on read.
-    from kiro_crew.edition_locks import LOCKED_BY_POLICY, local_enable_locked
+    # The policy's channel (stable in an enterprise build with no pin) wins on
+    # read, so a file write naming another channel would be ignored.
+    from kiro_crew.edition_locks import LOCKED_BY_POLICY
+    from kiro_crew.platform.update_layout import policy_release_channel
 
-    if local_enable_locked("updates.channel") and requested.strip().lower() != "stable":
+    required = await asyncio.to_thread(policy_release_channel)
+    if required and requested.strip().lower() != required:
         await _audit_update_event(
             request,
             operation="update.channel",
@@ -335,7 +338,7 @@ async def api_update_channel(request: web.Request) -> web.Response:
             resources=requested[:32],
         )
         return web.json_response(
-            {"error": LOCKED_BY_POLICY, "code": "locked_by_policy", "channel": "stable"},
+            {"error": LOCKED_BY_POLICY, "code": "locked_by_policy", "channel": required},
             status=409,
         )
 
