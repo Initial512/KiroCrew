@@ -673,16 +673,14 @@ class TestBlockScalarsAgreeWithARealYamlParser:
         [""],
         ["", ""],
     )
-    # The hand-written bodies above are REGRESSION rows: each group was added after a
-    # reviewer found a line shape the set could not express. That happened three rounds
-    # running -- whitespace-only trailing lines, then content followed by trailing
-    # spaces, then whitespace-only lines extending PAST an explicit indent -- because a
-    # hand-enumerated list only covers the shapes someone already thought of, and "0
-    # divergences" says nothing about the ones it never emits.
+    # The hand-written bodies above are REGRESSION rows: whitespace-only trailing
+    # lines, content followed by trailing spaces, and whitespace-only lines extending
+    # PAST an explicit indent. A hand-enumerated list only covers the shapes someone
+    # already thought of, and "0 divergences" says nothing about the ones it never emits.
     #
-    # So the space is now GENERATED from the line kinds that actually behave
-    # differently, and every 1- and 2-line combination of them is checked. New shapes
-    # come from naming a kind here, not from waiting for a reviewer to find one.
+    # So the space is GENERATED from the line kinds that actually behave differently,
+    # and every 1- and 2-line combination of them is checked. A new shape comes from
+    # naming a kind here.
     LINE_KINDS = (
         "",  # empty
         " ",  # whitespace, short of the indent

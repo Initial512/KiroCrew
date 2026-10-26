@@ -722,7 +722,6 @@ class TestVoiceSynthesize:
             data = await resp.json()
             assert data["ok"] is False
             assert "error" in data
-        # Verify voice_error was broadcast
         state.broadcast_ws.assert_called()
         call_args = state.broadcast_ws.call_args
         assert call_args[0][0] == "voice_error"

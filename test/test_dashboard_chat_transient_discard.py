@@ -474,9 +474,8 @@ class TestRunChatTransientRetryPoisonedDiscard:
             await self._drain_bg(state)
             canary.assert_awaited_once()
             # The probe is only meaningful on the SAME served model as the
-            # failing session, with fallback disabled (GPT review finding:
-            # a canary succeeding on a different model must never justify
-            # discarding this conversation).
+            # failing session, with fallback disabled: a canary succeeding on
+            # a different model must never justify discarding this conversation.
             assert canary.await_args.kwargs["model"] == "claude-test-model"
             assert canary.await_args.kwargs["strict_model"] is True
 

@@ -714,7 +714,7 @@ class TestSnapshotIndex:
             thread.join()
         assert len(idx) <= 4
 
-    # ── cross-WINDOW isolation (reviewer finding) ──
+    # ── cross-WINDOW isolation ──
 
     def _window(self, key: str, window_id: int, *, count: int, at: float) -> Snapshot:
         app = AppRef(name=key, pid=1, bundle_id=key, window_id=window_id)
@@ -762,7 +762,7 @@ class TestSnapshotIndex:
         two = AppRef(name="Terminal", pid=22, bundle_id="com.apple.Terminal", window_id=9)
         assert one.key == two.key == "com.apple.terminal"
 
-    # ── cross-session isolation (reviewer finding) ──
+    # ── cross-session isolation ──
 
     def test_one_sessions_snapshot_never_resolves_for_another(self):
         """THE finding: the gateway is one process serving every surface.

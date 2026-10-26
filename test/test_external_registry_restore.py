@@ -348,7 +348,6 @@ class TestInstallScriptFailurePreservesStaleCheckout:
                 new_url, "testapp", [], branch="main", index_originated=False
             )
 
-        # Build succeeded.
         assert result["ok"]
         # Stale paths surfaced for caller cleanup — NOT deleted.
         stale_paths = result.get("_pending_stale_cleanup", [])

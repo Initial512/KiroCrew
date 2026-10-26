@@ -47,7 +47,6 @@ class TestHealthGatedMcpRegistration:
     a dead-URL entry (the kiro-cli outage shape)."""
 
     def _fast_health(self, bmod, monkeypatch):
-        # Make the loop iterate instantly.
         monkeypatch.setattr(bmod, "_HEALTH_CHECK_INTERVAL", 0)
         monkeypatch.setattr(bmod, "_HEALTH_CHECK_RETRIES", 3)
 
