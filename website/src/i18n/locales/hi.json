@@ -12303,7 +12303,7 @@
         "title_human_check": "पुष्टि करो कि तुम इंसान हो",
         "title_confirm": "इस कदम को मंज़ूरी दो",
         "origin_tip": "यह पता ब्राउज़र से आता है, Kiro या पेज के लिखे से नहीं। भेजने से पहले पेज दूसरे पते पर चला जाए, तो कुछ नहीं भरा जाता।",
-        "reason_label": "Kiro कहता है:",
+        "reason_line": "Kiro कहता है: {{text}}",
         "secret_hint": "सीधे पेज में जाता है। Kiro इसे कभी नहीं देखता।",
         "label_username": "यूज़रनेम",
         "label_username_optional": "यूज़रनेम (वैकल्पिक)",

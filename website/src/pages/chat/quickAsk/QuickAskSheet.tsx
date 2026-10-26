@@ -419,7 +419,7 @@ function ConfirmBody({ ask, busy, send }: { ask: QuickAsk; busy: boolean; send: 
           the button text below is the one line read from the page. */}
       {summary && (
         <p className="rounded-lg border border-border bg-bg px-3 py-2 text-[14px] text-text break-words" data-testid="quick-ask-summary">
-          <span className="font-medium text-muted">{i18nT('pages.chat.quickAsk.reason_label')}</span> {summary}
+          {i18nT('pages.chat.quickAsk.reason_line', { text: summary })}
         </p>
       )}
       {button && (

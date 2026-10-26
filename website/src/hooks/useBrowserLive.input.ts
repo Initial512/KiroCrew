@@ -13,6 +13,8 @@
  * the agent cannot see, and it goes to the gateway and nowhere else.
  */
 
+import { BACKSPACE_KEY, DELETE_KEY } from '../components/domDeleteKeys'
+
 /** The wire body. `action` tells a mouse down from up from move, a key down from up. */
 export interface BrowserInputEvent {
   type: 'mouse' | 'wheel' | 'key'
@@ -248,10 +250,10 @@ export function beforeInputToEvents(inputType: string, data: string | null, comp
       return namedKey('Enter', 'Enter')
     case 'deleteContentBackward':
     case 'deleteWordBackward':
-      return namedKey('Backspace', 'Backspace')
+      return namedKey(BACKSPACE_KEY, BACKSPACE_KEY)
     case 'deleteContentForward':
     case 'deleteWordForward':
-      return namedKey('Delete', 'Delete')
+      return namedKey(DELETE_KEY, DELETE_KEY)
     default:
       return []
   }

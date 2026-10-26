@@ -12114,7 +12114,7 @@
         "title_human_check": "사람인지 확인",
         "title_confirm": "이 단계 승인",
         "origin_tip": "이 주소는 Kiro나 페이지 텍스트가 아니라 브라우저에서 가져온 것입니다. 보내기 전에 페이지가 다른 주소로 바뀌면 아무것도 입력되지 않습니다.",
-        "reason_label": "Kiro:",
+        "reason_line": "Kiro: {{text}}",
         "secret_hint": "페이지에 바로 입력됩니다. Kiro는 볼 수 없습니다.",
         "label_username": "사용자 이름",
         "label_username_optional": "사용자 이름(선택)",

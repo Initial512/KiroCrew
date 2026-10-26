@@ -12303,7 +12303,7 @@
         "title_human_check": "নিশ্চিত করো তুমি মানুষ",
         "title_confirm": "এই ধাপটি অনুমোদন করো",
         "origin_tip": "এই ঠিকানা ব্রাউজার থেকে আসে, Kiro বা পেজের লেখা থেকে নয়। পাঠানোর আগে পেজ অন্য ঠিকানায় গেলে কিছুই ভরা হয় না।",
-        "reason_label": "Kiro বলছে:",
+        "reason_line": "Kiro বলছে: {{text}}",
         "secret_hint": "সরাসরি পেজে যায়। Kiro কখনো দেখে না।",
         "label_username": "ইউজারনেম",
         "label_username_optional": "ইউজারনেম (ঐচ্ছিক)",

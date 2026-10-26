@@ -12303,7 +12303,7 @@
         "title_human_check": "Bestätige, dass du ein Mensch bist",
         "title_confirm": "Diesen Schritt freigeben",
         "origin_tip": "Diese Adresse kommt vom Browser, nicht von Kiro oder vom Text der Seite. Wechselt die Seite vor dem Senden zu einer anderen Adresse, wird nichts ausgefüllt.",
-        "reason_label": "Kiro sagt:",
+        "reason_line": "Kiro sagt: {{text}}",
         "secret_hint": "Geht direkt in die Seite. Kiro sieht es nie.",
         "label_username": "Benutzername",
         "label_username_optional": "Benutzername (optional)",

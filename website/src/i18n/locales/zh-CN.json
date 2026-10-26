@@ -12114,7 +12114,7 @@
         "title_human_check": "确认你是真人",
         "title_confirm": "批准这一步",
         "origin_tip": "这个地址来自浏览器，不是 Kiro 或页面文字写的。如果在你发送前页面换了地址，就什么都不会填。",
-        "reason_label": "Kiro 说：",
+        "reason_line": "Kiro 说：{{text}}",
         "secret_hint": "直接填进页面。Kiro 看不到。",
         "label_username": "用户名",
         "label_username_optional": "用户名（可选）",

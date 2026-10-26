@@ -12114,7 +12114,7 @@
         "title_human_check": "人間であることを確認",
         "title_confirm": "この操作を承認",
         "origin_tip": "このアドレスはブラウザーから取得したもので、Kiro やページの文字ではありません。送信前にページが別のアドレスに移ると、何も入力されません。",
-        "reason_label": "Kiro より:",
+        "reason_line": "Kiro より: {{text}}",
         "secret_hint": "ページに直接入力されます。Kiro には見えません。",
         "label_username": "ユーザー名",
         "label_username_optional": "ユーザー名（任意）",

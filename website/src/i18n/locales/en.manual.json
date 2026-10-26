@@ -5629,7 +5629,7 @@
         "title_human_check": "Confirm you're human",
         "title_confirm": "Approve this step",
         "origin_tip": "This address comes from the browser, not from Kiro or the page's text. If the page moves to another address before you send, nothing is filled.",
-        "reason_label": "Kiro says:",
+        "reason_line": "Kiro says: {{text}}",
         "secret_hint": "Goes straight into the page. Kiro never sees it.",
         "label_username": "username",
         "label_username_optional": "Username (optional)",
@@ -5675,7 +5675,7 @@
         "replay_action_ask": "Kiro asked",
         "replay_action_timeout": "it timed out",
         "replay_action_hand_back": "you handed back",
-        "replay_action_page_moved": "the page moved on",
+        "replay_action_page_moved": "page moved on",
         "replay_action_auto": "passed on its own"
       }
     },

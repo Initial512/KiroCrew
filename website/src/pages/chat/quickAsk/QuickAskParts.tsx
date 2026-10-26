@@ -75,12 +75,13 @@ export function ReasonLine({ ask, className = '' }: { ask: QuickAsk; className?:
   if (!text) return null
   return (
     <p className={`min-w-0 line-clamp-2 break-words text-[12px] text-muted ${className}`} data-testid="quick-ask-reason" title={text}>
-      <span className="font-medium">{i18nT('pages.chat.quickAsk.reason_label')}</span> {text}
+      {i18nT('pages.chat.quickAsk.reason_line', { text })}
     </p>
   )
 }
 
-const pct = (v: number, of: number) => `${(v / of) * 100}%`
+/** A frame-pixel length as a percent of *of* (a bare number; the unit is added in the style). */
+const share = (v: number, of: number) => (v / of) * 100
 
 /** Rings on the page elements the ask is bound to, over a dimmed frame. */
 export function QuickAskTargetRing({ ask, dim }: { ask: QuickAsk; dim?: boolean }) {
@@ -90,7 +91,12 @@ export function QuickAskTargetRing({ ask, dim }: { ask: QuickAsk; dim?: boolean 
         <div
           key={`${f.role}${i}`}
           className="absolute rounded-md ring-2 ring-accent shadow-[0_0_0_4px_var(--accent-glow)]"
-          style={{ left: pct(f.rect.x, ask.frame.w), top: pct(f.rect.y, ask.frame.h), width: pct(f.rect.w, ask.frame.w), height: pct(f.rect.h, ask.frame.h) }}
+          style={{
+            left: `${share(f.rect.x, ask.frame.w)}%`,
+            top: `${share(f.rect.y, ask.frame.h)}%`,
+            width: `${share(f.rect.w, ask.frame.w)}%`,
+            height: `${share(f.rect.h, ask.frame.h)}%`,
+          }}
         />
       ))}
     </div>
@@ -117,9 +123,10 @@ export function zoomStyle(ask: QuickAsk | null): CSSProperties | null {
   const scale = Math.max(1, Math.min(ZOOM_MAX, ask.frame.w / (w.rect.w * 1.6), ask.frame.h / (w.rect.h * 1.6)))
   const cx = ((w.rect.x + w.rect.w / 2) / ask.frame.w) * 100
   const cy = ((w.rect.y + w.rect.h / 2) / ask.frame.h) * 100
+  // About the default centre origin: move the widget's centre to the middle, then
+  // scale. The same mapping as scaling about the widget and then translating.
   return {
-    transformOrigin: `${cx}% ${cy}%`,
-    transform: `translate(${50 - cx}%, ${50 - cy}%) scale(${scale.toFixed(3)})`,
+    transform: `scale(${scale.toFixed(3)}) translate(${50 - cx}%, ${50 - cy}%)`,
   }
 }
 

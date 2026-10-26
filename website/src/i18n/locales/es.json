@@ -12492,7 +12492,7 @@
         "title_human_check": "Confirma que eres una persona",
         "title_confirm": "Aprueba este paso",
         "origin_tip": "Esta dirección viene del navegador, no de Kiro ni del texto de la página. Si la página cambia de dirección antes de enviar, no se rellena nada.",
-        "reason_label": "Kiro dice:",
+        "reason_line": "Kiro dice: {{text}}",
         "secret_hint": "Va directo a la página. Kiro nunca lo ve.",
         "label_username": "usuario",
         "label_username_optional": "Usuario (opcional)",

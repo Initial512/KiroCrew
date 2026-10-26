@@ -139,7 +139,7 @@ describe('quick ask: per kind', () => {
     show(asks.confirm)
     expect(screen.getByTestId('quick-ask-confirm')).toHaveTextContent('Book 2 tickets, $35 total')
     // The summary is the agent's words, labelled as such; the button text is the page's.
-    expect(screen.getByTestId('quick-ask-summary')).toHaveTextContent(t('reason_label'))
+    expect(screen.getByTestId('quick-ask-summary')).toHaveTextContent(t('reason_line', { text: 'Book 2 tickets, $35 total' }))
     expect(screen.getByTestId('quick-ask-confirm-button')).toHaveTextContent(t('confirm_then', { button: 'Place order' }))
     expect(screen.getByTestId('quick-ask-decline')).toHaveTextContent(t('cancel'))
     fireEvent.click(screen.getByTestId('quick-ask-primary'))
@@ -161,7 +161,7 @@ describe('quick ask: layout and trust lines', () => {
     const r = screen.getByTestId('quick-ask-reason')
     expect(r.className).toContain('line-clamp-2')
     expect(r.querySelector('b')).toBeNull()
-    expect(r).toHaveTextContent(t('reason_label'))
+    expect(r.textContent?.startsWith(t('reason_line', { text: '' }).trim())).toBe(true)
   })
 
   it('phone: a bottom sheet on document.body, outside the card', () => {
