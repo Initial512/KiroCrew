@@ -5,6 +5,7 @@ import { Btn } from '../../../components/ui'
 import ErrorNotice from '../../../components/ErrorNotice'
 import { OverlayPortal, useInsideDialog } from '../../../components/overlayRoot'
 import { i18nT } from '../../../i18n/t'
+import { useDocumentImeLatch } from '../../../hooks/useImeGuard'
 import { sanitizeLlmOutput } from '../../../utils/sanitize'
 import { browserLiveStore } from '../../../hooks/useBrowserLive'
 import { askUi } from './askUi'
@@ -80,13 +81,19 @@ export default function QuickAskSheet({ ask, sessionKey, mode, onCollapse }: {
   // listener stops them here; React's own handlers on ancestors never see them.
   const collapseRef = useRef(onCollapse)
   collapseRef.current = onCollapse
+  // A Tab or Escape the IME owns is choosing a candidate, not leaving the field.
+  const imeLatch = useDocumentImeLatch()
   useEffect(() => {
     const el = ref.current
     if (!el) return
     const onKey = (e: KeyboardEvent) => {
       e.stopPropagation()
-      if (e.key === 'Escape') { e.preventDefault(); collapseRef.current(); return }
+      if (e.key === 'Escape') {
+        if (!imeLatch.claimKey(e)) return
+        e.preventDefault(); collapseRef.current(); return
+      }
       if (e.key !== 'Tab') return
+      if (!imeLatch.claimKey(e)) return
       const items = [...el.querySelectorAll<HTMLElement>('input, button, [href], [tabindex]:not([tabindex="-1"])')]
         .filter(n => !(n as HTMLButtonElement).disabled)
       if (items.length === 0) return
@@ -97,7 +104,7 @@ export default function QuickAskSheet({ ask, sessionKey, mode, onCollapse }: {
     }
     el.addEventListener('keydown', onKey)
     return () => el.removeEventListener('keydown', onKey)
-  }, [])
+  }, [imeLatch])
 
   const panel = (
     <div

@@ -195,7 +195,7 @@ const API_KEY_ORDER = [
   'researchDelete', 'invokeFileMenuItem', 'artifactTeardown', 'publishProviders',
   'publishArtifactToCoreProvider', 'publishToProvider', 'deploySites', 'tipsNext', 'tipsStatus',
   'tipsFeedback', 'browserLiveVisibility', 'browserLiveAck', 'browserInputClaim', 'browserInputRelease',
-  'browserInputEvent', 'browserLiveOpenInBrowser', 'browserLiveReopen', 'browserLiveClose',
+  'browserInputEvent', 'browserLiveOpenInBrowser', 'browserLiveReopen', 'browserAskAnswer', 'browserLiveClose',
   'browserLiveRecordings', 'browserLiveRecording',
 ]
 
