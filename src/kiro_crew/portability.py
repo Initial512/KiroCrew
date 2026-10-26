@@ -687,9 +687,9 @@ def apply_import_zip(
     # shutil.copy2 BEFORE it reaches the first tree call -- so gating inside the tree
     # helpers let a merge on a platform that cannot pin half-apply the core files and
     # then raise, against this function's own "fails loudly, nothing was written"
-    # contract. Raised in review. This is the third site of the same defect (after
-    # _build_snapshot and _do_merge), which is why the gate now lives at the entry of
-    # every operation that mutates rather than next to the individual writes.
+    # contract. The same shape exists in _build_snapshot and _do_merge, which is why
+    # the gate lives at the entry of every operation that mutates rather than next to
+    # the individual writes.
     #
     # There is no flag to pass here: an import is a UI action, not a command line. I first
     # concluded from that that the gate should refuse, and it was the wrong conclusion drawn
@@ -864,12 +864,12 @@ def apply_import_zip(
             elif auto_dir.is_dir():
                 shutil.rmtree(str(auto_dir))
             # A platform that cannot pin a directory by descriptor refuses this
-            # staging pass, and the refusal is allowed to propagate. An earlier
-            # revision caught it and returned the summary, which was worse than the
-            # crash it avoided: the caller reads a returned summary as success, so the
-            # dashboard rendered "Import complete" over a data home nothing had been
-            # written to. Raised in review. Propagating reaches the existing error
-            # path, which is the one that tells the user the import did not happen.
+            # staging pass, and the refusal is allowed to propagate. Catching it and
+            # returning the summary would be worse than the crash: the caller reads a
+            # returned summary as success, so the dashboard would render "Import
+            # complete" over a data home nothing was written to. Propagating reaches the
+            # existing error path, which is the one that tells the user the import did
+            # not happen.
             # Each settings store whose file this swap replaces is held at its writer
             # lock for the whole swap (rollback included): a write from another tab or
             # channel in between would publish its pre-import copy over the restored
@@ -986,7 +986,7 @@ def apply_import_zip(
                     # can never do this safely, so it skips one item and lets the
                     # import proceed. Recorded in the summary as skipped WITH the
                     # reason -- reporting "copied" for a refusal, or saying nothing,
-                    # would be the silent-install bug class this change removes.
+                    # would be a silent install.
                     try:
                         _copy_notifications(
                             snap / "notifications.jsonl", mc / "notifications.jsonl"

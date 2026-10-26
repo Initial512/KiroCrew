@@ -335,7 +335,7 @@ async def _consolidate(
             # retires an unprocessable span: advance the marker past the
             # whole chunk, log the reason, and fire the user-facing abandon
             # notice — never silently (silently marking unread content
-            # consolidated is the very bug this PR fixes). A head whose
+            # consolidated loses it for good). A head whose
             # remainder fits one more slice is NOT retired; it drains in full,
             # so no span that would fit a single extra slice is dropped
             # unread. The already-sliced prefix keeps whatever it extracted;

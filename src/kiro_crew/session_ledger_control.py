@@ -443,7 +443,7 @@ def _claim_carry(slot_key: str) -> str:
     try:
         if not ledger_dir(slot_key).exists():
             # Nothing to carry, and nothing to claim: a slot with no legacy directory
-            # never ran before this change.
+            # never used the legacy layout.
             return _CLAIM_DONE
         path = _control_file(slot_key, _CARRIED_FILE, create=True)
         # READ, DECIDE and REPLACE under the slot's own lock. An exclusive create alone

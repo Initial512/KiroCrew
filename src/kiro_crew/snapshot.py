@@ -989,7 +989,6 @@ def restore_main(argv: list[str] | None = None, *, parsed: argparse.Namespace | 
         print(f"❌ File not found: {snap_path}")
         return 1
 
-    # Parse components
     components: list[str] | None = None
     if args.components:
         requested = [c.strip() for c in args.components.split(",") if c.strip()]

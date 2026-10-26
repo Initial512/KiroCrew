@@ -1161,9 +1161,9 @@ _NOT_BINDING = rf"(?!{BINDING_ATTRIBUTE}\s*=)"
 #:
 #: The opening tag is read the way an HTML tokenizer reads it, not with a ``[^>]`` run:
 #: each attribute value is a whole unit (see :data:`_CELL_VALUE`), so a ``>`` inside a
-#: quoted value is part of the value and does not end the tag early -- which, before this,
-#: corrupted the page when the quoted ``>`` came after the binding attribute and silently
-#: left the cell unfilled when it came before. The tag name and both attribute runs are
+#: quoted value is part of the value and does not end the tag early -- which would
+#: corrupt the page when the quoted ``>`` came after the binding attribute and silently
+#: leave the cell unfilled when it came before. The tag name and both attribute runs are
 #: possessive, and the first binding attribute is committed in an atomic group, so a start
 #: tag that repeats the attribute or never closes is read once rather than researched; and
 #: every run stops at ``<`` as well as ``>``, so the search never scans past the next tag.
