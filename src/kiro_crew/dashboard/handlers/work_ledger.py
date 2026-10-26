@@ -231,4 +231,5 @@ if TYPE_CHECKING:  # names it serves from outside the family, from their homes
     )
     from kiro_crew.work_vocab import (  # noqa: F401
         WORK_CONDUCTOR_FIELDS,
+        WORK_MAX_DEPTH_MAX,
     )
