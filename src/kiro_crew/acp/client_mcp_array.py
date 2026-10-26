@@ -71,43 +71,84 @@ if TYPE_CHECKING:
 logger = logging.getLogger("kiro_crew.acp.client")
 
 
-def authored_spec_declares_zero_tools(self: AcpClient) -> bool:
-    """True when the authored spec this agent name resolves to declares ``"tools": []``.
+def spec_is_toolless(spec: object) -> bool:
+    """True when *spec* mounts nothing: no tool, no grant, no MCP server, no hook.
 
-    Reads the spec through :func:`agent_spec_snapshot`, project checkout first and
-    user level second, which is the order the harness resolves ``--agent`` in, so
-    a project-level spec that shadows the installed one is the one judged.
+    All must hold: ``tools`` is an empty list; ``allowedTools`` is absent or an
+    empty list; ``mcpServers`` is absent or an empty object; ``hooks``,
+    ``permissions`` and ``toolsSettings`` are absent or empty; ``includePowers``
+    is absent or ``False`` (KAS reads an absent one as False); and
+    ``includeMcpJson`` is exactly ``False`` (kiro-cli defaults it to True and would
+    then start every server in the user-level ``mcp.json``). An empty ``tools``
+    alone is not enough: a server listed under ``mcpServers`` is still started, a
+    hook still runs a command, and either include flag widens the visible tools
+    (``acp.kas_agents`` forwards both), in a turn that must run none.
 
-    Blocking (reads the spec); async callers run it with ``asyncio.to_thread``.
-
-    Fails closed: an unreadable spec, a non-dict result, and a ``tools`` that is
-    missing, not a list, or non-empty all answer False.
+    Fails closed: a non-dict and any key of the wrong type answer False.
     """
-    try:
-        spec = agent_spec_snapshot(self._agent, work_dir=self._work_dir)
-    except Exception:
-        logger.warning(
-            "agent spec for %r unreadable; not confirming zero tools",
-            self._agent,
-            exc_info=True,
-        )
-        return False
     if not isinstance(spec, dict):
         return False
     tools = spec.get("tools")
-    return isinstance(tools, list) and not tools
+    if not (isinstance(tools, list) and not tools):
+        return False
+    if "allowedTools" in spec and not (
+        isinstance(spec["allowedTools"], list) and not spec["allowedTools"]
+    ):
+        return False
+    if "mcpServers" in spec and not (
+        isinstance(spec["mcpServers"], dict) and not spec["mcpServers"]
+    ):
+        return False
+    for key in ("hooks", "permissions", "toolsSettings"):
+        if key in spec and not (isinstance(spec[key], (dict, list)) and not spec[key]):
+            return False
+    if "includePowers" in spec and spec["includePowers"] is not False:
+        return False
+    return spec.get("includeMcpJson") is False
+
+
+def authored_agent_spec_is_toolless(agent: str, work_dir: Any = None) -> bool:
+    """True when the authored spec *agent* resolves to in *work_dir* is :func:`spec_is_toolless`.
+
+    Reads the spec through :func:`agent_spec_snapshot`, project checkout first and
+    user level second, which is the order the harness resolves ``--agent`` in, so
+    a project-level spec that shadows the installed one is the one judged. Needs no
+    client, so a caller can take the pre-spawn read before any session exists.
+
+    Blocking (reads the spec); async callers run it with ``asyncio.to_thread``.
+    Fails closed: an unreadable spec answers False.
+    """
+    try:
+        spec = agent_spec_snapshot(agent, work_dir=work_dir)
+    except Exception:
+        logger.warning(
+            "agent spec for %r unreadable; not confirming zero tools",
+            agent,
+            exc_info=True,
+        )
+        return False
+    return spec_is_toolless(spec)
+
+
+def authored_spec_declares_zero_tools(self: AcpClient) -> bool:
+    """True when the authored spec this agent name resolves to mounts nothing.
+
+    :func:`authored_agent_spec_is_toolless` for this client's agent and work
+    directory. Blocking; fails closed.
+    """
+    return authored_agent_spec_is_toolless(self._agent, self._work_dir)
 
 
 def _published_alias_declares_zero_tools(alias: str) -> bool:
-    """True when the alias file the harness loads as ``--agent <alias>`` declares ``"tools": []``.
+    """True when the alias file the harness loads as ``--agent <alias>`` mounts nothing.
 
     That file is the one the projection published under the user-level agents
     directory. A checkout cannot claim an alias name
     (:mod:`kiro_crew.acp.managed_agent_shadow` refuses the spawn), so it is the file
     the harness resolved. Read through the hardened spec reader, which answers
     ``None`` for a file that is absent, unreadable, linked, oversized or not an
-    object. Blocking, and fails closed: anything but an empty ``tools`` list is
-    False.
+    object. Blocking, and fails closed: anything :func:`spec_is_toolless` does
+    not confirm is False.
     """
     from kiro_crew.acp import skill_projection
 
@@ -116,16 +157,13 @@ def _published_alias_declares_zero_tools(alias: str) -> bool:
         operation="zero_tool_confirmation",
         source="acp",
     )
-    if not isinstance(spec, dict):
-        return False
-    tools = spec.get("tools")
-    return isinstance(tools, list) and not tools
+    return spec_is_toolless(spec)
 
 
 def effective_spec_declares_zero_tools(
     self: AcpClient, *, authored_before_spawn: bool = False
 ) -> bool:
-    """True when the spec the harness runs under declares an empty ``tools`` list.
+    """True when the spec the harness runs under mounts nothing (:func:`spec_is_toolless`).
 
     With a prepared projection the harness was launched as the view's published
     alias, so two things must declare an empty list: the view the session prepared
@@ -148,22 +186,26 @@ def effective_spec_declares_zero_tools(
     loaded, but cannot close one made and restored inside the spawn window.
 
     Fails closed: a projection with no view or no alias for this agent, a view
-    whose ``tools`` is missing or non-empty, and a published file that is missing,
-    unreadable or not an empty list are all unconfirmed, and so is a missing
-    projection whose pre-spawn read was not confirmed or whose post-start read is
-    not an empty list.
+    that mounts anything, and a published file that is missing, unreadable or
+    mounts anything are all unconfirmed, and so is a missing projection whose
+    pre-spawn read was not confirmed or whose post-start read mounts anything.
+    "Mounts anything" is whatever :func:`spec_is_toolless` refuses.
 
     Both branches read a file, so async callers run this method with
     ``asyncio.to_thread``.
+
+    Reads only ``_agent``, ``_work_dir`` and ``_native_skill_projection``, which an
+    ``AcpRuntime`` carries under the same names, so
+    ``AcpSessionProvider.effective_spec_declares_zero_tools`` judges the runtime
+    that serves a session with this same function.
     """
     projection = getattr(self, "_native_skill_projection", None)
     if projection is None:
-        return authored_before_spawn and self.authored_spec_declares_zero_tools()
+        return authored_before_spawn and authored_agent_spec_is_toolless(
+            self._agent, self._work_dir
+        )
     view = projection.specs.get(self._agent)
-    if not isinstance(view, dict):
-        return False
-    tools = view.get("tools")
-    if not (isinstance(tools, list) and not tools):
+    if not spec_is_toolless(view):
         return False
     alias = projection.aliases.get(self._agent)
     if not isinstance(alias, str) or not alias:

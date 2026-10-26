@@ -21,7 +21,7 @@ import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import aclosing
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from kiro_crew.acp import session_provider_mcp_reinject as _sp_mcp_reinject
 from kiro_crew.acp.client import (
@@ -1162,6 +1162,18 @@ class AcpSessionProvider(LLMProvider):
         session under the kiro label.
         """
         return self._runtime.acp_backend
+
+    def effective_spec_declares_zero_tools(self, *, authored_before_spawn: bool = False) -> bool:
+        """``AcpClient.effective_spec_declares_zero_tools``, judged on the runtime serving this session.
+
+        The runtime carries the agent, work directory and native skill projection
+        that function reads. Blocking; async callers use ``asyncio.to_thread``.
+        """
+        from kiro_crew.acp.client_mcp_array import effective_spec_declares_zero_tools
+
+        return effective_spec_declares_zero_tools(
+            cast(Any, self._runtime), authored_before_spawn=authored_before_spawn
+        )
 
     @property
     def manual_compact_unsupported_backend(self) -> str | None:
