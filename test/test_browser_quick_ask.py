@@ -526,7 +526,7 @@ async def test_a_focus_the_page_steals_writes_nothing() -> None:
 @pytest.mark.parametrize(
     "values",
     [
-        {"password": CANARY},  # username bound, so required
+        {"username": "u"},  # the password is the one field credentials needs
         {"username": "u", "password": CANARY, "otp": "1"},
         {"username": "u", "password": "a\nb"},
         {"username": "", "password": CANARY},

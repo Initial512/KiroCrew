@@ -620,6 +620,9 @@ def check_values(ask: QuickAsk, values: Any) -> dict[str, str] | None:
     for b in ask.bindings:
         name = b.role
         raw = values.get(name)
+        if name == "username" and raw is None:
+            # Optional on the card: the page may already hold it. Left unwritten.
+            continue
         if not isinstance(raw, str) or not raw or len(raw) > VALUE_MAX:
             return None
         if name == "otp" and (
