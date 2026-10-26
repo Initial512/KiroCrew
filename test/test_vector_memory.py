@@ -1451,7 +1451,8 @@ class TestEpisodicCRUD:
         ctx = store.get_episodic_context(query_text="topic")
         # With limit=2, at most 2 entries should appear
         assert ctx, "Expected non-empty episodic context"
-        assert ctx.count(". ") <= 2
+        # Count numbered entry lines, not every ". ": the header holds sentences too.
+        assert sum(1 for line in ctx.splitlines() if line[:1].isdigit()) <= 2
 
 
 class TestEpisodicInjectionScreening:

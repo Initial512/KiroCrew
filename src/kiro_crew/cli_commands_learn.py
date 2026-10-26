@@ -121,9 +121,9 @@ def _learn(args: argparse.Namespace) -> None:
             #
             # The one return that really does mean "nothing was stored" is a REFUSAL,
             # and routing that into the JSONL store would be worse than redundant:
-            # that store validates no content at all, so a value this store rejected
-            # (an injection-pattern clause) would land there anyway, and the context
-            # builder reads lessons.jsonl whenever the vector store holds no lessons.
+            # that store runs only the volatile-text and blocked-pattern screens, not
+            # the vector store's full validation, and the context builder reads
+            # lessons.jsonl whenever the vector store holds no lessons.
             #
             # So there is no fallback here, not a narrowed one. There is no "vector
             # store unavailable" state to fall back from: ``vs`` is constructed and

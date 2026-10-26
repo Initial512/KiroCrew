@@ -208,7 +208,8 @@ async def _surface_lesson_saved(
 
 async def api_lessons_create(request: web.Request) -> web.Response:
     """POST /api/lessons — add a lesson (vector store or JSONL fallback)."""
-    from kiro_crew.learn import Lesson  # noqa: F811
+    from kiro_crew.learn import Lesson, lesson_contains_injection  # noqa: F811
+    from kiro_crew.vector_memory_runtime.write_outcomes import SemanticRejectCode
 
     state: DashboardState = request.app["state"]
     # Default cap: lesson fields are short strings (MAX_SHORT_STRING-bounded).
@@ -485,20 +486,23 @@ async def api_lessons_create(request: web.Request) -> web.Response:
         # refusal the fallback owns, and its string outcome matches
         # LessonWriteOutcome on the wire.
         outcome = await asyncio.to_thread(store.save_or_enrich, lesson)
-        # This store has exactly TWO refusal paths -- the volatile-text predicate
-        # and the row cap -- and both answer with the bare ``refused`` string, so
-        # the cause has to be re-derived here. Re-running the predicate is exact
-        # rather than a guess: it is the same pure-text call the store made, and
-        # ``_lesson_withheld`` above re-derives it the same way for its own surface.
-        # Reporting every refusal as ``volatile_session_fact`` told a user at the
-        # row cap to reword a rule whose wording was never the problem.
+        # This store has exactly THREE refusal paths -- the volatile-text
+        # predicate, the blocked-content screen and the row cap -- and all answer
+        # with the bare ``refused`` string, so the cause has to be re-derived here.
+        # Re-running the predicates is exact rather than a guess: they are the same
+        # pure-text calls the store made, and ``_lesson_withheld`` above re-derives
+        # the first the same way for its own surface. Reporting every refusal as
+        # ``volatile_session_fact`` told a user at the row cap to reword a rule
+        # whose wording was never the problem. The blocked-content reason is the
+        # vector store's own code, so both stores answer one text alike.
         reason = None
         if outcome == "refused":
-            reason = (
-                "volatile_session_fact"
-                if contains_volatile_lesson_fact(rule, negative)
-                else LESSON_REFUSED_AT_CAPACITY
-            )
+            if contains_volatile_lesson_fact(rule, negative):
+                reason = "volatile_session_fact"
+            elif lesson_contains_injection(rule, negative):
+                reason = SemanticRejectCode.INJECTION.value
+            else:
+                reason = LESSON_REFUSED_AT_CAPACITY
         stored = outcome != "refused"
         # A genuine empty, not an unfilled field. ``_insert_or_enrich`` has no dedup
         # rule that supersedes: it matches on exact rule text plus scope and either
