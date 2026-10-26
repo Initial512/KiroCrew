@@ -99,9 +99,9 @@ describe('quick ask: per kind', () => {
     const sheet = screen.getByTestId('quick-ask-sheet')
     expect(sheet).toHaveAttribute('role', 'dialog')
     expect(screen.getByRole('heading')).toHaveTextContent(t('title_credentials', { host: 'accounts.example-identity-provider.com:8443' }))
-    expect(screen.getByTestId('quick-ask-username')).toHaveAttribute('autocomplete', 'username')
+    expect(screen.getByTestId('quick-ask-username')).toHaveAttribute('autocomplete', 'off')
     expect(screen.getByTestId('quick-ask-password')).toHaveAttribute('type', 'password')
-    expect(screen.getByTestId('quick-ask-password')).toHaveAttribute('autocomplete', 'current-password')
+    expect(screen.getByTestId('quick-ask-password')).toHaveAttribute('autocomplete', 'new-password')
     expect(screen.getByTestId('quick-ask-secret-hint')).toHaveTextContent(t('secret_hint'))
     expect(screen.getByTestId('quick-ask-decline')).toBeInTheDocument()
     expect(screen.getByTestId('quick-ask-target')).toBeInTheDocument()
@@ -138,6 +138,8 @@ describe('quick ask: per kind', () => {
   it('confirm: summary, the DOM button text, Confirm / Cancel', async () => {
     show(asks.confirm)
     expect(screen.getByTestId('quick-ask-confirm')).toHaveTextContent('Book 2 tickets, $35 total')
+    // The summary is the agent's words, labelled as such; the button text is the page's.
+    expect(screen.getByTestId('quick-ask-summary')).toHaveTextContent(t('reason_label'))
     expect(screen.getByTestId('quick-ask-confirm-button')).toHaveTextContent(t('confirm_then', { button: 'Place order' }))
     expect(screen.getByTestId('quick-ask-decline')).toHaveTextContent(t('cancel'))
     fireEvent.click(screen.getByTestId('quick-ask-primary'))

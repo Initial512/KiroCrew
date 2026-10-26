@@ -6,7 +6,7 @@ can navigate it, re-render a field, cover it or move it into another document
 between the ask and the answer. The hub and the routes are the real ones.
 
 The invariant under test: a value the person types reaches only the bound element
-on the bound origin (``Input.insertText`` right after ``DOM.focus`` of that node),
+on the bound origin (inserted by one call on that node that proves it holds focus),
 and nothing the agent can read -- tool text, the poll, logs, SEL, the replay,
 the card's state -- ever contains it.
 """
@@ -73,6 +73,8 @@ class FakePage:
         self.refs: dict[str, int] = {}
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.focused: int | None = None
+        #: (node, text) per landed insert.
+        self.inserts: list[tuple[int, str]] = []
         self.passed = False
         self.closed = False
         self._seq = 100
@@ -90,7 +92,7 @@ class FakePage:
         self.add(ref, **{k: v for k, v in self.nodes[old].items() if k != "connected"})
 
     def written(self) -> list[str]:
-        return [p["text"] for m, p in self.calls if m == "Input.insertText"]
+        return [text for _node, text in self.inserts]
 
     def clicks(self) -> list[dict[str, Any]]:
         return [p for m, p in self.calls if m == "Input.dispatchMouseEvent"]
@@ -122,8 +124,11 @@ class FakePage:
             fn = params["functionDeclaration"]
             if fn == qa._INSPECT_JS:
                 value: Any = dict(self.nodes[node])
-            elif fn == qa._FOCUSED_JS:
+            elif fn == qa._INSERT_JS:
+                # One call: lands only if THIS node holds focus right now.
                 value = self.focused == node
+                if value:
+                    self.inserts.append((node, params["arguments"][0]["value"]))
             elif fn == qa._PREPARE_JS:
                 self.nodes[node]["asked"] = True
                 value = True
@@ -419,17 +424,9 @@ async def test_fill_writes_only_into_the_bound_nodes_and_leaks_nowhere(
         {"ask_id": ask.id, "action": "fill", "values": {"username": "octocat", "password": CANARY}}
     )
     assert (status, out) == (200, {"ok": True, "outcome": "filled"})
-    assert page.written() == ["octocat", CANARY]
-    # Each insert follows the focus of ITS bound node.
-    seq = [
-        (m, p.get("backendNodeId")) for m, p in page.calls if m in ("DOM.focus", "Input.insertText")
-    ]
-    assert seq == [
-        ("DOM.focus", page.refs["e3"]),
-        ("Input.insertText", None),
-        ("DOM.focus", page.refs["e4"]),
-        ("Input.insertText", None),
-    ]
+    # Each value lands in ITS bound node, and only through the one focus-proving call.
+    assert page.inserts == [(page.refs["e3"], "octocat"), (page.refs["e4"], CANARY)]
+    assert not [m for m, _p in page.calls if m == "Input.insertText"]
     polled = await _poll(ask.id)
     assert polled == {"done": True, "outcome": "filled"}
     text = tool._ask_text(polled["outcome"])
@@ -587,6 +584,30 @@ async def test_otp_takes_exactly_its_digits() -> None:
         {"ask_id": ask.id, "action": "fill", "values": {"otp": "123456"}}
     )
     assert (status, out.get("outcome")) == (200, "filled"), (status, out, page.calls[-6:])
+    assert page.written() == ["123456"]
+
+
+async def test_an_otp_box_that_submits_itself_still_reads_as_filled() -> None:
+    # The last digit submits and the page moves on: the code landed where it was
+    # bound, so the card must not say "nothing was filled".
+    page = FakePage()
+    page.add("e7", type="text")
+    _hub, _rec, ask = await _asked(
+        page, {"kind": "otp", "targets": ["otp=e7"], "reason": "r", "digits": 6}
+    )
+    original = page.send
+
+    async def submits(method: str, params: Any = None, session_id: Any = None) -> Any:
+        out = await original(method, params, session_id)
+        if method == "Runtime.callFunctionOn" and params["functionDeclaration"] == qa._INSERT_JS:
+            page.frame.update(url="https://github.com/home", loaderId="L2")
+        return out
+
+    page.send = submits  # type: ignore[method-assign]
+    status, out, _ = await _answer(
+        {"ask_id": ask.id, "action": "fill", "values": {"otp": "123456"}}
+    )
+    assert (status, out) == (200, {"ok": True, "outcome": "filled"})
     assert page.written() == ["123456"]
 
 

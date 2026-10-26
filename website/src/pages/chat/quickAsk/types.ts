@@ -42,7 +42,7 @@ export interface QuickAsk {
   frame: { w: number; h: number }
   /** otp: how many digits. */
   digits?: number
-  /** confirm: what will happen, as read from the page. */
+  /** confirm: what will happen, in the AGENT's words (shown labelled as such). */
   summary?: string
   /** confirm: the bound button's own text, read from the DOM, not from the agent. */
   button?: string

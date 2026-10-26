@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode, typ
 import { EyeOff, X } from 'lucide-react'
 
 import { Btn } from '../../../components/ui'
+import ErrorNotice from '../../../components/ErrorNotice'
 import { OverlayPortal, useInsideDialog } from '../../../components/overlayRoot'
 import { i18nT } from '../../../i18n/t'
 import { sanitizeLlmOutput } from '../../../utils/sanitize'
@@ -129,7 +130,9 @@ export default function QuickAskSheet({ ask, sessionKey, mode, onCollapse }: {
       <div className="mt-3">
         <AskBody ask={ask} busy={busy} send={send} />
       </div>
-      {error && <p role="alert" className="mt-3 text-[13px] text-danger" data-testid="quick-ask-error">{error}</p>}
+      {/* askAgent stays off: the agent is parked on this very ask and cannot act on a
+          message until it ends; the person's next step is on the page or this sheet. */}
+      <ErrorNotice variant="inline" message={error} className="mt-3" testId="quick-ask-error" />
       <p className="mt-3 text-center text-[11px] text-muted">{i18nT('pages.chat.quickAsk.kiro_paused')}</p>
     </div>
   )
@@ -296,7 +299,7 @@ function CredentialsBody({ ask, busy, send }: { ask: QuickAsk; busy: boolean; se
         <Field label={i18nT('pages.chat.quickAsk.label_username_optional')}>
           {id => (
             <div className="flex min-w-0 gap-1.5">
-              <input id={id} ref={userRef} aria-label={i18nT('pages.chat.quickAsk.label_username_optional')} className={inputCls} maxLength={VALUE_MAX} autoComplete="username" autoCapitalize="none" spellCheck={false}
+              <input id={id} ref={userRef} aria-label={i18nT('pages.chat.quickAsk.label_username_optional')} className={inputCls} maxLength={VALUE_MAX} autoComplete="off" autoCapitalize="none" spellCheck={false}
                 onInput={e => setUserEmpty(!e.currentTarget.value)} onFocus={keepInView} data-testid="quick-ask-username" />
               {rem.saved && userEmpty && <UseSavedChip value={rem.saved} target={userRef} onUsed={() => setUserEmpty(false)} />}
             </div>
@@ -305,7 +308,7 @@ function CredentialsBody({ ask, busy, send }: { ask: QuickAsk; busy: boolean; se
       )}
       <Field label={i18nT('pages.chat.quickAsk.label_password')}>
         {id => (
-          <input id={id} ref={passRef} aria-label={i18nT('pages.chat.quickAsk.label_password')} type="password" className={inputCls} maxLength={VALUE_MAX} autoComplete="current-password" required
+          <input id={id} ref={passRef} aria-label={i18nT('pages.chat.quickAsk.label_password')} type="password" className={inputCls} maxLength={VALUE_MAX} autoComplete="new-password" required
             onFocus={keepInView} data-testid="quick-ask-password" />
         )}
       </Field>
@@ -405,7 +408,13 @@ function ConfirmBody({ ask, busy, send }: { ask: QuickAsk; busy: boolean; send: 
   const button = sanitizeLlmOutput(ask.button ?? '').replace(/\s+/g, ' ').trim().slice(0, 60)
   return (
     <div data-testid="quick-ask-confirm">
-      {summary && <p className="rounded-lg border border-border bg-bg px-3 py-2 text-[14px] text-text break-words">{summary}</p>}
+      {/* The summary is the agent's own words, labelled as such like its reason;
+          the button text below is the one line read from the page. */}
+      {summary && (
+        <p className="rounded-lg border border-border bg-bg px-3 py-2 text-[14px] text-text break-words" data-testid="quick-ask-summary">
+          <span className="font-medium text-muted">{i18nT('pages.chat.quickAsk.reason_label')}</span> {summary}
+        </p>
+      )}
       {button && (
         <p className="mt-2 text-[13px] text-text" data-testid="quick-ask-confirm-button">
           {i18nT('pages.chat.quickAsk.confirm_then', { button })}

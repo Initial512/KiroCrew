@@ -653,3 +653,29 @@ async def test_a_tab_another_session_owns_is_not_streamed_to_this_card(
     await mod.follow_current_tab(hub, "k", sup)
     assert streams == []
     assert hub.target_of("k") == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("op", ["click", "type", "reflex", "navigate"])
+async def test_no_agent_op_runs_while_a_quick_ask_waits(
+    monkeypatch: pytest.MonkeyPatch, op: str
+) -> None:
+    # A parallel tool call must not press the robot check or the confirm button
+    # (or type into the asked field) while the person is being asked.
+    from types import SimpleNamespace
+
+    sup = _Supervisor()
+    _install(monkeypatch, sup)
+    _no_stream(monkeypatch)
+    hub = hub_mod.get_live_hub()
+    key = mod.live_session_key("k")
+    hub._session(key).ask = SimpleNamespace(outcome="")
+    resp = await mod.api_browser_op(
+        _request({"op": op, "session_key": "k", "args": {"ref": "e1", "text": "x"}})
+    )
+    assert json.loads(resp.body)["code"] == "ask_pending"
+    assert [c for c, _kw in sup.calls if c not in ("current_tab",)] == []
+    # Once the ask has an outcome, ops run again.
+    hub._session(key).ask = SimpleNamespace(outcome="filled")
+    resp = await mod.api_browser_op(_request({"op": "snapshot", "session_key": "k"}))
+    assert json.loads(resp.body)["ok"] is True

@@ -560,6 +560,15 @@ async def _fenced_op(
     if hub.in_control(key):
         # Before any tab switch: the person holds this session's tab.
         return _HELD
+    sess = hub.get(key)
+    if op != "ask" and sess is not None and sess.ask is not None and not sess.ask.outcome:
+        # A quick ask waits on the person: until it ends the page is theirs, so a
+        # parallel tool call (or a reflex loop) cannot press the robot check or the
+        # confirm button, type into the asked field, or move the tab. Checked under
+        # both locks, where an ask is put on the card, so it cannot race one.
+        return harness_ops.refusal(
+            "ask_pending", "a quick ask is waiting for the user; wait for its outcome"
+        )
     try:
         await asyncio.wait_for(_bind_target(hub, key, supervisor), timeout=OP_TIMEOUT_S)
         if hub.in_control(key):

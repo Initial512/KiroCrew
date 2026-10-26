@@ -123,6 +123,17 @@ describe('a focused password input inside an open shadow root', () => {
   })
 })
 
+describe('a quick-ask field the person filled inside an open shadow root', () => {
+  it('is counted by askedValues, so the agent screenshot is refused', () => {
+    const { user } = shadowLogin()
+    user.setAttribute('data-kc-asked', '')
+    const w = evalWalker() as unknown as { askedValues: () => number }
+    expect(w.askedValues()).toBe(0) // marked but still empty
+    user.value = 'me@example.com'
+    expect(w.askedValues()).toBe(1)
+  })
+})
+
 describe('the top-document case still works the same', () => {
   it('a plain focused password input is reported and masked', () => {
     withBoxes()

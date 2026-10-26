@@ -539,11 +539,22 @@
     },
 
     // How many fields the person filled through a quick ask still hold a value in
-    // the top document: the agent's `screenshot` is refused while this is not 0.
+    // the top document, open shadow roots included (an ask may bind a field in
+    // one): the agent's `screenshot` is refused while this is not 0.
     askedValues: function () {
       var n = 0;
-      var found = document.querySelectorAll("[data-kc-asked]");
-      for (var i = 0; i < found.length; i++) if (found[i].value) n++;
+      function walkRoot(root, d) {
+        var found = root.querySelectorAll("[data-kc-asked]");
+        for (var i = 0; i < found.length; i++) if (found[i].value) n++;
+        var all = root.querySelectorAll("*");
+        for (var j = 0; j < all.length; j++) {
+          if (!all[j].shadowRoot) continue;
+          // Too deep to look: count it, so the screenshot is refused, not let through.
+          if (d >= 8) { n++; return; }
+          walkRoot(all[j].shadowRoot, d + 1);
+        }
+      }
+      walkRoot(document, 0);
       return n;
     },
 

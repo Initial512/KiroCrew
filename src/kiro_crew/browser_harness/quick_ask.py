@@ -18,8 +18,9 @@ agent can read ever contains it. So:
 * The answer is RE-CHECKED before anything is written: same frame, same
   document, same origin, every bound node still attached, visible, uncovered and
   of its type. Anything else is ``origin_changed`` and nothing is written.
-* A fill is ``DOM.focus`` on the bound node then ``Input.insertText``, in the
-  gateway. Values are never logged, stored, published or put in an exception.
+* A fill is ``DOM.focus`` on the bound node, then one call on that node that
+  proves it holds focus and inserts the text, in the gateway. Values are never
+  logged, stored, published or put in an exception.
 
 Pure validation (:func:`parse_ask`) and the CDP half (:class:`PageProbe`,
 :func:`bind_ask`, :func:`verify`, :func:`fill`, :func:`click_once`,
@@ -324,10 +325,13 @@ _INSPECT_JS = """function () {
   };
 }"""
 
-#: Is the bound element the focused one (through open shadow roots)?
-_FOCUSED_JS = """function () {
+#: Insert *v* into the bound element, only if it holds focus (through open shadow
+#: roots). The check and the insert run in one synchronous call on the element,
+#: so no page script runs between them and the text cannot land anywhere else.
+_INSERT_JS = """function (v) {
   var root = this.getRootNode ? this.getRootNode() : document;
-  return root.activeElement === this;
+  if (root.activeElement !== this) return false;
+  return document.execCommand('insertText', false, v) === true;
 }"""
 
 #: Mark the field as the person's (the snapshot walker, the frame mask and the
@@ -415,8 +419,12 @@ class PageProbe:
             raise AskError("ref_stale")
         return node
 
-    async def call(self, node: int, ctx: int, js: str) -> Any:
-        """Run *js* on *node* in the isolated world *ctx*; its by-value result."""
+    async def call(self, node: int, ctx: int, js: str, *args: str) -> Any:
+        """Run *js* on *node* in the isolated world *ctx*; its by-value result.
+
+        *args* ride as call arguments. A failure says only ``cdp_failed``: the
+        exception details (which could echo an argument) are never read.
+        """
         resolved = await self._send(
             "DOM.resolveNode", {"backendNodeId": node, "executionContextId": ctx}
         )
@@ -426,7 +434,12 @@ class PageProbe:
         try:
             out = await self._send(
                 "Runtime.callFunctionOn",
-                {"objectId": obj, "functionDeclaration": js, "returnByValue": True},
+                {
+                    "objectId": obj,
+                    "functionDeclaration": js,
+                    "returnByValue": True,
+                    **({"arguments": [{"value": a} for a in args]} if args else {}),
+                },
             )
         finally:
             try:
@@ -549,11 +562,13 @@ async def verify(probe: PageProbe, ask: QuickAsk) -> int:
 
 
 async def fill(probe: PageProbe, ask: QuickAsk, values: dict[str, str]) -> None:
-    """Write each value into its own bound node. Raises ``origin_changed`` or ``fill_failed``.
+    """Write each value into its own bound node. Raises ``origin_changed``.
 
-    Re-verified first; then, per field, focus the bound node, prove it holds focus,
-    select its contents and insert the text. The values never leave this function
-    except as the ``Input.insertText`` parameter.
+    Re-verified first; then, per field, focus the bound node, select its contents,
+    and insert the text in ONE call on that node that first proves it holds focus
+    (:data:`_INSERT_JS`). The values never leave this function except as that
+    call's argument. A page that moves on after the last insert (an OTP box that
+    submits itself) still counts as filled: everything landed where it was bound.
     """
     ctx = await verify(probe, ask)
     for b in ask.bindings:
@@ -562,20 +577,8 @@ async def fill(probe: PageProbe, ask: QuickAsk, values: dict[str, str]) -> None:
             continue
         await probe._send("DOM.focus", {"backendNodeId": b.node})
         await probe.call(b.node, ctx, _PREPARE_JS)
-        # The focus proof is the LAST read before the insert, so the window in which
-        # a page script could move focus is one round trip.
-        if await probe.call(b.node, ctx, _FOCUSED_JS) is not True:
+        if await probe.call(b.node, ctx, _INSERT_JS, value) is not True:
             raise AskError(ORIGIN_CHANGED)
-        try:
-            await probe.relay.send("Input.insertText", {"text": value}, probe.session_id)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            raise AskError("fill_failed") from None
-    frame_id, loader_id, origin = await probe.top_frame()
-    if (frame_id, loader_id, origin) != (ask.frame_id, ask.loader_id, ask.origin):
-        # Written already; the page moved during the insert. Say so, not "filled".
-        raise AskError(ORIGIN_CHANGED)
 
 
 async def click_once(probe: PageProbe, ask: QuickAsk) -> None:

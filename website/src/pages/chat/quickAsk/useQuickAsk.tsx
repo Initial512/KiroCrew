@@ -2,6 +2,7 @@ import { useId, useState, type CSSProperties, type ReactNode } from 'react'
 import { ShieldCheck } from 'lucide-react'
 
 import { Btn } from '../../../components/ui'
+import ErrorNotice from '../../../components/ErrorNotice'
 import { i18nT } from '../../../i18n/t'
 import { useIsMobile } from '../../../hooks/useIsMobile'
 import { browserLiveStore } from '../../../hooks/useBrowserLive'
@@ -66,7 +67,9 @@ function QuickAskTakeoverBar({ ask, sessionKey }: { ask: QuickAsk; sessionKey: s
       <span className="min-w-0 flex-1 text-[13px] text-text-strong">{i18nT('pages.chat.quickAsk.takeover_hint')}</span>
       <Btn type="button" onClick={() => { void send('decline') }} disabled={busy} data-testid="quick-ask-decline">{i18nT('pages.chat.quickAsk.decline')}</Btn>
       <Btn primary type="button" onClick={() => { void send('done') }} disabled={busy} data-testid="quick-ask-done">{i18nT('pages.chat.quickAsk.done')}</Btn>
-      {error && <p role="alert" className="basis-full text-[12px] text-danger" data-testid="quick-ask-error">{error}</p>}
+      {/* askAgent stays off: the agent is parked on this very ask and cannot act on a
+          message until it ends; the person's next step is on the page or this bar. */}
+      <ErrorNotice variant="inline" message={error} className="basis-full" testId="quick-ask-error" />
     </div>
   )
 }

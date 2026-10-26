@@ -13,9 +13,10 @@
  * The place is `QuickAskSheet`'s credentials body: it would ask the manager
  * for an entry matching `ask.origin` exactly, show it as one more chip, and
  * send the chosen secret in the same single answer POST, never through this
- * module and never into React state. Until then the native
- * `autocomplete="username" / "current-password"` inputs let the browser's own
- * manager offer its entries, which is the same exact-origin rule.
+ * module and never into React state. The sheet's inputs opt OUT of the
+ * browser's own manager (`autocomplete="off"` / `"new-password"`): the sheet
+ * lives on the dashboard's origin, so the manager would file every site's
+ * password under that one origin and offer site A's password on site B's ask.
  */
 export type RememberKey = 'username' | 'name' | 'email'
 
