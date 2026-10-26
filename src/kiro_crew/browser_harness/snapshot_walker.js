@@ -101,9 +101,19 @@
   }
 
   // A field the person filled through a quick ask (quick_ask.py marks it before the
-  // write): the agent never reads, counts, focuses, retypes or copies it.
+  // write): the agent never reads, focuses, retypes or copies it.
   function asked(el) {
     return !!(el && el.hasAttribute && el.hasAttribute("data-kc-asked"));
+  }
+
+  // While the page holds a quick-ask field, an agent selector may not test a value
+  // attribute (React mirrors the live value into it) in any way: `body:has(...)`,
+  // a sibling combinator or a region would answer yes/no about the value one probe
+  // at a time. Escapes could spell "value", so a backslash is refused too.
+  function probeSelectorBlocked(sel) {
+    if (!document.querySelector("[data-kc-asked]")) return false;
+    var s = String(sel).toLowerCase();
+    return s.indexOf("value") !== -1 || s.indexOf("\\") !== -1;
   }
 
   // A field whose VALUE must never reach the model: the type says so, or the
@@ -361,6 +371,7 @@
 
   function regionRoot(selector) {
     if (!selector) return document.body || document.documentElement;
+    if (probeSelectorBlocked(selector)) return null;
     try { return document.querySelector(String(selector)); } catch (e) { return null; }
   }
 
@@ -389,14 +400,9 @@
   function readProbe(probe) {
     var sel = probe && probe.sel, prop = String(probe && probe.prop || "text");
     var found;
+    if (probeSelectorBlocked(sel)) return null;
     try { found = document.querySelectorAll(String(sel)); } catch (e) { return null; }
-    if (prop === "count") {
-      // A field the person filled through a quick ask never counts: an attribute
-      // selector on its value would otherwise spell the value out one probe at a time.
-      var c = 0;
-      for (var k = 0; k < found.length; k++) if (!asked(found[k])) c++;
-      return c;
-    }
+    if (prop === "count") return found.length;
     var el = found[0];
     if (!el) return null;
     // A secret field reads as null whatever is asked of it.
@@ -611,6 +617,7 @@
     // page rejects answers {ok:false}.
     cells: function (selector) {
       var found;
+      if (probeSelectorBlocked(selector)) return { ok: false, code: "bad_selector" };
       try { found = document.querySelectorAll(String(selector)); } catch (e) { return { ok: false, code: "bad_selector" }; }
       var out = [];
       for (var i = 0; i < found.length && out.length < 400; i++) {

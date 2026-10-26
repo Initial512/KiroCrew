@@ -77,6 +77,8 @@ class FakePage:
     def __init__(self, *, password_boxes: int = 0, canvases: list | None = None) -> None:
         self.clicked = False
         self.password_boxes = password_boxes
+        #: Fields the person filled through a quick ask that still hold a value.
+        self.asked_values = 0
         self.canvases = canvases or []
         self.calls: list[tuple[str, Any]] = []
         self.shots = 0
@@ -116,6 +118,8 @@ class FakePage:
             return {"ok": True, "x": known[args[0]], "y": 5.0, "tag": "button"}
         if method == "passwordBoxes":
             return self.password_boxes
+        if method == "askedValues":
+            return self.asked_values
         if method == "canvasRects":
             return {"w": 1000, "h": 500, "rects": self.canvases}
         raise AssertionError(f"unexpected walker method {method}")
@@ -429,6 +433,18 @@ def test_with_the_image_scope_the_check_compares_two_screenshots(seam, tmp_path)
 def test_no_screenshot_while_a_password_box_is_on_the_page(seam, tmp_path):
     seam.write(browser_images=True)
     page = FakePage(password_boxes=1)
+    result = _run("click", {"ref": "e1"}, _ctx(page, tmp=tmp_path))
+    assert page.shots == 0
+    assert result["verify"]["by"] == "outline"
+    assert all(c["assets"] is None for c in seam.provider.calls)
+
+
+def test_no_screenshot_while_a_quick_ask_field_holds_its_value(seam, tmp_path):
+    # passwordBoxes stops at depth 8; askedValues fails closed deeper, so it is
+    # asked too: the person's code or email never reaches the decision model.
+    seam.write(browser_images=True)
+    page = FakePage()
+    page.asked_values = 1
     result = _run("click", {"ref": "e1"}, _ctx(page, tmp=tmp_path))
     assert page.shots == 0
     assert result["verify"]["by"] == "outline"

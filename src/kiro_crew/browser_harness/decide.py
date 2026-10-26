@@ -436,14 +436,16 @@ async def _capture(ctx: _ops.OpContext) -> bytes | None:
 
 
 async def _may_capture(ctx: _ops.OpContext) -> bool:
-    """No takeover, and no password box on the page (unknown counts as one)."""
+    """No takeover, no password box, and no field the person filled through a quick
+    ask still holding its value (unknown counts as one)."""
     if await _ops._in_control(ctx):
         return False
     try:
         boxes = await _ops._page(ctx, "passwordBoxes")
+        asked = await _ops._page(ctx, "askedValues")
     except Exception:  # noqa: BLE001 - unknown means a password may be on screen
         return False
-    return boxes == 0
+    return boxes == 0 and asked == 0
 
 
 def _unlink_quietly(path: Any) -> None:

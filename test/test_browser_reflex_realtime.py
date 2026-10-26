@@ -143,6 +143,8 @@ class Page:
             return {"href": "https://page.example/"}
         if method == "passwordBoxes":
             return 0
+        if method == "askedValues":
+            return 0
         if method == "activeField":
             return {"focused": False}
         raise AssertionError(f"unexpected walker method {method}")

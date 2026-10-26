@@ -626,6 +626,9 @@ def test_a_field_the_person_filled_takes_no_key_and_no_copy_chord(fake: FakeBrow
         {"key": "c", "modifiers": ["control"]},
         {"key": "c", "modifiers": ["meta"]},
         {"key": "x", "modifiers": ["meta"]},
+        {"key": "Home", "modifiers": ["shift"]},
+        {"key": "Delete", "modifiers": ["shift"]},
+        {"key": "ArrowLeft", "modifiers": ["shift"]},
     ):
         out = run(ops.run_op("press_key", args, fake.ctx()))
         assert out["code"] == "asked_field", args

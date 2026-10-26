@@ -591,16 +591,17 @@ async def _press_key(ctx: OpContext, args: dict[str, Any]) -> dict[str, Any]:
     if key not in _NAMED_KEYS and len(key) != 1:
         return refusal("bad_key", f"unknown key: {key!r} (named keys or a single character)")
     modifiers = _modifier_mask(args.get("modifiers"))
-    if len(key) == 1 or modifiers & _NON_TEXT_MODIFIERS:
+    if len(key) == 1 or modifiers:
         # A printable key is a character typed into whatever holds focus: the same
         # refusal ``type`` applies, so a password cannot be spelled one key at a time.
-        # Ctrl/Meta chords insert nothing into a password box and stay allowed there;
-        # plain named keys (Tab, Escape, arrows) are never checked, so the agent can
-        # always leave a field.
+        # Ctrl/Meta chords insert nothing into a password box and stay allowed there.
+        # On the person's quick-ask field every modified key is refused (Shift+Home,
+        # Shift+Delete cut it as surely as Ctrl+X); plain named keys (Tab, Escape,
+        # arrows) are never checked, so the agent can always leave a field.
         active = await _page(ctx, "activeField")
         focused = isinstance(active, dict) and active.get("focused")
         if focused and active.get("asked"):
-            # Neither a character nor a chord (select all, copy, cut) on the
+            # Neither a character nor any modified key (select, copy, cut) on the
             # person's field: a copy would carry its value into one the agent reads.
             return _asked_refusal(None)
         if focused and active.get("password") and not modifiers & _NON_TEXT_MODIFIERS:

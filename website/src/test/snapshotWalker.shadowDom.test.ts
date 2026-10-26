@@ -146,7 +146,7 @@ describe('a quick-ask field the person filled inside an open shadow root', () =>
     expect(w.activeField()).toEqual({ focused: true, password: false, asked: true, tag: 'input' })
   })
 
-  it('never counts toward an attribute-selector probe, so the value cannot be spelled out', () => {
+  it('blocks every value-attribute probe, so the value cannot be spelled out', () => {
     const code = document.createElement('input')
     code.setAttribute('data-kc-asked', '')
     code.setAttribute('value', '123456')
@@ -160,8 +160,14 @@ describe('a quick-ask field the person filled inside an open shadow root', () =>
     g.__kcTickDoc = document
     g.__kcTick = { m: 0, f: 0 }
     const w = evalWalker() as unknown as { observe: (o: unknown) => { read: Record<string, unknown> } }
-    const out = w.observe({ read: [{ name: 'a', sel: 'input[value^="1"]', prop: 'count' }] })
-    expect(out.read.a).toBe(1) // only the plain field
+    // Not on the field, a parent, a sibling, an escaped attribute name or a region.
+    const probe = (sel: string) => w.observe({ read: [{ name: 'a', sel, prop: 'count' }] }).read.a
+    expect(probe('input[value^="1"]')).toBeNull()
+    expect(probe('body:has(input[data-kc-asked][value^="1"])')).toBeNull()
+    expect(probe('input[data-kc-asked][value^="1"] ~ *')).toBeNull()
+    expect(probe('input[\\76 alue^="1"]')).toBeNull()
+    expect(probe('input')).toBe(2) // a selector that tests no value still works
+    expect((w.observe({ region: 'body:has([value^="1"])' }) as unknown as { ok: boolean }).ok).toBe(false)
     delete g.__kcTickDoc
     delete g.__kcTick
   })

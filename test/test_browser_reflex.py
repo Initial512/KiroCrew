@@ -167,6 +167,8 @@ class Game:
             return {"focused": True, "password": False, "tag": "input"}
         if method == "passwordBoxes":
             return self.password_boxes
+        if method == "askedValues":
+            return 0
         raise AssertionError(f"unexpected walker method {method}")
 
 
