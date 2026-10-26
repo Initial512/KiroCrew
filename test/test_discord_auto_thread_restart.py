@@ -229,6 +229,80 @@ class TestReceiveAfterRestart:
         assert fresh_dispatched == [], "the next restart refuses it"
         assert fresh.may_send_to("t9") is False
 
+    @pytest.mark.asyncio
+    async def test_thread_removed_from_config_is_not_readmitted(
+        self, events: list[dict[str, Any]]
+    ) -> None:
+        """A bot-opened thread an operator lists and then removes stays revoked.
+
+        ``reconfigure`` drops a removed ``allowed_thread_ids`` entry; the
+        re-admission path must not add it back on the next message, even
+        though Discord still reports this bot opened it under an allowed
+        channel. Listing it again lifts the revocation.
+        """
+        t, dispatched, client, registered = _restarted()
+        listed = SimpleNamespace(
+            allowed_user_ids=["u1"],
+            allowed_channel_ids=["c1"],
+            allowed_thread_ids=["t9"],
+            auto_thread=True,
+        )
+        t.reconfigure(listed)
+        client.thread_channels.add("t9")
+        client.thread_origins["t9"] = ThreadOrigin(11, "c1", "bot")
+        await t.receive(_in_thread())
+        assert len(dispatched) == 1
+
+        t.reconfigure(
+            SimpleNamespace(
+                allowed_user_ids=["u1"],
+                allowed_channel_ids=["c1"],
+                allowed_thread_ids=[],
+                auto_thread=True,
+            )
+        )
+        await t.receive(_in_thread())
+        assert len(dispatched) == 1, "a revoked thread must not answer again"
+        assert await t.readmit_own_thread("t9", "u1") is False
+        assert t.may_send_to("t9") is False
+        assert registered == []
+        assert client.origin_lookups == []
+        assert "thread_reauthorized" not in [e["outcome"] for e in events]
+
+        t.reconfigure(listed)
+        await t.receive(_in_thread())
+        assert len(dispatched) == 2, "listing it again restores it"
+
+    @pytest.mark.asyncio
+    async def test_thread_revoked_during_lookup_grants_nothing(
+        self, events: list[dict[str, Any]]
+    ) -> None:
+        """Two reloads land while the lookup is in flight: one lists the
+        thread, the next removes it. The removal is the operator's last word,
+        so the answer that arrives afterwards must not re-admit it."""
+        t, _dispatched, client, registered = _restarted()
+
+        def _reload(threads: list[str]) -> None:
+            t.reconfigure(
+                SimpleNamespace(
+                    allowed_user_ids=["u1"],
+                    allowed_channel_ids=["c1"],
+                    allowed_thread_ids=threads,
+                    auto_thread=True,
+                )
+            )
+
+        async def _origin_then_list_and_revoke(thread_id: str) -> ThreadOrigin:
+            _reload(["t9"])
+            _reload([])
+            return ThreadOrigin(11, "c1", "bot")
+
+        client.thread_origin = _origin_then_list_and_revoke  # type: ignore[method-assign]
+        assert await t.readmit_own_thread("t9", "u1") is False
+        assert registered == []
+        assert t.may_send_to("t9") is False
+        assert "thread_reauthorized" not in [e["outcome"] for e in events]
+
 
 class TestInteractionAfterRestart:
     @pytest.mark.asyncio
@@ -287,11 +361,14 @@ class TestClientThreadOrigin:
         client = DiscordClient(token="bot-secret", proxy="http://proxy.invalid:8080")
         calls: list[str] = []
 
-        async def _api(method: str, path: str, body: Any, timeout: int = 30, **_kw: Any) -> Any:
+        async def _api_json(method: str, path: str, body: Any, **kw: Any) -> Any:
+            # The admission lookup is the one route that opts out of the
+            # ladder's roster re-read; its caller re-reads the rosters itself.
+            assert kw.get("recheck_destination") is False
             calls.append(f"{method} {path}")
-            return payload
+            return SimpleNamespace(data=payload)
 
-        monkeypatch.setattr(client, "_api", _api)
+        monkeypatch.setattr(client, "api_json", _api_json)
         assert await client.thread_origin("t9") == expected
         # Never served from a cache: it is an authorization input.
         await client.thread_origin("t9")

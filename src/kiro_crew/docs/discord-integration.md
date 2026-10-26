@@ -168,7 +168,8 @@ Portal or clear the thread allow-list and restart in DM-only mode.
   that first message. To stop the bot answering in every thread it opened
   under a channel, remove that channel from `allowed_channel_ids` and restart
   the gateway. A config reload alone keeps those threads answering until the
-  next restart.
+  next restart. Removing one thread's ID from `allowed_thread_ids` stops that
+  thread at once, and the bot does not re-admit it until the next restart.
 - **Slash commands answer privately.** A `/` command reply is ephemeral, so only
   the person who ran it sees it, which is what keeps a refusal or a status line
   out of a shared thread.

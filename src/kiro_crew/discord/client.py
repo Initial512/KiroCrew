@@ -878,7 +878,13 @@ class DiscordClient:
         write. ``None`` when the call fails, the id is not a thread, or Discord
         omits either field, so a caller deciding admission on it fails closed.
         """
-        result = await self._api("GET", f"/channels/{channel_id}", None)
+        # The thread is not on any roster yet (that is why it is asked), so the
+        # ladder's mid-send roster re-read would refuse this lookup whenever a
+        # rate-limit hold is served. The caller re-reads both rosters itself
+        # after the answer arrives (``DiscordTransport.readmit_own_thread``).
+        result = (
+            await self.api_json("GET", f"/channels/{channel_id}", None, recheck_destination=False)
+        ).data
         if not isinstance(result, dict) or not isinstance(result.get("type"), int):
             return None
         channel_type = int(result["type"])
@@ -916,11 +922,13 @@ class DiscordClient:
         *,
         timeout: int = 30,
         destination: str = "",
+        recheck_destination: bool = True,
     ) -> DiscordApiResult:
         """Call a REST endpoint with a JSON body, reporting the outcome.
 
         The body may be a LIST: the application-command bulk-overwrite endpoint
-        takes a top-level JSON array, not an object.
+        takes a top-level JSON array, not an object. ``recheck_destination``
+        is for an admission lookup only; see ``_api_request``.
         """
         return await self._api_request(
             method,
@@ -928,6 +936,7 @@ class DiscordClient:
             timeout=timeout,
             build=lambda: {"json": payload},
             destination=destination,
+            recheck_destination=recheck_destination,
         )
 
     async def api_files(

@@ -149,6 +149,11 @@ class DiscordTransport(MessagingTransport):
         # reload can replace those without dropping the threads this process
         # promoted at runtime (see ``reconfigure``).
         self._configured_threads: frozenset[str] = frozenset(self._allowed_threads)
+        # Thread ids an operator removed from ``allowed_thread_ids`` on a live
+        # reload. ``readmit_own_thread`` refuses them, so a revoked bot-opened
+        # thread does not come back on the next message. In memory only: a
+        # restart forgets it, like every other runtime grant here.
+        self._revoked_threads: set[str] = set()
         self._allowed_channels: frozenset[str] = frozenset(str(c) for c in allowed_channel_ids)
         self._auto_thread = auto_thread
         self._on_thread_created = on_thread_created
@@ -181,7 +186,9 @@ class DiscordTransport(MessagingTransport):
         ``config.json`` and dropping it would strand every follow-up reply the
         user sends into it. A thread an operator REMOVES from the config is
         still dropped, so the reload narrows as intended; only ids this process
-        promoted itself survive.
+        promoted itself survive. A removed id is also remembered as revoked, so
+        ``readmit_own_thread`` cannot add it back until this process restarts
+        or the operator lists it again.
 
         Fails closed on shape: a field that is not a list keeps the PREVIOUS
         value and logs at WARNING, and ``auto_thread`` must be a bool. Allow-list
@@ -231,6 +238,8 @@ class DiscordTransport(MessagingTransport):
                 len(self._allowed_threads),
             )
         else:
+            dropped = self._configured_threads - threads
+            self._revoked_threads = (self._revoked_threads | dropped) - threads
             promoted = self._allowed_threads - self._configured_threads
             merged = set(threads) | promoted
             if merged != self._allowed_threads:
@@ -527,16 +536,22 @@ class DiscordTransport(MessagingTransport):
         while the call is in flight refuses the grant. The grant is
         SEL-audited like the original (``thread_reauthorized``) and pushed to
         the dispatcher's copy through the same callback. Fails closed on an
-        unknown bot identity, a failed lookup or any mismatch.
+        unknown bot identity, a failed lookup or any mismatch. A thread an
+        operator removed from ``allowed_thread_ids`` on a live reload is
+        refused too (checked before and after the lookup), so a revocation
+        holds until the next restart.
         """
         if not thread_id or thread_id in self._allowed_threads:
             return bool(thread_id)
+        if thread_id in self._revoked_threads:
+            return False
         bot_user_id = getattr(self._client, "bot_user_id", "")
         if not bot_user_id or not self._allowed_channels:
             return False
         origin = await self._client.thread_origin(thread_id)
         if (
-            caller not in self._allowed
+            thread_id in self._revoked_threads
+            or caller not in self._allowed
             or origin is None
             or origin.channel_type not in _AUTO_THREAD_TYPES
             or origin.owner_id != bot_user_id
