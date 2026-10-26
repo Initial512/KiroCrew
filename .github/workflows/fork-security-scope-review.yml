@@ -345,10 +345,23 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       # Trusted BASE tree for review CONTEXT only. NEVER the fork head.
+      #
+      # STALLED FETCH. On some runs git opens one connection to
+      # github.com:443 -- an allowed endpoint, with nothing blocked -- and then
+      # receives nothing until the step timeout. GIT_HTTP_LOW_SPEED_LIMIT/_TIME
+      # make git abort a transfer that stays under 1000 bytes/s for 120 s, so
+      # actions/checkout (which passes the step env to git) sees a failed fetch
+      # and runs its own fetch retry instead of waiting out the 10 minutes. It
+      # fetches the same pinned ref, so a retry can only produce the same tree
+      # or fail; the step still fails closed. A healthy full fetch moves
+      # megabytes per second, far above the floor.
       - name: Checkout base (trusted)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         # Full history takes 83-187 s on a healthy runner; 10 is ample headroom.
         timeout-minutes: 10
+        env:
+          GIT_HTTP_LOW_SPEED_LIMIT: "1000"
+          GIT_HTTP_LOW_SPEED_TIME: "120"
         with:
           ref: ${{ steps.pr.outputs.base_sha }}
           fetch-depth: 0
@@ -368,6 +381,11 @@ jobs:
           BASE_SHA: ${{ steps.pr.outputs.base_sha }}
           HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
           PATCH: ${{ runner.temp }}/authentic.patch
+          # Same stalled-transfer abort as `Checkout base (trusted)`: a fetch
+          # that stalls fails here in about two minutes instead of five. No
+          # retry: the step fails closed as before.
+          GIT_HTTP_LOW_SPEED_LIMIT: "1000"
+          GIT_HTTP_LOW_SPEED_TIME: "120"
         run: |
           set -uo pipefail
           # COMPLETE diff via git, NOT the compare API: the compare endpoint

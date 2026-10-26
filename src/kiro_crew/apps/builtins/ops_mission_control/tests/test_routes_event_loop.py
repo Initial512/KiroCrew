@@ -593,3 +593,92 @@ class TestNoHandlerParsesAStoredFileOnTheLoop(unittest.IsolatedAsyncioTestCase):
             "primitives — call them directly on the loop, not via to_thread:\n  "
             + "\n  ".join(sorted(set(offenders))),
         )
+
+
+class TestIncidentLogPathIsResolvedOffTheLoop(unittest.IsolatedAsyncioTestCase):
+    """``/incident`` must resolve and stat the postmortem path in a worker thread.
+
+    ``store.incident_log_path`` creates the incidents directory and the handler then stats
+    the file, so both touch the disk on every poll of the board's incident pane. Asserted
+    by thread identity rather than a timed heartbeat, so the test cannot be timing-flaky.
+    """
+
+    def setUp(self):
+        import os
+
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        env = mock.patch.dict(os.environ, {"KIROCREW_HOME": tmp})
+        env.start()
+        self.addCleanup(env.stop)
+
+    @staticmethod
+    def _closed_incident():
+        from kiro_crew.apps.builtins.ops_mission_control.backend import models, store
+
+        inc = store.claim(
+            models.Signal.create(source="cloudwatch", native_id="alarm/off-loop", title="probe"),
+            operating_mode=models.MODE_OBSERVE,
+        )
+        assert inc is not None
+        store.transition(inc.incident_id, models.STATUS_INVESTIGATING)
+        store.transition(inc.incident_id, models.STATUS_RESOLVED, resolution="done")
+        return inc
+
+    @staticmethod
+    async def _get(incident_id: str):
+        import json
+
+        request = mock.MagicMock(spec=web.Request)
+        request.query = {"id": incident_id}
+        response = await routes._handle_incident(request)
+        return response.status, json.loads(getattr(response, "text", "{}") or "{}")
+
+    async def test_the_path_lookup_and_the_stat_run_off_the_loop_thread(self):
+        import threading
+
+        from kiro_crew.apps.builtins.ops_mission_control.backend import store
+
+        inc = self._closed_incident()
+        loop_thread = threading.get_ident()
+        seen: list[tuple[str, int]] = []
+        real_lookup = store.incident_log_path
+
+        class _RecordingPath:
+            def __init__(self, real):
+                self._real = real
+
+            def is_file(self):
+                seen.append(("is_file", threading.get_ident()))
+                return self._real.is_file()
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+            def __str__(self):
+                return str(self._real)
+
+        def _recording_lookup(incident_id):
+            seen.append(("incident_log_path", threading.get_ident()))
+            return _RecordingPath(real_lookup(incident_id))
+
+        with mock.patch.object(store, "incident_log_path", _recording_lookup):
+            status, payload = await self._get(inc.incident_id)
+
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["log_path"].endswith(f"{inc.incident_id}.md"))
+        # A floor, so the scan cannot pass by recording nothing.
+        self.assertIn("is_file", [name for name, _ in seen])
+        on_loop = [name for name, ident in seen if ident == loop_thread]
+        self.assertEqual(on_loop, [], f"ran on the event loop thread: {on_loop}")
+
+    async def test_a_lookup_failure_still_reports_no_path(self):
+        from kiro_crew.apps.builtins.ops_mission_control.backend import store
+
+        inc = self._closed_incident()
+        for exc in (ValueError("unsafe incident id"), OSError("disk gone")):
+            with self.subTest(exc=type(exc).__name__):
+                with mock.patch.object(store, "incident_log_path", side_effect=exc):
+                    status, payload = await self._get(inc.incident_id)
+                self.assertEqual(status, 200)
+                self.assertEqual(payload["log_path"], "")

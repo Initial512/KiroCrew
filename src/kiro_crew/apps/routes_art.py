@@ -13,6 +13,7 @@ as ``kiro_crew.apps.routes.<name>``, and a patch there reaches this module too
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import mimetypes
 import os
@@ -625,7 +626,7 @@ async def _fetch_git_blob(
         if tmp_root:
             await asyncio.to_thread(platform_compat.rmtree_force, tmp_root)
 
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    await asyncio.to_thread(functools.partial(cache_path.parent.mkdir, parents=True, exist_ok=True))
     await asyncio.to_thread(cache_path.write_bytes, data)
     return True
 
@@ -755,7 +756,7 @@ async def handle_blob_proxy(request: web.Request) -> web.Response:
         return web.json_response({"error": "invalid path"}, status=400)
 
     # Safe to create directories now that path is validated
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    await asyncio.to_thread(functools.partial(cache_path.parent.mkdir, parents=True, exist_ok=True))
 
     if not await asyncio.to_thread(cache_path.is_file):
         # Same-repo credential carve-out, extended to the blob chokepoint:

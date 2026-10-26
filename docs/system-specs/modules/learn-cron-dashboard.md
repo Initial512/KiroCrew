@@ -425,8 +425,10 @@ member), and the server offers no member filter or server-side grouping, so ever
 per-crewmate list is a client-side filter over the whole payload through one shared
 predicate, `wakesCrew(job, crew, isDefaultCrew, memberId)`: durable `member_id` first -- compared against the mate's IMMUTABLE id, since `bind_cron_memory` rewrites the client's value to the canonical one before persisting -- then a
 multi-entry `agent_sequence`, then the template in `agent`, and finally the default
-crew for a job bound to nothing. `script` and `command` jobs are excluded — they run
-a file, not a crew, so no crew attribution exists to report. Two surfaces read that
+crew for a job bound to nothing. A `script` or `command` job is listed only through
+its `member_id` -- `bind_cron_memory` stamps one on every job a crewmate creates, so
+such a job has an explicit owner -- and is excluded from every fallback after it,
+since it runs a file, not a crew, and an empty or stale `agent` on it names no owner. Two surfaces read that
 predicate through one query key (`crewWakeQueryKey`): the crew editor's Schedules
 pane (`CrewWakeSection`) and the Mates Profile card's Schedules list
 (`CrewScheduleList`); the Mates page mounts `CrewWakeSection` only for its
@@ -3412,10 +3414,12 @@ adapter's own text — a `finish(error=…)` detail, a GitHub stderr tail, an HT
 body — which the store keeps VERBATIM so the row stays diagnosable after the
 process that failed is gone. `handlers/tasks._scrub_prose` runs
 `security.redact_and_truncate` over every string leaf, walking nested dicts and
-lists (a credential inside a signal dict is the same leak), which is the
-composition `subagent_parts/run_output.py`'s `_redact` and `TaskRunner._execute_tasks` spell for
-the same strings: **exfiltration URLs first, then credentials.** That order is
-load-bearing — a URL whose query IS the credential is what the URL rewriter
+lists (a credential inside a signal dict is the same leak). That helper calls
+the composed pass in `security/pass_compose.py`, which applies the
+exfiltration-URL pass and the credential pass to the original text and removes
+what either order removes. `subagent_parts/run_output.py`'s `_redact` and
+`TaskRunner._execute_tasks` still spell **exfiltration URLs first, then
+credentials** for the same strings. That order is load-bearing — a URL whose query IS the credential is what the URL rewriter
 exists for and it removes the whole URL, while credentials-first leaves
 `?token=[REDACTED: credential]`, in which nothing suspicious remains, so the
 destination survives. Non-string leaves and mapping keys pass through (a number

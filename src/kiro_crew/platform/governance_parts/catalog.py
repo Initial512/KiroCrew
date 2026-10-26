@@ -379,7 +379,14 @@ SCOPE_CATALOG: Dict[str, ScopeSpec] = {
     # on disk is a separate decision this row does not make.
     # Data row only — CONTRACT_VERSION and the evaluator are untouched (mirrors
     # social_share).
-    "capabilities.feature_videos_download": ScopeSpec(CAPABILITY, capability_default=True),
+    #
+    # Inner ``hosts`` ruleset (``host`` matcher): which hosts the manifest and
+    # its media may be fetched from (a mirror named by the URL override included).
+    # Queried as ``hosts:<host>`` before each manifest request and each clip or
+    # poster request (``feature_videos_manifest.host_denied``).
+    "capabilities.feature_videos_download": ScopeSpec(
+        CAPABILITY, capability_default=True, scope_matchers={"hosts": "host"}
+    ),
     # The Jev decision seam: an enabled, sampled session sends message excerpts and
     # skill descriptions to an external, PAID provider endpoint and spends the
     # operator's account to do it. The keystone ``decisions_consent.json`` is the
@@ -401,7 +408,21 @@ SCOPE_CATALOG: Dict[str, ScopeSpec] = {
     # ``decisions_enabled`` so the Feature Previews card is not drawn at all.
     # Data row only -- CONTRACT_VERSION and the evaluator are untouched (mirrors
     # social_share).
-    "capabilities.decisions": ScopeSpec(CAPABILITY, capability_default=True),
+    #
+    # Three inner rulesets bound WHAT the seam may use once it is on, each queried
+    # by ``decide`` before a request is sent (``capability.targets_denied``):
+    # ``models`` (``identifier``: the model id the request names), ``points``
+    # (``identifier``: the decision point, e.g. ``skills.select``) and
+    # ``endpoints`` (``host``: the provider endpoint's host). ``models`` and
+    # ``endpoints`` bind the decision provider, so the judge's LLM lane, which
+    # runs on the session's own model provider, is asked about its point only.
+    # They bind local presets too, because a ``capabilities.decisions`` answer
+    # already does.
+    "capabilities.decisions": ScopeSpec(
+        CAPABILITY,
+        capability_default=True,
+        scope_matchers={"models": "identifier", "points": "identifier", "endpoints": "host"},
+    ),
     # The same seam answered by a LOCAL PRESET model on this machine
     # (``decisions/local_models.py``) instead of hosted Jev. Nothing leaves the
     # machine and nothing is spent, so a fleet that permits hosted Jev can still

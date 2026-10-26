@@ -551,7 +551,7 @@ async def _ensure_repo() -> tuple[bool, str]:
 
     await asyncio.to_thread(_sync_gitignore)
 
-    if not (root / ".git").is_dir():
+    if not await asyncio.to_thread((root / ".git").is_dir):
         rc, _, err = await _git("init", "-q")
         if rc != 0:
             return False, f"git init failed: {err.strip()[:200]}"
@@ -852,6 +852,12 @@ async def pull() -> tuple[bool, str]:
 TRACKED_FILES: tuple[str, ...] = ("ledger.jsonl", "rotation.yaml", ".gitignore")
 
 
+def _present_tracked_files() -> list[str]:
+    """The tracked files that exist on disk, in ``TRACKED_FILES`` order. Blocking."""
+    root = _repo_root()
+    return [name for name in TRACKED_FILES if (root / name).exists()]
+
+
 async def _stage_and_commit(message: str, *, allow_empty_message_only: bool = False) -> bool:
     """Stage every tracked file and commit if anything changed.
 
@@ -860,9 +866,10 @@ async def _stage_and_commit(message: str, *, allow_empty_message_only: bool = Fa
     push that only ever ran ``git add ledger.jsonl`` would leave the schedule committed
     nowhere and silently never reach teammates.
     """
-    for name in TRACKED_FILES:
-        if (_repo_root() / name).exists():
-            await _git("add", "--", name)
+    # Off the loop, like the rest of this module's file work: `push` and `pull` await this
+    # directly on the event loop. One worker hop for the whole set, not one per file.
+    for name in await asyncio.to_thread(_present_tracked_files):
+        await _git("add", "--", name)
     rc, out, _ = await _git("status", "--porcelain")
     if rc == 0 and not out.strip() and not allow_empty_message_only:
         return False

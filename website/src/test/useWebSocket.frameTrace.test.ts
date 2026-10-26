@@ -167,9 +167,10 @@ function recordQueries(qc: QueryClient) {
       if (Array.isArray(first)) {
         trace.push(`query ${op} ${scrub(first)}`)
       } else {
-        const { queryKey, queryFn: _fn, predicate: _p, ...rest } = first ?? {}
-        void _fn; void _p
-        const opts = Object.keys(rest).length ? ` ${scrub(rest)}` : ''
+        const { queryKey, queryFn: _fn, predicate, ...rest } = first ?? {}
+        void _fn
+        // A predicate cannot be serialized; record that the call narrows by one.
+        const opts = (Object.keys(rest).length ? ` ${scrub(rest)}` : '') + (predicate ? ' <predicate>' : '')
         const extra = op === 'invalidateQueries' || op === 'refetchQueries' || op === 'resetQueries'
           ? (second ? ` ${scrub(second)}` : '')
           : ''
@@ -1112,11 +1113,7 @@ const EXPECTED_FRAMES: Record<string, string[]> = {
     'query invalidateQueries ["cron-jobs"]',
     'query invalidateQueries ["crons"]',
     'query invalidateQueries ["cron-history-all"]',
-    'query invalidateQueries ["spawn-list"]',
-    'query invalidateQueries ["sessions-context"]',
-    'query invalidateQueries ["sessions-usage"]',
     'query invalidateQueries ["agents-installed"]',
-    'query invalidateQueries ["mcp-tools"]',
     'query invalidateQueries ["kirocrew-agents"]',
     'query invalidateQueries ["default-agent"]',
     'query invalidateQueries ["agent-templates"] {"exact":true}',
@@ -1400,11 +1397,7 @@ const EXPECTED_FRAMES: Record<string, string[]> = {
     'query invalidateQueries ["cron-jobs"]',
     'query invalidateQueries ["crons"]',
     'query invalidateQueries ["cron-history-all"]',
-    'query invalidateQueries ["spawn-list"]',
-    'query invalidateQueries ["sessions-context"]',
-    'query invalidateQueries ["sessions-usage"]',
     'query invalidateQueries ["agents-installed"]',
-    'query invalidateQueries ["mcp-tools"]',
     'query invalidateQueries ["kirocrew-agents"]',
     'query invalidateQueries ["default-agent"]',
     'query invalidateQueries ["agent-templates"] {"exact":true}',
@@ -1418,11 +1411,7 @@ const EXPECTED_FRAMES: Record<string, string[]> = {
     'query invalidateQueries ["cron-jobs"]',
     'query invalidateQueries ["crons"]',
     'query invalidateQueries ["cron-history-all"]',
-    'query invalidateQueries ["spawn-list"]',
-    'query invalidateQueries ["sessions-context"]',
-    'query invalidateQueries ["sessions-usage"]',
     'query invalidateQueries ["agents-installed"]',
-    'query invalidateQueries ["mcp-tools"]',
     'query invalidateQueries ["kirocrew-agents"]',
     'query invalidateQueries ["default-agent"]',
     'query invalidateQueries ["agent-templates"] {"exact":true}',
@@ -1518,7 +1507,7 @@ const EXPECTED_LIFECYCLE: Record<string, string[]> = {
     'query invalidateQueries ["chat-threads"]',
     'query invalidateQueries ["guide-pending"]',
     'query invalidateQueries ["change-cards"]',
-    'query removeQueries ["member-thread"]',
+    'query removeQueries ["member-thread"] <predicate>',
     'query fetchQuery ["automation-seed","legacy"] {"staleTime":0,"retry":false}',
     'query fetchQuery ["automation-seed","structured"] {"staleTime":0,"retry":false}',
     'action notifications/fetch/pending',
@@ -1568,7 +1557,7 @@ const EXPECTED_LIFECYCLE: Record<string, string[]> = {
     'query invalidateQueries ["chat-threads"]',
     'query invalidateQueries ["guide-pending"]',
     'query invalidateQueries ["change-cards"]',
-    'query removeQueries ["member-thread"]',
+    'query removeQueries ["member-thread"] <predicate>',
     'query fetchQuery ["automation-seed","legacy"] {"staleTime":0,"retry":false}',
     'query fetchQuery ["automation-seed","structured"] {"staleTime":0,"retry":false}',
     'action notifications/fetch/pending',

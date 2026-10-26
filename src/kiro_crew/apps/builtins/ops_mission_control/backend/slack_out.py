@@ -285,10 +285,14 @@ async def publish(incident: Incident, client: Any | None) -> bool:
     Returns True when Slack was actually written. Never raises: a Slack outage
     must not fail the dispatch cycle that called it.
     """
-    if client is None or not configured():
+    if client is None:
+        return False
+    # Off-loop: both read the keystone policy file, and this is awaited on the gateway
+    # loop by `dispatch.run_cycle` for every changed incident.
+    ok, chan = await asyncio.to_thread(lambda: (configured(), channel()))
+    if not ok:
         return False
 
-    chan = channel()
     blocks = _blocks(incident)
     fallback = summary_line(incident)
 
@@ -392,13 +396,17 @@ async def post_detail(incident: Incident, text: str, client: Any | None) -> bool
     Used for a diagnosis or resolution: it belongs with the incident but must not
     push the board's one-line summary out of view.
     """
-    if client is None or not configured() or not incident.slack_thread_ts:
+    if client is None or not incident.slack_thread_ts:
+        return False
+    # Off-loop for the same reason as `publish`: both read the keystone policy file.
+    ok, chan = await asyncio.to_thread(lambda: (configured(), channel()))
+    if not ok:
         return False
     body = _clip(_safe(text), _MAX_DETAIL_CHARS)
     if not body:
         return False
     try:
-        await client.post_message(channel(), body, thread_ts=incident.slack_thread_ts)
+        await client.post_message(chan, body, thread_ts=incident.slack_thread_ts)
         return True
     except Exception as exc:
         logger.warning(

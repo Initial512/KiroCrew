@@ -566,8 +566,14 @@ export function useDrivePageFiles(account: string) {
      agent. So the editors close with the view they belonged to -- WITHOUT the
      in-flight guard: a rename or delete still on the wire finishes regardless,
      and because its editor is gone its outcome is routed by the mutation
-     callbacks to the page-level notice, where a late failure is still seen. */
+     callbacks to the page-level notice, where a late failure is still seen.
+     The callbacks route on the mirror refs, which their own effects only
+     update after the closing render commits; a failure landing before that
+     would read the old row and go to a strip that is already gone. So the
+     refs are cleared here, in the same pass that closes the editors. */
   useEffect(() => {
+    renamingRef.current = null
+    confirmDeleteRef.current = null
     setRenaming(null)
     setRenameError('')
     setConfirmDelete(null)

@@ -901,7 +901,7 @@ export default function App() {
       <MetricsCard metrics={metrics} />
       <KiroAccountModal open={kiroUsageOpen} onClose={() => setKiroUsageOpen(false)} usage={kiroUsageState} />
       <Lightbox />
-      <ImportSessionOutcomeNotice />
+      <ImportSessionOutcomeNotice navigateToChat />
       <RunInTerminalShellNotice error={runInTerminal.error} onDismiss={runInTerminal.dismiss} />
       </LocalOverlayRoot>
       </div>{/* /Local pane */}

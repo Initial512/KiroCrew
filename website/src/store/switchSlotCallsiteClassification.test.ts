@@ -37,7 +37,7 @@ const PINNED: Record<string, Counts> = {
   'src/apps/papyrus/CoAuthorPanel.tsx': { announced: 0, keepTarget: 0, plain: 1, reason: 'panel binds to a slot supplied programmatically' },
   'src/components/ArtifactChatPanel.tsx': { announced: 0, keepTarget: 0, plain: 1, reason: 'panel binds to a slot supplied programmatically' },
   'src/components/ChatInput.tsx': { announced: 1, keepTarget: 0, plain: 0, reason: 'mic-owner status-row click announces' },
-  'src/components/ImportSessionItem.tsx': { announced: 0, keepTarget: 1, plain: 0, reason: 'the just-imported slot is new, so a 404 is a create/fetch race (#6309)' },
+  'src/components/ImportSessionItem.tsx': { announced: 1, keepTarget: 1, plain: 0, reason: 'on upload the just-imported slot is new, so a 404 is a create/fetch race (#6309); the shell notice\'s later Open announces' },
   'src/components/commandPalette/providers/recentsProvider.ts': { announced: 1, keepTarget: 0, plain: 0, reason: 'palette recents row announces' },
   'src/components/notifications/NotificationDetailPanel.tsx': { announced: 3, keepTarget: 0, plain: 0, reason: 'go-to-chat buttons announce; the two to-chat hand-offs open through openCreatedSlot' },
   'src/hooks/useKeyboardShortcuts.ts': { announced: 1, keepTarget: 0, plain: 0, reason: 'keyboard session jump announces' },

@@ -429,6 +429,7 @@ cannot drift.
 |-----|---------|---------|
 | `instances.enabled` | `false` | Primary opt-in, read at gateway startup. Also gates the CSP `frame-src` `*.localhost` extension. |
 | `instances.warm_set_cap` | `0` (automatic) | Max instances kept warm at once (bounds memory/sockets; each warm instance is a full dashboard SPA). `0` tracks how many crews are registered, so up to the internal ceiling no configured crew is evicted; an explicit value is honoured exactly, including one below the registered count. Negative values fall back to automatic. |
+| `instances.default_destination` | `""` | Instance id that **Send a copy to** lists first and marks as the default (§14). Served with `GET /api/instances`; resolved against the registry only when the menu renders, so an id naming no registered crew marks nothing. A folder's `default_destination_crew` overrides it. |
 | `instances.tunnel_base_port` | `7778` | First local loopback port the allocator hands out. Out-of-range values fall back to the default. |
 | `instances.ssh_compression` | `true` | Add `-C` to the tunnel argv. See §5.2. |
 | `instances.connect_timeout_secs` | unset (SSH `15.0`, SSM `25.0`) | How long (secs) to wait for the local forward port to accept connections before declaring a connect attempt failed. Hosts behind a ProxyCommand or jump host need longer (the proxy handshake runs before ssh begins the forward). An explicit value applies to both transports, including a value equal to either transport's default. Values below 1 fall back to the transport defaults; values above 120 are clamped to 120. |
@@ -1828,6 +1829,15 @@ transcript read, under its `TRANSFER` rules),
 `handlers_instances.api_instances_send_session` (control plane), and the frontend
 `SendToInstanceSubmenu` mounted inside the shared `SessionActionsMenu`.
 
+The submenu lists the **default destination crew** first, marked as the
+default: the session's folder's `default_destination_crew` when it names a
+registered crew, else `instances.default_destination` (§5). It only orders and
+marks the menu; an offline default is disabled like any other offline crew, and
+nothing is sent without the click. The override is per folder: a subfolder does
+not inherit its parent's value and falls back to the global default. In Folder
+settings the empty choice names the crew that global default resolves to, or
+"(none)" when it names no registered crew.
+
 ### 14.1 Why it needs no new transport
 
 A session is a portable JSONL transcript (`<data-home>/sessions/<key>.jsonl`:
@@ -1921,7 +1931,7 @@ versions is what lets a v2 instance still receive a copy from a v1 one.
 |---|---|
 | `POST /api/instances/{id}/send-session` | Sending side. Body `{"slot": "<local slot key>"}`. Bundles the local session and delivers it over that instance's open tunnel. |
 | `GET /api/chat/slots/{slot}/export` | Sending side, file hop. Streams the SAME bundle as a gzipped download instead of over a tunnel — see §14.7. `?format=md` streams it as a human-readable Markdown transcript instead; see §14.7a. |
-| `POST /api/chat/slots/import` | Receiving side, for BOTH arrival routes. Accepts a bundle — gzipped or plain JSON, sniffed from its own bytes — and materialises a new slot. See §14.5a. |
+| `POST /api/chat/slots/import` | Receiving side, for BOTH arrival routes. Accepts a bundle — gzipped or plain JSON, sniffed from its own bytes — and materialises a new slot. Answers `{ok, key, title, messages, resume_mode, folder_id}`; `folder_id` is the arrival folder in THIS instance's own tree (`""` when unfiled), so the client can open its path. See §14.5a. |
 
 `send-session` goes through the same `_guard()` as every other route in §6
 (owner-only, never Slack, feature-gated, SEL-audited as
@@ -2372,13 +2382,32 @@ since an import creates a session.
 menus close on window `blur`, so the row unmounts before the user confirms a
 file. The picker therefore opens from an input on `document.body` with a native
 `change` listener, and the upload runs through `useMutation` option-level
-callbacks, which still fire for an unmounted row. On success the slot list is
-refreshed and the imported session is always opened, wherever the user is; a
-failed refresh is not surfaced, because the switch loads the session by key and
-the next slot frame lists it. Only a refused import is reported: the unmounted
-row cannot show it, so `ImportSessionOutcomeNotice`, mounted once above the
-app's layout branch so the dashboard, popout and embed layouts all render it,
-does. An import in flight keeps every mounted import row disabled.
+callbacks, which still fire for an unmounted row. On success the row is listed
+in the answer's `folder_id` and the slot list is refreshed; a failed refresh is
+not surfaced, because the switch loads the session by key and the next slot
+frame lists it. The resume answer in `chat_api/resume.py` carries the same
+`folder_id`, on both the revive and the already-open path, so a resumed session
+in a collapsed folder opens that path the same way.
+
+**The import respects a move made during the upload.** The row captures the
+user's position with `captureForkOrigin` when it is chosen, and on success
+switches only if `forkMayOpen` says the user has not moved since, the rule a
+create or fork follows. When it switches, it does so with `keepTargetOnMissing`
+(right after the answer, a 404 is the create/fetch race) and asks the sidebar
+to open the folder path with `requestSlotFolderOpen`, so a collapsed Imported
+folder shows the row. When the user has moved, the import stays listed and does
+not switch.
+
+**The outcome lands in a shell notice.** The unmounted row cannot show an
+outcome, so `ImportSessionOutcomeNotice` does. Each layout mounts one copy: the
+popout and embed frames above the app's layout branch, the dashboard inside its
+local pane. A refused import is always reported there. A success is reported
+there only when the import did not switch because the user moved: it names the
+session ("Imported: <title>") with Open and Dismiss. Open switches with
+`announceOnMissing`, because a session that is gone or fails to load minutes
+later is a real failure, and opens the folder path. The dashboard's copy also
+goes to `/chat` through `useGuardedLeave`; the frames' copies route themselves.
+An import in flight keeps every mounted import row disabled.
 
 **Why the hop exists.** §14.4's send is a request/response between two live
 gateways, so it needs both machines up at the same moment, reachable from one

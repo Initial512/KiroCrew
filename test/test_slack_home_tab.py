@@ -911,6 +911,43 @@ async def test_home_tab_skill_loader_and_listing_run_off_loop(tmp_path, monkeypa
         loader.close()
 
 
+@pytest.mark.asyncio
+async def test_home_tab_mcp_server_listing_runs_off_loop(monkeypatch):
+    """``list_servers`` reads the agent config, ``mcp.json`` and every
+    provider's global config (``~/.claude.json`` is routinely megabytes), so
+    opening the Home tab must not run it on the event loop thread. The
+    disabled filter still applies to what the worker thread returns."""
+    import threading
+
+    loop_thread = threading.get_ident()
+    threads = []
+
+    def list_servers():
+        threads.append(threading.get_ident())
+        return [
+            SimpleNamespace(name="builder-mcp", disabled=False),
+            SimpleNamespace(name="figma", disabled=True),
+        ]
+
+    loader = MagicMock()
+    loader.list_skills.return_value = []
+    monkeypatch.setattr(events_mod, "list_servers", list_servers)
+    monkeypatch.setattr(events_mod, "_get_skills_loader", lambda: loader)
+    monkeypatch.setattr(events_mod, "is_yolo_mode", lambda: False)
+    monkeypatch.setattr("kiro_crew.sso_status.get_sso_status_line", AsyncMock(return_value="ready"))
+    orch = _make_orch(slack=SimpleNamespace(views_publish=AsyncMock()))
+
+    await _publish_home_tab(orch, "U123")
+
+    orch.slack.views_publish.assert_awaited_once()
+    assert len(threads) == 1
+    assert threads[0] != loop_thread
+    text = str(orch.slack.views_publish.call_args[1]["view"]["blocks"])
+    assert "MCP Integrations (1)" in text
+    assert "builder-mcp" in text
+    assert "figma" not in text
+
+
 @dataclass
 class FakeCronJobTZ:
     """A cron job that carries its own timezone, like the real CronJob."""

@@ -166,6 +166,24 @@ def _within(candidate: str, base: str) -> bool:
         return False
 
 
+def _resolve_at_ingest(file_path: str, root: str, confined: bool) -> tuple[str, str]:
+    """Resolve *file_path* and, when *confined*, the source *root*.
+
+    Both resolutions stat the disk, which a knowledge folder on a slow or network
+    mount can hold for seconds, so ``_ingest_file`` runs this in a worker thread.
+    The second value is ``""`` when unconfined, when *root* is unset, or when it
+    cannot be resolved; a failure resolving *file_path* propagates to the caller.
+    """
+    resolved = str(Path(file_path).resolve())
+    if not confined:
+        return resolved, ""
+    try:
+        root_real = str(Path(root).resolve()) if root else ""
+    except OSError:
+        root_real = ""
+    return resolved, root_real
+
+
 #: Statuses whose bytes hash a retired stale includer keeps: 'failed'/'skipped'
 #: name the version that failed, and 'scanning' keys its retry budget.
 _KEEPS_BYTES_HASH = frozenset({"failed", "skipped", "scanning"})
@@ -415,7 +433,9 @@ class FolderWatcher:
         props = json.loads(source.get("properties") or "{}") if isinstance(
             source.get("properties"), str) else (source.get("properties") or {})
 
-        if not Path(uri).is_dir():
+        # A knowledge folder can sit on a slow or network mount, so even this
+        # existence check runs in a worker thread.
+        if not await asyncio.to_thread(Path(uri).is_dir):
             logger.warning("Folder source %s path missing: %s", source_id, uri)
             return {"error": f"Directory not found: {uri}"}
 
@@ -1154,12 +1174,12 @@ class FolderWatcher:
         # must still not be sensitive, and -- when the source is confined -- must still
         # land inside the registered root. Checking only sensitivity would let a
         # retargeted link pull in any non-sensitive file on the host.
-        resolved = str(Path(file_path).resolve())
-        if props.get("confine_to_root"):
-            try:
-                root_real = str(Path(root).resolve()) if root else ""
-            except OSError:
-                root_real = ""
+        # The resolutions stat the disk, so they run in a worker thread; the
+        # pipeline's read still starts only after this re-check has passed.
+        confined = bool(props.get("confine_to_root"))
+        resolved, root_real = await asyncio.to_thread(
+            _resolve_at_ingest, file_path, root, confined)
+        if confined:
             if not root_real or not _within(resolved, root_real):
                 logger.warning(
                     "TOCTOU: path escaped the source root at ingest time: %s -> %s",

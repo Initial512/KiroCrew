@@ -15,12 +15,15 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
 import tempfile
+import uuid
 from pathlib import Path
 
 from aiohttp import web
 
 from kiro_crew._sqlite_compat import sqlite3
+from kiro_crew.dashboard.chat_utils import drained_to_thread
 from kiro_crew.dashboard.handlers.files import _PathProbeBusy, _run_path_probe
 from kiro_crew.dashboard.handlers.knowledge_access import (
     _pipeline,
@@ -543,13 +546,25 @@ async def _background_agent_sync(  # type: ignore[no-untyped-def]
         content = await fetch_url_content(url, pool)
         redacted = _redact(content)
         content = redacted if redacted is not None else content
-        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".md", prefix="agent_sync_")
+        # The page is staged off the loop under a name picked here, so the
+        # finally below always knows which file to remove.
+        tempdir = await asyncio.to_thread(tempfile.gettempdir)
+        staged = Path(tempdir) / f"agent_sync_{uuid.uuid4().hex}.md"
+
+        def _write_tmp() -> None:
+            # O_EXCL refuses a path that already exists, link or not; 0o600
+            # keeps the page as private as NamedTemporaryFile made it.
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+            with os.fdopen(os.open(staged, flags, 0o600), "wb") as fh:
+                fh.write(content.encode())
+
         try:
-            tmp.write(content.encode())
-            tmp.close()
-            await pipeline.ingest_file(tmp.name, original_name=name, source_id=source_id)
+            # Drained, so a cancel mid-write cannot reach the unlink before
+            # the worker has created the file.
+            await drained_to_thread(_write_tmp)
+            await pipeline.ingest_file(str(staged), original_name=name, source_id=source_id)
         finally:
-            Path(tmp.name).unlink(missing_ok=True)
+            await asyncio.to_thread(staged.unlink, missing_ok=True)
         await asyncio.to_thread(_set_sync_status, store, source_id, "synced")
         logger.info("Agent sync complete: source=%s url=%s", source_id, url)
     except ImportChunkBudgetError as exc:

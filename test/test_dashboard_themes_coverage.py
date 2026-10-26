@@ -178,6 +178,31 @@ class TestListThemesSync:
         _write_text(themes_dir / "bad" / "theme.json", "{{{")
         assert th._list_themes_sync() == []
 
+    @staticmethod
+    def _slugs_despite_bad_encoding() -> list[str]:
+        """List the slugs; a decode error escaping the list is the bug under test."""
+        try:
+            rows = th._list_themes_sync()
+        except UnicodeDecodeError as exc:
+            pytest.fail(f"one non-UTF-8 theme file failed the whole list: {exc}")
+        return [r["slug"] for r in rows]
+
+    def test_non_utf8_custom_record_is_skipped(self, themes_dir: Path) -> None:
+        # A latin-1 file is not UTF-8: reading it raises UnicodeDecodeError,
+        # which must skip that one theme rather than fail the whole list.
+        (themes_dir / "latin1.json").write_bytes('{"name": "Café"}'.encode("latin-1"))
+        _write_json(themes_dir / "ok.json", {"name": "Ok"})
+        assert self._slugs_despite_bad_encoding() == ["ok"]
+
+    def test_non_utf8_installed_manifest_is_skipped(self, themes_dir: Path) -> None:
+        # Install validation rejects a non-UTF-8 manifest, but the list scans
+        # whatever sits in the themes directory, including hand-copied packs.
+        bad = themes_dir / "copied" / "theme.json"
+        bad.parent.mkdir()
+        bad.write_bytes('{"name": "Café"}'.encode("latin-1"))
+        _write_json(themes_dir / "lcars" / "theme.json", {"name": "LCARS"})
+        assert self._slugs_despite_bad_encoding() == ["lcars"]
+
     def test_dot_prefixed_staging_and_backup_dirs_are_never_listed(
         self, themes_dir: Path
     ) -> None:
@@ -1151,6 +1176,18 @@ class TestApiThemeDetailPut:
         assert _body(resp)["theme"]["created_at"]
 
     @pytest.mark.asyncio
+    async def test_non_utf8_existing_record_gets_a_fresh_created_at(
+        self, themes_dir: Path
+    ) -> None:
+        (themes_dir / "sunset.json").write_bytes('{"name": "Café"}'.encode("latin-1"))
+        try:
+            resp = await th.api_theme_detail(_detail("PUT", "sunset", body=_theme_body()))
+        except UnicodeDecodeError as exc:
+            pytest.fail(f"a non-UTF-8 record failed the update: {exc}")
+        assert resp.status == 200
+        assert _body(resp)["theme"]["created_at"]
+
+    @pytest.mark.asyncio
     async def test_blank_emoji_falls_back_to_the_default(self, themes_dir: Path) -> None:
         _write_json(themes_dir / "sunset.json", {"name": "Sunset"})
         resp = await th.api_theme_detail(
@@ -1172,6 +1209,16 @@ class TestApiThemeDetailGet:
     async def test_corrupt_record_is_500(self, themes_dir: Path) -> None:
         _write_text(themes_dir / "sunset.json", "{{{")
         resp = await th.api_theme_detail(_detail("GET", "sunset"))
+        assert resp.status == 500
+        assert _body(resp)["error"] == "failed to read theme"
+
+    @pytest.mark.asyncio
+    async def test_non_utf8_record_is_500(self, themes_dir: Path) -> None:
+        (themes_dir / "sunset.json").write_bytes('{"name": "Café"}'.encode("latin-1"))
+        try:
+            resp = await th.api_theme_detail(_detail("GET", "sunset"))
+        except UnicodeDecodeError as exc:
+            pytest.fail(f"a non-UTF-8 record escaped the read error handling: {exc}")
         assert resp.status == 500
         assert _body(resp)["error"] == "failed to read theme"
 

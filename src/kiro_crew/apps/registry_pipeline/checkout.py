@@ -172,7 +172,7 @@ async def _clone_origin_url(dest: Path) -> str | None:
     module — the argv is fixed, but *dest* is derived from an index-supplied
     app name, so the cwd is not ours to trust.
     """
-    if not (dest / ".git").is_dir():
+    if not await asyncio.to_thread((dest / ".git").is_dir):
         return None
     origin_cmd, _cleanup = await wrap_argv_async(
         ["git", "remote", "get-url", "origin"],

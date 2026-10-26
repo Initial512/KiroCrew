@@ -213,7 +213,8 @@ async def _handle_claim(
             status=409,
         )
 
-    mode = rotation.resolve_mode(signal)
+    # `resolve_mode` reads the app mode and the act-rules from the policy file on disk.
+    mode = await asyncio.to_thread(rotation.resolve_mode, signal)
     # `operator`, not the heartbeat default: this route IS the board's manual claim,
     # and telling the two apart afterwards is the whole point of the field.
     try:

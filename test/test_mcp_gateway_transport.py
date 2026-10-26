@@ -23,6 +23,7 @@ import socket
 import stat
 import sys
 import tempfile
+import threading
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -432,6 +433,73 @@ async def test_remove_stale_is_a_noop_on_windows(
     monkeypatch.setattr(pc, "IS_WINDOWS", True)
     await transport.remove_stale(sock)
     assert sock.exists()
+
+
+def _record_fs_threads(monkeypatch: pytest.MonkeyPatch, sock: Path) -> dict[str, list[int]]:
+    """Record the thread of each ``os.stat`` / ``Path.unlink`` call on ``sock``.
+
+    Both wrappers delegate to the real call, so the test runs against the real
+    filesystem; only calls on the endpoint path are recorded, which keeps the
+    executor's and pytest's own stats out of the record.
+    """
+    seen: dict[str, list[int]] = {"stat": [], "unlink": []}
+    real_stat = os.stat
+    real_unlink = Path.unlink
+
+    def _stat(p: Any, *a: Any, **kw: Any) -> os.stat_result:
+        if os.fspath(p) == os.fspath(sock):
+            seen["stat"].append(threading.get_ident())
+        return real_stat(p, *a, **kw)
+
+    def _unlink(self: Path, *a: Any, **kw: Any) -> None:
+        if os.fspath(self) == os.fspath(sock):
+            seen["unlink"].append(threading.get_ident())
+        real_unlink(self, *a, **kw)
+
+    monkeypatch.setattr(transport.os, "stat", _stat)
+    monkeypatch.setattr(Path, "unlink", _unlink)
+    return seen
+
+
+@pytest.mark.skipif(pc.IS_WINDOWS, reason="POSIX socket files")
+@pytest.mark.asyncio
+async def test_remove_stale_touches_the_filesystem_off_the_event_loop(
+    sock_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The manager's respawn awaits this on the gateway loop: a stat or unlink
+    against a slow state directory there would stall every session."""
+    sock = sock_dir / "gateway.sock"
+    transport.prepare_dir(sock)
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.bind(str(sock))
+    s.close()
+    seen = _record_fs_threads(monkeypatch, sock)
+    loop_thread = threading.get_ident()
+
+    await transport.remove_stale(sock)
+    calls = {k: list(v) for k, v in seen.items()}  # before exists() stats again
+
+    assert not sock.exists()
+    assert len(calls["stat"]) == 1 and len(calls["unlink"]) == 1, calls
+    assert loop_thread not in calls["stat"] + calls["unlink"]
+
+
+@pytest.mark.skipif(pc.IS_WINDOWS, reason="POSIX socket files")
+@pytest.mark.asyncio
+async def test_remove_stale_stats_a_missing_endpoint_off_the_event_loop(
+    sock_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A missing endpoint still returns quietly, and the stat that finds it
+    missing runs on a worker thread too."""
+    sock = sock_dir / "gateway.sock"
+    seen = _record_fs_threads(monkeypatch, sock)
+    loop_thread = threading.get_ident()
+
+    await transport.remove_stale(sock)
+
+    assert len(seen["stat"]) == 1, seen
+    assert seen["stat"][0] != loop_thread
+    assert seen["unlink"] == []
 
 
 @pytest.mark.skipif(pc.IS_WINDOWS, reason="POSIX socket files")

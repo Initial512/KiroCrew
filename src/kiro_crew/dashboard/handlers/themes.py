@@ -112,7 +112,7 @@ def _list_themes_sync() -> list[dict[str, Any]]:
                         "created_at": data.get("created_at", ""),
                     }
                 )
-            except (json.JSONDecodeError, OSError):
+            except (json.JSONDecodeError, UnicodeDecodeError, OSError):
                 continue
         # Installed themes are directories (<slug>/) carrying a theme.json.
         # Dot-prefixed dirs are transient install staging/backup snapshots
@@ -127,7 +127,7 @@ def _list_themes_sync() -> list[dict[str, Any]]:
                 continue
             try:
                 m = json.loads(mpath.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
+            except (json.JSONDecodeError, UnicodeDecodeError, OSError):
                 continue
             result.append(
                 {
@@ -929,7 +929,7 @@ async def api_theme_detail(request: web.Request) -> web.Response:
             with _theme_install_lock(safe_slug):
                 try:
                     existing = json.loads(target.read_text("utf-8"))
-                except (json.JSONDecodeError, OSError):
+                except (json.JSONDecodeError, UnicodeDecodeError, OSError):
                     existing = {}
                 td = {
                     "name": name,
@@ -956,7 +956,7 @@ async def api_theme_detail(request: web.Request) -> web.Response:
                 discovery_executor(), target.read_text, "utf-8"
             )
             data = json.loads(raw)
-        except (json.JSONDecodeError, OSError):
+        except (json.JSONDecodeError, UnicodeDecodeError, OSError):
             return web.json_response({"error": "failed to read theme"}, status=500)
         return web.json_response(data)
     if dir_is_dir:

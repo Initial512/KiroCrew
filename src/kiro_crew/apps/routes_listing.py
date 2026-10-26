@@ -333,7 +333,7 @@ async def handle_publish_providers(request: web.Request) -> web.Response:
 async def handle_get_app(request: web.Request) -> web.Response:
     """GET /api/apps/{name} — get single app details."""
     name = request.match_info["name"]
-    info = get_app(name)
+    info = await asyncio.to_thread(get_app, name)
     if not info:
         # Compat: migrated deploy-web requests hit this generic handler before
         # the deploy module's /api/apps/deploy-web/{tail} redirect (aiohttp
@@ -347,7 +347,7 @@ async def handle_get_app(request: web.Request) -> web.Response:
 async def handle_get_manifest(request: web.Request) -> web.Response:
     """GET /api/apps/{name}/manifest — get app manifest."""
     name = request.match_info["name"]
-    manifest = get_app_manifest(name)
+    manifest = await asyncio.to_thread(get_app_manifest, name)
     if not manifest:
         # Compat: migrated deploy-web — redirect to canonical endpoint.
         if name == "deploy-web":
@@ -366,7 +366,7 @@ async def handle_app_config(request: web.Request) -> web.Response:
     ``token_auth`` already granted it (its own app, or a manifest grant).
     """
     name = request.match_info["name"]
-    info = get_app(name)
+    info = await asyncio.to_thread(get_app, name)
     if not info:
         # Compat: migrated deploy-web — redirect to canonical deploy config endpoint.
         if name == "deploy-web":

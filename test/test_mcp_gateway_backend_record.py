@@ -221,6 +221,51 @@ async def test_reap_with_no_record_is_a_no_op(tmp_path: Path) -> None:
     assert await backend_record.reap(tmp_path / "absent.backends", reason="test") == 0
 
 
+@pytest.mark.asyncio
+async def test_reap_reads_the_record_off_the_event_loop(tmp_path: Path) -> None:
+    """The manager reaps on the dashboard gateway's loop, and the record sits
+    beside the socket in the data home: a read that blocks there would stall
+    every session, so it runs on a worker thread."""
+    import threading
+
+    path = tmp_path / "gw.sock.backends"
+    path.write_text("111 s1\n", encoding="utf-8")
+    loop_thread = threading.get_ident()
+    read_threads: list[int] = []
+    real_read_text = Path.read_text
+
+    def _read_text(self: Path, *args, **kwargs) -> str:
+        read_threads.append(threading.get_ident())
+        return real_read_text(self, *args, **kwargs)
+
+    with (
+        patch.object(Path, "read_text", _read_text),
+        patch.object(platform_compat, "IS_WINDOWS", False),
+        patch.object(process_identity, "isolated_group_of", side_effect=lambda pid, start: pid),
+        patch.object(platform_compat, "kill_process_group", return_value=True) as kill,
+    ):
+        assert await backend_record.reap(path, reason="test") == 1
+    assert len(read_threads) == 1
+    assert read_threads[0] != loop_thread
+    assert [c.args for c in kill.call_args_list] == [(111, platform_compat.SIGKILL)]
+    assert not path.exists()
+
+
+@pytest.mark.asyncio
+async def test_reap_of_an_unreadable_record_is_a_no_op(tmp_path: Path) -> None:
+    """An OSError from the worker-thread read still reaches the caller as 0,
+    never as a raise, and leaves the record in place."""
+    path = tmp_path / "gw.sock.backends"
+    path.write_text("111 s1\n", encoding="utf-8")
+    with (
+        patch.object(Path, "read_text", side_effect=PermissionError("denied")),
+        patch.object(platform_compat, "kill_process_group") as kill,
+    ):
+        assert await backend_record.reap(path, reason="test") == 0
+    kill.assert_not_called()
+    assert path.exists()
+
+
 @posix_only
 @pytest.mark.asyncio
 async def test_reap_kills_a_real_term_ignoring_group_and_spares_a_recycled_one(

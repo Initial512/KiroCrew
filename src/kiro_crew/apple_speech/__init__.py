@@ -38,6 +38,7 @@ from pathlib import Path
 from kiro_crew import platform_compat, sandbox
 from kiro_crew.config.loader import config_dir
 from kiro_crew.json_line import parse_json_object_line
+from kiro_crew.subprocess_utf8 import UTF8_TEXT
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +115,7 @@ def _sdk_path() -> str | None:
         out = subprocess.run(
             ["/usr/bin/xcrun", "--show-sdk-path"],
             capture_output=True,
-            text=True,
+            **UTF8_TEXT,
             timeout=10,
             env=_build_env(),
         )
@@ -273,7 +274,7 @@ def _swiftc() -> str | None:
         out = subprocess.run(
             ["/usr/bin/xcrun", "--find", "swiftc"],
             capture_output=True,
-            text=True,
+            **UTF8_TEXT,
             timeout=10,
             env=_build_env(),
         )
@@ -517,7 +518,7 @@ def _build_helper(name: str, source: str, *, build: bool = True) -> str | None:
             # the SDK implicitly and nothing may redirect the toolchain.
             [swiftc, "-O", "-parse-as-library", "-sdk", sdk, str(src), "-o", tmp_out],
             capture_output=True,
-            text=True,
+            **UTF8_TEXT,
             timeout=180,
             env=_build_env(),
         )

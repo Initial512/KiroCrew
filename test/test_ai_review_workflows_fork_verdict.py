@@ -26,6 +26,7 @@ from ai_review_workflows_helpers import (
     _workflow,
     _write_stub,
 )
+from git_maintenance_helpers import git_maintenance_off_entries
 
 #: The two FORK advisory lanes whose verdict capture runs under ``set -uo pipefail``,
 #: with the header each one reads. The same-repo ``design-review.yml`` and
@@ -1338,3 +1339,106 @@ class TestForkScopeGenerateStepsFailFast:
             assert step["timeout-minutes"] < job["timeout-minutes"], name
             # A soft failure would let the job reach later steps with no scope.
             assert not step.get("continue-on-error"), name
+
+
+class TestForkScopeGitFetchesAbortAStalledTransfer:
+    """`Checkout base (trusted)` can open a connection to github.com
+    and then receive nothing until its 10-minute step timeout. Both git fetches in
+    `generate` carry git's low-speed abort, so a stalled transfer fails in about two
+    minutes and actions/checkout's own fetch retry gets a turn. The abort only ends
+    a transfer: it does not change what is fetched or soften any failure.
+    """
+
+    _STEPS = (
+        "Checkout base (trusted)",
+        "Fetch authentic diff (data only — never applied to the tree)",
+    )
+
+    def _env(self, name: str) -> dict[str, str]:
+        doc = yaml.safe_load(_workflow("fork-security-scope-review.yml"))
+        steps = {s.get("name"): s for s in doc["jobs"]["generate"]["steps"]}
+        return {k: str(v) for k, v in (steps[name].get("env") or {}).items()}
+
+    def test_each_git_fetch_step_sets_the_low_speed_abort(self) -> None:
+        for name in self._STEPS:
+            env = self._env(name)
+            limit = int(env.get("GIT_HTTP_LOW_SPEED_LIMIT", "0"))
+            window = int(env.get("GIT_HTTP_LOW_SPEED_TIME", "0"))
+            # Low enough that a healthy fetch (megabytes per second) never trips
+            # it, high enough that keepalive bytes on a dead stream do.
+            assert 1 <= limit <= 10_000, (name, env)
+            # The window must fit several times into the step timeout, so the
+            # abort, not the timeout, ends a stall.
+            assert 30 <= window <= 180, (name, env)
+
+    def test_git_aborts_a_stalled_fetch_with_these_variables(self, tmp_path: Path) -> None:
+        """Run real git against a server that accepts and then sends nothing.
+
+        The window is shortened so the test is quick; the limit is the workflow's.
+        Without the variables git would wait on the socket indefinitely, so the
+        bounded `timeout` below is what turns a regression into a failure.
+        """
+        import socket
+        import threading
+
+        git = shutil.which("git")
+        assert git is not None, "git is required: this test runs the real git client"
+        limit = self._env("Checkout base (trusted)")["GIT_HTTP_LOW_SPEED_LIMIT"]
+
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.bind(("127.0.0.1", 0))
+        server.listen(4)
+        port = server.getsockname()[1]
+        held: list[socket.socket] = []
+        stop = threading.Event()
+
+        def _accept_and_stall() -> None:
+            server.settimeout(0.2)
+            while not stop.is_set():
+                try:
+                    conn, _ = server.accept()
+                except OSError:
+                    continue
+                held.append(conn)  # read nothing, answer nothing
+
+        thread = threading.Thread(target=_accept_and_stall, daemon=True)
+        thread.start()
+        try:
+            env = dict(os.environ)
+            for key in list(env):
+                if key.startswith("GIT_") or key in {
+                    "HTTP_PROXY",
+                    "HTTPS_PROXY",
+                    "http_proxy",
+                    "https_proxy",
+                }:
+                    env.pop(key)
+            env.update(
+                GIT_TERMINAL_PROMPT="0",
+                GIT_CONFIG_NOSYSTEM="1",
+                GIT_CONFIG_GLOBAL=os.devnull,
+                NO_PROXY="127.0.0.1",
+                GIT_HTTP_LOW_SPEED_LIMIT=limit,
+                GIT_HTTP_LOW_SPEED_TIME="2",
+            )
+            env.update(git_maintenance_off_entries(env))
+            try:
+                result = subprocess.run(
+                    [git, "ls-remote", f"http://127.0.0.1:{port}/repo.git"],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    env=env,
+                    cwd=tmp_path,
+                    timeout=30,
+                )
+            except subprocess.TimeoutExpired:
+                pytest.fail("git kept waiting on a stalled transfer despite the low-speed abort")
+            assert result.returncode != 0, result
+        finally:
+            stop.set()
+            thread.join(timeout=5)
+            for conn in held:
+                conn.close()
+            server.close()

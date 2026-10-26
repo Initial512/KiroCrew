@@ -169,9 +169,9 @@ def _changelog_path() -> Path | None:
 
 
 #: Cached CHANGELOG.md body, keyed on ``(path, st_mtime_ns, st_size)``.
-#: Caching avoids reading and decoding the whole file on the event loop on
-#: every ``GET /api/changelog`` request (the About panel re-fetches on each
-#: open, and the file grows with every release). The stat signature keeps a
+#: Caching avoids reading and decoding the whole file on every
+#: ``GET /api/changelog`` request (the About panel re-fetches on each open,
+#: and the file grows with every release). The stat signature keeps a
 #: dev-install edit visible immediately, so the endpoint stays live.
 _changelog_cache: tuple[tuple[str, int, int], str] | None = None
 
@@ -199,8 +199,13 @@ def _read_changelog() -> str:
 
 
 async def api_changelog(request: web.Request) -> web.Response:
-    """GET /api/changelog — read full CHANGELOG.md from project or bundle."""
-    return web.json_response({"content": _read_changelog()})
+    """GET /api/changelog — read full CHANGELOG.md from project or bundle.
+
+    The read runs in a thread: ``_read_changelog`` stats the file on every call
+    and reads the whole file on a cache miss, which must not block the loop.
+    """
+    content = await asyncio.to_thread(_read_changelog)
+    return web.json_response({"content": content})
 
 
 async def api_releases(request: web.Request) -> web.Response:

@@ -753,6 +753,7 @@ if TYPE_CHECKING:  # every owner-defined name in _EXPORTS, for type checkers and
         _format_schedule,
     )
     from kiro_crew.cli_commands_eval import (  # noqa: F401
+        _load_eval_scenarios,
         _run_eval,
         write_eval_artifacts,
     )

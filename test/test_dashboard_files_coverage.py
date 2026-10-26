@@ -1311,6 +1311,56 @@ class TestNativePickers:
                 assert await resp.json() == {"path": ""}
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("saved", [True, False], ids=["saved", "cancelled"])
+    async def test_screenshot_fs_calls_run_off_the_event_loop_thread(
+        self, tmp_path, mock_sel, monkeypatch, trusted_dialog_bin, saved
+    ):
+        # The screenshots directory lives in the data home, and a mkdir or stat
+        # on a mount that stopped answering blocks for as long as the kernel
+        # does: on the loop that stalls every session, so neither may run there.
+        shots = tmp_path / "screenshots"
+        monkeypatch.setattr(files_mod, "_SCREENSHOT_DIR", shots)
+        loop_thread = threading.get_ident()
+        fs_threads: dict[str, set[int]] = {"mkdir": set(), "exists": set()}
+        real_mkdir = Path.mkdir
+        real_exists = Path.exists
+
+        def tracked_mkdir(self, *a, **kw):
+            if self == shots:
+                fs_threads["mkdir"].add(threading.get_ident())
+            return real_mkdir(self, *a, **kw)
+
+        def tracked_exists(self, *a, **kw):
+            if self.parent == shots:
+                fs_threads["exists"].add(threading.get_ident())
+            return real_exists(self, *a, **kw)
+
+        async def fake_exec(*argv, **kwargs):
+            if saved:
+                Path(argv[2]).write_bytes(b"\x89PNG\r\n\x1a\n")
+            return _FakeProc()
+
+        with (
+            patch("sys.platform", "darwin"),
+            patch("asyncio.create_subprocess_exec", fake_exec),
+            patch.object(Path, "mkdir", tracked_mkdir),
+            patch.object(Path, "exists", tracked_exists),
+        ):
+            async with TestClient(
+                TestServer(_app("POST", "/api/screenshot", files_mod.api_screenshot))
+            ) as client:
+                resp = await client.post("/api/screenshot")
+                assert resp.status == 200
+                path = (await resp.json())["path"]
+        if saved:
+            assert Path(path).parent == shots
+        else:
+            assert path == ""
+        for call, threads in fs_threads.items():
+            assert threads, f"the handler never ran {call} on the screenshots directory"
+            assert loop_thread not in threads, f"{call} ran on the event loop thread"
+
+    @pytest.mark.asyncio
     async def test_screenshot_timeout_returns_504(self, tmp_path, mock_sel, monkeypatch,
                                                   trusted_dialog_bin):
         monkeypatch.setattr(files_mod, "_SCREENSHOT_DIR", tmp_path / "shots")

@@ -337,20 +337,25 @@ async def _handle_incident(request: web.Request) -> web.StreamResponse:
         return web.json_response(
             {"error": "unknown incident", "code": "unknown_incident"}, status=404
         )
-    try:
-        log_file = store.incident_log_path(incident_id)
-        log_path = str(log_file) if log_file.is_file() else ""
-    except (OSError, ValueError):
-        # ``incident_log_path`` validates the id even though we generated it. A
-        # hand-edited index.json is the only way here, and it must not 500 the route.
-        log_path = ""
     return web.json_response(
         {
             "incident": incident.to_dict(),
             "log": await asyncio.to_thread(store.read_log, incident_id),
-            "log_path": log_path,
+            # Off-loop: ``incident_log_path`` creates the incidents dir, then we stat.
+            "log_path": await asyncio.to_thread(_written_log_path, incident_id),
         }
     )
+
+
+def _written_log_path(incident_id: str) -> str:
+    """The postmortem's path when the file exists, else ``""``."""
+    try:
+        log_file = store.incident_log_path(incident_id)
+        return str(log_file) if log_file.is_file() else ""
+    except (OSError, ValueError):
+        # ``incident_log_path`` validates the id even though we generated it. A
+        # hand-edited index.json is the only way here, and it must not 500 the route.
+        return ""
 
 
 async def _handle_signals(

@@ -5,6 +5,7 @@ the post-rejection un-poison routine, and every refusal that returns before a cl
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -224,6 +225,57 @@ class TestUnpoisonRejectedCheckout:
             manifest_snapshot=b"{}",
         )
         assert (pkg / "sub" / "app.json").read_bytes() == b"{}"
+
+
+# ---------------------------------------------------------------------------
+# Pre-clone checkout probe
+# ---------------------------------------------------------------------------
+
+
+class TestPreexistingCheckoutProbe:
+    """The ``.git`` probe that decides whether a refusal preserves or deletes the
+    checkout runs on every install and update, so it must stay off the event loop
+    like the commit and manifest snapshots that follow it."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("preexisting", [True, False])
+    async def test_git_probe_runs_off_the_loop_thread(self, tmp_path, monkeypatch, preexisting):
+        pkg = tmp_path / "app-sources" / "demo"
+        pkg.mkdir(parents=True)
+        if preexisting:
+            (pkg / ".git").mkdir()
+        probe_threads: list[int] = []
+        real_is_dir = Path.is_dir
+
+        def _recording_is_dir(self, *args, **kwargs):
+            if self == pkg / ".git":
+                probe_threads.append(threading.get_ident())
+            return real_is_dir(self, *args, **kwargs)
+
+        commit_probes: list[Path] = []
+
+        def _resolved_commit(path):
+            commit_probes.append(path)
+            return "abc123"
+
+        async def _refuse_clone(*args, **kwargs):
+            # Stop right after the pre-clone snapshot: nothing past it is under test.
+            return {"ok": False, "name": "demo", "error": "clone refused"}
+
+        monkeypatch.setattr(registry, "app_source_dir", lambda name: pkg)
+        monkeypatch.setattr(registry, "_resolved_clone_commit", _resolved_commit)
+        monkeypatch.setattr(registry, "_git_clone_or_pull", _refuse_clone)
+        monkeypatch.setattr(registry, "sel", lambda: MagicMock())
+        monkeypatch.setattr(Path, "is_dir", _recording_is_dir)
+
+        loop_thread = threading.get_ident()
+        result = await registry._clone_build_app("https://example.com/demo.git", "demo", [])
+
+        assert result["error"] == "clone refused"
+        assert probe_threads, "the pre-clone .git probe never ran"
+        assert loop_thread not in probe_threads
+        # The probe's answer still drives the pre-pull commit snapshot.
+        assert commit_probes == ([pkg] if preexisting else [])
 
 
 # ---------------------------------------------------------------------------

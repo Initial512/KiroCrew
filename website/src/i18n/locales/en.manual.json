@@ -2451,7 +2451,14 @@
       "tags_loading_hint": "Loading tags…",
       "tags_error_hint": "Tags couldn't load.",
       "tags_retry": "Retry",
-      "top_level": "Top level"
+      "top_level": "Top level",
+      "default_destination_crew": "Default destination crew",
+      "default_destination_crew_hint": "“Send a copy to” lists this crew first for sessions in this folder. Nothing is sent until you click it.",
+      "default_destination_global": "Use the global default ({{crew}})",
+      "default_destination_global_unset": "Use the global default (none)",
+      "default_destination_not_registered": "{{id}} (not registered)",
+      "default_destination_load_failed": "Crews couldn't load.",
+      "default_destination_retry": "Retry"
     },
     "folderColorNames": {
       "amber": "Amber",
@@ -4404,6 +4411,9 @@
         "tool_search_label": "Tool search",
         "tool_search_description": "Load deferred MCP tool specs on demand."
       }
+    },
+    "sendToInstanceSubmenu": {
+      "default_badge": "default"
     },
     "unscannedDownload": {
       "title": "Too large to scan",
@@ -6769,6 +6779,11 @@
         "default_crewmate_unknown_reason": "{{name}} is no longer in the mate list"
       },
       "mcpTab": {
+        "share_refused_one": "{{count}} server set to share is not shared: {{names}}. Its launch needs your approval, so every chat starts its own copy.",
+        "share_refused_other": "{{count}} servers set to share are not shared: {{names}}. Their launch needs your approval, so every chat starts its own copy.",
+        "share_refused_restart": "In MCP Management, press Approve sharing for each one. Then restart the gateway (Settings → About → Restart gateway) so new chats use the shared copy.",
+        "share_refused_review": "Review in MCP Management",
+        "share_status_failed": "Could not check whether the servers set to share are approved.",
         "applied_change_one": "Applied {{count}} change",
         "applied_change_other": "Applied {{count}} changes",
         "edit_json_for": "Edit JSON for {{name}}",
@@ -7959,7 +7974,12 @@
         "remove_failed": "Remove of {{id}} failed: {{error}}",
         "token_left": "· token {{time}} left",
         "unknown_error": "unknown error",
-        "update_setting_failed": "Failed to update setting: {{error}}"
+        "update_setting_failed": "Failed to update setting: {{error}}",
+        "default_destination": "Default destination crew",
+        "default_destination_hint": "“Send a copy to” lists this crew first, marked as the default. A folder can choose its own.",
+        "default_destination_none": "No default",
+        "default_destination_not_registered": "{{id}} (not registered)",
+        "default_destination_save_failed": "Couldn't save the default destination crew."
       },
       "remoteCrewPanel": {
         "auto_connect": "Auto-connect crews",

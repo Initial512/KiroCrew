@@ -83,7 +83,7 @@ from kiro_crew.agent_sdk.backends import (
 # entry with pi's built-in MCP support (``pi.registerMcpServer``; the release that
 # carries it is ``PI_MIN_VERSION``). The array still travels on the wire because
 # the session report reads its roster from it. Captured as a ROUND TRIP against
-# pi-acp 0.0.34 over pi 1.2.0: ``test/fixtures/acp_frames/pi/mcp-stdio-mount-live.jsonl``
+# pi-acp 0.0.34 over pi 1.3.0: ``test/fixtures/acp_frames/pi/mcp-stdio-mount-live.jsonl``
 # -- the server is asked ``initialize``, ``tools/list`` and ``tools/call``, the call
 # raises ``session/request_permission`` through the gate first, and the tool's own
 # result reaches the turn. A same-named server in pi's own ``mcp.json`` (user-level,
@@ -273,7 +273,14 @@ ACP_BACKENDS_SPEC_SERVERS_OFF_WIRE = frozenset({ACP_BACKEND_KIRO, ACP_BACKEND_KA
 # Membership is the join of three facts, not a name pattern:
 #
 # * ``Routing.AGENT_SPEC`` (kiro, kas) -- the harness itself reads the spec and
-#   refuses every tool NATIVELY, so nothing else is needed.
+#   refuses every tool NATIVELY, so nothing else is needed. Measured on kiro-cli
+#   2.34.0 (``test/fixtures/acp_frames/kiro/zero-tools-live.jsonl``, the saved
+#   spec read through ``--agent``) and KAS 0.66.62
+#   (``test/fixtures/acp_frames/kas/zero-tools-live.jsonl``, the spec sent as
+#   ``customAgents`` and bound with ``session/set_mode``): asked for a shell
+#   command, a file write, a file read and the tool of an MCP server the spec
+#   declares, with every permission request answered allow, neither raised a
+#   ``tool_call`` or a permission request and nothing reached the disk.
 # * a routing in ``tool_gate.ENFORCED_ROUTINGS`` whose non-ROUTED verdict actually
 #   refuses a session, AND something that computes ``zero_tools`` from the spec
 #   parse (``acp/session_mcp.py``'s ``SessionMcpProjection.zero_tools``) -- a mirror
@@ -287,7 +294,12 @@ ACP_BACKENDS_SPEC_SERVERS_OFF_WIRE = frozenset({ACP_BACKEND_KIRO, ACP_BACKEND_KA
 # Today that is opencode and goose (``Routing.VERIFIED_SEEDED_SETTINGS``) and
 # deepseek (``Routing.VERIFIED_GATE_EXTENSION``): mirrored, not in
 # ``ACP_BACKENDS_ACP_RUNTIME``. deepseek's mirror reads ``zero_tools`` from
-# the shared session MCP projection.
+# the shared session MCP projection. opencode is measured end to end through
+# ``AcpClient`` on opencode 1.19.1, the lane's pin:
+# ``test/fixtures/acp_frames/opencode/zero-tools-refused-live.jsonl``. opencode
+# still offered its native tools, and the ``bash``, ``write`` and ``read`` calls each
+# raised ``session/request_permission``, which ``_deny_zero_tools`` refused before
+# any consumer saw it; nothing reached the disk.
 #
 # pi (``Routing.VERIFIED_GATE_EXTENSION``) is the mirror-less member. pi runs every
 # tool call without asking, and Crew's gate extension
@@ -297,7 +309,7 @@ ACP_BACKENDS_SPEC_SERVERS_OFF_WIRE = frozenset({ACP_BACKEND_KIRO, ACP_BACKEND_KA
 # spec's ``tools`` is read beside the member mounts and ``_deny_zero_tools`` answers
 # every request with the reject option. Measured end to end on a zero-tool spec:
 # ``test/fixtures/acp_frames/pi/zero-tools-refused-live.jsonl`` (pi-acp 0.0.34 over
-# pi 1.2.0, driven through ``AcpClient``) holds a ``write``, a ``bash``, an MCP call
+# pi 1.3.0, driven through ``AcpClient``) holds a ``write``, a ``bash``, an MCP call
 # and a tool pi does not have, each ended ``failed`` with nothing on disk, and a
 # session with no gate extension is refused before its first prompt by the routing.
 #

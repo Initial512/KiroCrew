@@ -877,13 +877,14 @@ describe('import outcome notice', () => {
     // mean faking the window-level flags each branch keys on.
     const src = readFileSync(join(__dirname, '..', 'App.tsx'), 'utf8')
     const frames = '{(isPopout || isEmbed) && <ImportSessionOutcomeNotice />}'
-    expect(src.split('<ImportSessionOutcomeNotice />').length - 1).toBe(2)
+    expect(src.split('<ImportSessionOutcomeNotice').length - 1).toBe(2)
     expect(src.split(frames).length - 1).toBe(1)
     expect(src.indexOf(frames)).toBeGreaterThan(src.indexOf('<WsContext.Provider'))
     expect(src.indexOf(frames)).toBeLessThan(src.indexOf('{isPopout ? ('))
     // The only other branch is the dashboard, and its copy is in the local pane.
     expect(src).toContain(') : isEmbed ? (')
-    const dashboard = src.indexOf('<ImportSessionOutcomeNotice />', src.indexOf('<LocalOverlayRoot hidden='))
+    // The dashboard's copy navigates to /chat on Open, so it carries the flag.
+    const dashboard = src.indexOf('<ImportSessionOutcomeNotice navigateToChat />', src.indexOf('<LocalOverlayRoot hidden='))
     expect(dashboard).toBeGreaterThan(-1)
     expect(dashboard).toBeLessThan(src.indexOf('</LocalOverlayRoot>'))
   })

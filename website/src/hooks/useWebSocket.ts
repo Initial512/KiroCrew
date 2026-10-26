@@ -453,9 +453,9 @@ export function useWebSocket() {
             }
             break
           case 'refresh': {
-            const kinds: string[] = data.kinds || []
+            const kinds: string[] = Array.isArray(data.kinds) ? data.kinds.filter((k: unknown): k is string => typeof k === 'string') : []
             dispatch(triggerRefresh())
-            invalidateRefreshQueries(queryClient)
+            invalidateRefreshQueries(queryClient, kinds)
             if (kinds.includes('history')) dispatch(fetchHistory(false))
             break
           }

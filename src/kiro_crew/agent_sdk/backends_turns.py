@@ -205,10 +205,14 @@ ACP_BACKENDS_STEERING_REQUEST = frozenset(
 # That makes membership here mean ``steer_needs_loss_recovery`` as well, like
 # codex.
 #
-# The live measurement is on 1.19.0, quoted here. The Real Adapter Contract lane
-# pins opencode in ``test/real_adapters/package.json``, and
-# ``test/test_opencode_concurrent_prompt_steer.py`` drives a scripted stdout, so no
-# lane re-measures this membership against a real opencode.
+# The live measurement was first taken on 1.19.0, and is captured on 1.19.1, the
+# Real Adapter Contract lane's pin (``test/real_adapters/package.json``):
+# ``test/fixtures/acp_frames/opencode/concurrent-prompt-steer-live.jsonl``. A
+# second ``session/prompt`` sent while the turn's bash ran reached the model in
+# the turn's one remaining request, beside the bash result, and the two prompts
+# were answered ``end_turn`` together. ``test/test_opencode_concurrent_prompt_steer.py``
+# drives a scripted stdout, so no lane re-measures this membership against a real
+# opencode.
 #
 # Not ``ACP_BACKENDS_STEER``: a deny notice cannot ride this verb, because the
 # denial already ended the turn it was meant for.
@@ -266,13 +270,13 @@ ACP_BACKENDS_STEER_CONCURRENT_PROMPT = frozenset({ACP_BACKEND_OPENCODE})
 # drive did: ``Agent::reply`` routes ``/compact`` through ``execute_command`` to
 # ``handle_compact_command``, and ``command_starts_turn("/compact")`` is false.
 #
-# pi is a member on a LIVE drive against pi-acp 0.0.34 over pi 1.2.0, taken with
+# pi is a member on a LIVE drive against pi-acp 0.0.34 over pi 1.3.0, taken with
 # ``scripts/capture_acp_compaction.py`` and a locally served model named in pi's own
 # ``models.json``. Over four ordinary turns its ``usage_update.used`` climbed
-# 12773 -> 25127 -> 37481 -> 49834. A ``/compact`` prompt then answered pi's own
+# 13483 -> 25572 -> 37610 -> 49648. A ``/compact`` prompt then answered pi's own
 # ``Compaction completed`` chunk and returned ``stopReason: end_turn`` with no
 # ``usage_update`` and no status frame after it, and the next ORDINARY turn -- which
-# added another ~12k-token prompt -- read 37518, below the pre-compact peak. The
+# added another ~12k-token prompt -- read 13596, below the pre-compact peak. The
 # drive is committed as evidence: ``test/fixtures/acp_frames/pi/compact-live.jsonl``.
 # The source agrees: pi-acp intercepts ``/compact`` in ``prompt()``, awaits
 # ``session.proc.compact(...)`` and returns ``{ stopReason: "end_turn" }``.

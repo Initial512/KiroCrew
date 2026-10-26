@@ -210,6 +210,20 @@ def _kirocrew_mcp_servers() -> dict[str, Any]:
     return servers if isinstance(servers, dict) else {}
 
 
+def _read_global_mcps() -> Any:
+    """The ``mcpServers`` value of ``~/.kiro/settings/mcp.json``, or ``{}``.
+
+    Blocking file I/O: the probe and the listing handlers call it through
+    ``asyncio.to_thread``, so a slow home directory stalls only a worker
+    thread. A missing or unparsable file reads as ``{}``.
+    """
+    try:
+        data = loads_mcp_config(_GLOBAL_MCP_JSON.read_text(encoding="utf-8"), jsonc=True)
+        return data.get("mcpServers", {})
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
 def _stamp_config_state(d: dict[str, Any], global_mcps: Any, kirocrew_mcps: Any) -> None:
     """Stamp the config-derived fields onto one serialized server row.
 
@@ -369,12 +383,7 @@ async def _run_mcp_probe(sessions: SessionManager | None) -> None:
         # imports in this module; noqa: F811 for their same-named imports.
         from kiro_crew.mcp_discovery import probe_all  # noqa: F811
 
-        global_mcps: dict[str, Any] = {}
-        try:
-            data = loads_mcp_config(_GLOBAL_MCP_JSON.read_text(encoding="utf-8"), jsonc=True)
-            global_mcps = data.get("mcpServers", {})
-        except (FileNotFoundError, json.JSONDecodeError):
-            pass
+        global_mcps: dict[str, Any] = await asyncio.to_thread(_read_global_mcps)
         kirocrew_mcps = await asyncio.to_thread(_kirocrew_mcp_servers)
 
         # Route through probe_all() so the fan-out is bounded by its
@@ -461,12 +470,7 @@ async def api_mcp_servers(request: web.Request) -> web.Response:
     # here. See the block above the return.
 
     # Read global mcp.json for disabled state
-    global_mcps: dict[str, Any] = {}
-    try:
-        data = loads_mcp_config(_GLOBAL_MCP_JSON.read_text(encoding="utf-8"), jsonc=True)
-        global_mcps = data.get("mcpServers", {})
-    except (FileNotFoundError, json.JSONDecodeError):
-        pass
+    global_mcps: dict[str, Any] = await asyncio.to_thread(_read_global_mcps)
     # Kiro Crew-scope entries: disabled state (consent-disabled installs and
     # custom adds live only here) + which rows the JSON editor can manage.
     # Off the loop, like the probe and probe-cache sites: the helper is blocking
@@ -595,12 +599,7 @@ async def api_mcp_active(request: web.Request) -> web.Response:
     # Kiro Crew / default: every scope, through the one launch predicate.
     from kiro_crew.mcp_discovery import list_servers  # noqa: F811
 
-    global_mcps: dict[str, Any] = {}
-    try:
-        data = loads_mcp_config(_GLOBAL_MCP_JSON.read_text(encoding="utf-8"), jsonc=True)
-        global_mcps = data.get("mcpServers", {})
-    except (FileNotFoundError, json.JSONDecodeError):
-        pass
+    global_mcps: dict[str, Any] = await asyncio.to_thread(_read_global_mcps)
     kirocrew_mcps = await asyncio.to_thread(_kirocrew_mcp_servers)
     servers = list_servers()
     result: list[dict] = []
@@ -657,12 +656,7 @@ async def api_mcp_probe(request: web.Request) -> web.Response:
     except Exception:
         logger.debug("shareability evaluation failed; probe result unaffected", exc_info=True)
     # Read global mcp.json for enabled/disabledTools state
-    global_mcps: dict[str, Any] = {}
-    try:
-        data = loads_mcp_config(_GLOBAL_MCP_JSON.read_text(encoding="utf-8"), jsonc=True)
-        global_mcps = data.get("mcpServers", {})
-    except (FileNotFoundError, json.JSONDecodeError):
-        pass
+    global_mcps: dict[str, Any] = await asyncio.to_thread(_read_global_mcps)
     kirocrew_mcps = await asyncio.to_thread(_kirocrew_mcp_servers)
     result: list[dict[str, Any]] = []
     for s in servers:

@@ -66,55 +66,109 @@ export async function healRedactionSwitchAfterReconnect(qc: QueryClient): Promis
   if (moved || unknownAndNowOn) purgeDocumentBodiesForRedactionChange(qc)
 }
 
-/**
- * Invalidate React Query caches for keys that previously relied on the
- * `refreshTrigger` counter being part of their queryKey.  Calling
- * `invalidateQueries` refetches **in-place** (keeping the cached data visible
- * to the UI) instead of minting a brand-new cache entry with `undefined` data
- * — which is what caused the flash-to-empty bug (#4132, #4179).
- */
-export function invalidateRefreshQueries(qc: QueryClient): void {
-  qc.invalidateQueries({ queryKey: ['cron-jobs'] })
-  // Prefix match on purpose: `['crons', 'crew-wake', <crew>]` caches the one global cron
-  // payload once per crewmate whose schedules pane has been opened (the crew editor's and
-  // the Crewmates panel's). Invalidating only `['cron-jobs']` refreshed the Schedule page
-  // and left every one of those entries stale, so a schedule changed anywhere else kept
-  // its old status under each crewmate until that entry happened to refetch.
-  qc.invalidateQueries({ queryKey: ['crons'] })
-  qc.invalidateQueries({ queryKey: ['cron-history-all'] })
-  qc.invalidateQueries({ queryKey: ['spawn-list'] })
-  qc.invalidateQueries({ queryKey: ['sessions-context'] })
-  qc.invalidateQueries({ queryKey: ['sessions-usage'] })
-  qc.invalidateQueries({ queryKey: ['agents-installed'] })
-  qc.invalidateQueries({ queryKey: ['mcp-tools'] })
-  // Prefix match on purpose: the Crew Members roster lives under this key
-  // (api/membersQuery.ts) and refreshes with the registry.
-  qc.invalidateQueries({ queryKey: ['kirocrew-agents'] })
-  qc.invalidateQueries({ queryKey: ['default-agent'] })
-  // A default-template write is pushed as an "agents" refresh, so the roster
-  // re-reads its "Default custom agent" row marker. Exact on the roster: a
-  // template's detail carries no such marker and need not refetch on every frame.
-  qc.invalidateQueries({ queryKey: ['agent-templates'], exact: true })
-  qc.invalidateQueries({ queryKey: ['workspaces'] })
-  qc.invalidateQueries({ queryKey: ['kirocrewConfig'] })
+interface RefreshTarget {
+  queryKey: readonly unknown[]
+  exact?: boolean
+}
+
+// Prefix match on purpose: `['crons', 'crew-wake', <crew>]` caches the one global cron
+// payload once per crewmate whose schedules pane has been opened (the crew editor's and
+// the Crewmates panel's). Invalidating only `['cron-jobs']` refreshed the Schedule page
+// and left every one of those entries stale, so a schedule changed anywhere else kept
+// its old status under each crewmate until that entry happened to refetch.
+const CRON_TARGETS: readonly RefreshTarget[] = [
+  { queryKey: ['cron-jobs'] },
+  { queryKey: ['crons'] },
+  { queryKey: ['cron-history-all'] },
+]
+
+// A default-template write is pushed as an "agents" refresh, so the roster
+// re-reads its "Default custom agent" row marker. Each row's `used_by` also
+// lists the schedules that reference the template, and a cron edit or delete
+// is pushed as `crons`. Exact on the roster: a template's detail carries
+// neither and need not refetch on every frame.
+const TEMPLATES_TARGET: RefreshTarget = { queryKey: ['agent-templates'], exact: true }
+
+
+// Prefix match on purpose: the Crew Members roster, its member projections and
+// briefings live under this key (api/membersQuery.ts) and refresh with the
+// registry.
+const CREW_TARGET: RefreshTarget = { queryKey: ['kirocrew-agents'] }
+
+// Prefix match on purpose: covers the filtered library list
+// (['artifacts', {tag, kind}]) and the tag-options read
+// (['artifacts', 'all-tags']) in one shot. The `artifact_update` frame
+// heals these on live mutations. The folder list fails alongside it under the
+// same trigger (an auth-expired window 403s every endpoint) and renders `?? []`
+// the same way, so both are healed together (#10867).
+const ARTIFACT_TARGETS: readonly RefreshTarget[] = [
+  { queryKey: ['artifacts'] },
+  { queryKey: ['artifact-folders'] },
+]
+
+/** Every cache a `refresh` frame can make stale. */
+const ALL_TARGETS: readonly RefreshTarget[] = [
+  ...CRON_TARGETS,
+  { queryKey: ['agents-installed'] },
+  CREW_TARGET,
+  { queryKey: ['default-agent'] },
+  TEMPLATES_TARGET,
+  { queryKey: ['workspaces'] },
+  { queryKey: ['kirocrewConfig'] },
   // These answers derive from the config AND, for an `auto` default, the
   // installed agent spec rebuilt by the server's config applier. A refresh
   // frame is emitted only after that applier completes, so invalidate the
   // infinite-stale caches here rather than relying solely on a changed config
   // value to mint a new key. This also covers external/CLI config writes.
-  qc.invalidateQueries({ queryKey: ['resolved-model'] })
-  qc.invalidateQueries({ queryKey: ['agent-resolved-model'] })
-  // Prefix match on purpose: covers the filtered library list
-  // (['artifacts', {tag, kind}]) and the tag-options read
-  // (['artifacts', 'all-tags']) in one shot. The `artifact_update` frame
-  // already heals these on live mutations; this covers the server's generic
-  // refresh broadcast so an errored or stale list recovers without a reload
-  // (#10867).
-  qc.invalidateQueries({ queryKey: ['artifacts'] })
-  // The folder list fails alongside it under the same trigger (an
-  // auth-expired window 403s every endpoint) and renders `?? []` the same
-  // way — heal both or the library recovers half-empty (#10867).
-  qc.invalidateQueries({ queryKey: ['artifact-folders'] })
+  { queryKey: ['resolved-model'] },
+  { queryKey: ['agent-resolved-model'] },
+  ...ARTIFACT_TARGETS,
+]
+
+/** The cron kinds, each with the only caches its writers change. `crons` and
+ *  `cron_history` are pushed on every cron edit and at the start and end of
+ *  every run, and re-reading all of `ALL_TARGETS` for them refetched every
+ *  observed config and registry read several times a minute on a cron-heavy
+ *  install. Every cron writer runs in the gateway and announces itself.
+ *
+ *  Every other kind invalidates everything, and so do a kind this client does
+ *  not know and a frame with no kinds. That includes `history`, pushed at the
+ *  end of a turn: a turn can write config, workspaces and crewmate pins
+ *  through an agent tool or a shell, and nothing else announces those writes,
+ *  so the turn-end frame is what refreshes them. */
+const NARROW_KINDS: Readonly<Record<string, readonly RefreshTarget[]>> = {
+  crons: [...CRON_TARGETS, TEMPLATES_TARGET],
+  cron_history: CRON_TARGETS,
+}
+
+const sameTarget = (a: RefreshTarget, b: RefreshTarget) =>
+  a.exact === b.exact && a.queryKey.length === b.queryKey.length && a.queryKey.every((k, i) => k === b.queryKey[i])
+
+/**
+ * Invalidate the React Query caches a `refresh` frame names in `kinds`
+ * (every cache, see `NARROW_KINDS`, when it names none or one outside that
+ * table). These keys previously relied on the `refreshTrigger` counter being
+ * part of their queryKey. Calling `invalidateQueries` refetches **in-place**
+ * (keeping the cached data visible to the UI) instead of minting a brand-new
+ * cache entry with `undefined` data — which is what caused the
+ * flash-to-empty bug (#4132, #4179).
+ *
+ * A narrow frame still refetches any listed cache whose last read FAILED:
+ * every refresh frame is a sign the gateway answers again, and an errored list
+ * (the artifact library after an auth-expired window, #10867) would otherwise
+ * stay empty until its own kind is pushed.
+ */
+export function invalidateRefreshQueries(qc: QueryClient, kinds?: readonly string[]): void {
+  const narrow = !!kinds?.length && kinds.every(kind => Object.prototype.hasOwnProperty.call(NARROW_KINDS, kind))
+  if (!narrow) {
+    for (const target of ALL_TARGETS) qc.invalidateQueries(target)
+    return
+  }
+  const named = kinds.flatMap(kind => NARROW_KINDS[kind])
+  for (const target of ALL_TARGETS) {
+    if (named.some(t => sameTarget(t, target))) qc.invalidateQueries(target)
+    else qc.invalidateQueries({ ...target, predicate: query => query.state.status === 'error' })
+  }
 }
 
 /** Reconnect: re-read the caches whose one-shot frames may have been missed
