@@ -144,6 +144,14 @@ SLOT_SUBSCRIBED_FRAME = "slot_projection/subscribed"
 #: never rewritten, so the answer never goes stale; the bound only caps memory.
 MAX_CACHED_SLOT_OWNERS: Final[int] = 512
 
+#: The one slot fold a browser caches, and so the one the exporter subscribes keyed
+#: for a watched board.
+WORK_FOLD: Final[str] = "work"
+
+#: Above this many boards under the watched ones, the exporter falls back to its
+#: wildcard subscription rather than hold a subscription per board.
+MAX_KEYED_SLOT_SUBSCRIPTIONS: Final[int] = 512
+
 #: Distinct refs a single page resolves. Each resolution opens the cited unit and
 #: walks to the span, so the work is bounded per request rather than left to
 #: however many citations a page happens to carry; identical refs on one page are
@@ -835,6 +843,11 @@ class CrewLogPublisher:
         self._pending: "dict[tuple[str, str], tuple[int, int, dict[str, Any]]]" = {}
         self._sessions_armed = False
         self._bus_disposers: "list[Callable[[], None]]" = []
+        # The slot-fold subscriptions, by (key, fold); ``("*", "*")`` is the wildcard.
+        # See :meth:`sync_slot_subscriptions`.
+        self._slot_subs: "dict[tuple[str, str], Callable[[], None]]" = {}
+        self._slot_sub_lock = threading.Lock()
+        self._watch_listener_remove: "Callable[[], None] | None" = None
         self._slot_owners: "OrderedDict[str, str]" = OrderedDict()
         # The newest revision published per (slot, fold), which is what a connecting
         # client is handed as its floor. Written on the fold worker's thread and read on
@@ -895,10 +908,17 @@ class CrewLogPublisher:
 
         for dispose in self._bus_disposers:
             dispose()
+        self._drop_slot_subscriptions()
+        # The slot subscription first, as before: the wildcard one unless every open
+        # owner tab routes by watch set (see :meth:`sync_slot_subscriptions`).
+        self.sync_slot_subscriptions()
+        add_listener = getattr(self._state, "add_fold_watch_listener", None)
+        if callable(add_listener):
+            try:
+                self._watch_listener_remove = add_listener(self.sync_slot_subscriptions)
+            except Exception:  # pragma: no cover - a facade without the hub API
+                logger.debug("fold watch listener could not be added", exc_info=True)
         self._bus_disposers = [
-            crew_log_bus.subscribe(
-                crew_log_bus.FOLD_ADVANCED, self.on_slot_fold, scope=crew_log_bus.SCOPE_SLOT
-            ),
             crew_log_bus.subscribe(
                 crew_log_bus.FOLD_ADVANCED,
                 self.on_session_fold,
@@ -914,6 +934,117 @@ class CrewLogPublisher:
         disposers, self._bus_disposers = self._bus_disposers, []
         for dispose in disposers:
             dispose()
+        self._drop_slot_subscriptions()
+
+    # -- slot subscriptions: wildcard, or keyed by watched board ------------ #
+
+    def _drop_slot_subscriptions(self) -> None:
+        """Remove the slot subscriptions and the watch listener; eager folds every cell."""
+        from kiro_crew.crew_log import bus as crew_log_bus
+
+        remove, self._watch_listener_remove = self._watch_listener_remove, None
+        if remove is not None:
+            remove()
+        with self._slot_sub_lock:
+            subs, self._slot_subs = self._slot_subs, {}
+            crew_log_bus.set_slot_folds_on_demand(False)
+        for dispose in subs.values():
+            dispose()
+
+    def _watched_boards(self) -> "frozenset[str] | None":
+        """The boards to subscribe keyed, or ``None`` for the wildcard subscription.
+
+        ``None`` while any legacy owner socket is open (it receives every board, so
+        every fold must still be rendered), while no capable socket is open (no tab
+        at all is today's case, and stays today's behaviour), and whenever the answer
+        cannot be computed. Otherwise the union of the watch sets plus every board
+        created under a watched one, because a frame for a descendant board is routed
+        to a tab watching its ancestor.
+        """
+        routing = getattr(self._state, "fold_watch_routing", None)
+        if not callable(routing):
+            return None
+        try:
+            legacy, capable, watched = routing()
+        except Exception:
+            logger.debug("fold watch routing could not be read", exc_info=True)
+            return None
+        if legacy or not capable:
+            return None
+        if not watched:
+            return frozenset()
+        try:
+            from kiro_crew.crew_log import session_tree_projection as tree
+
+            if not tree.projection().seeded_for_current_store:
+                # An unseeded tree names no children, which is not the same as having
+                # none: fold everything until it can answer.
+                return None
+            boards: set[str] = set()
+            frontier = list(watched)
+            while frontier:
+                slot = frontier.pop()
+                if slot in boards:
+                    continue
+                boards.add(slot)
+                if len(boards) > MAX_KEYED_SLOT_SUBSCRIPTIONS:
+                    return None
+                frontier.extend(tree.created_children(slot))
+        except Exception:
+            logger.debug("watched boards could not be resolved", exc_info=True)
+            return None
+        return frozenset(boards)
+
+    def sync_slot_subscriptions(self) -> None:
+        """Make this exporter's slot subscriptions match the open tabs. On the loop.
+
+        WILDCARD (``scope=slot``, any key, any fold), exactly the subscription this
+        exporter always held, while :meth:`_watched_boards` says ``None``. Otherwise
+        ONE keyed subscription per watched board for the ``work`` fold, the only slot
+        fold a browser caches, and the bus is told it may let the eager folder skip a
+        cell nobody subscribes to. New subscriptions are added before old ones are
+        removed, so no event falls between the two.
+        """
+        from kiro_crew.crew_log import bus as crew_log_bus
+
+        boards = self._watched_boards()
+        if boards is None:
+            want: "set[tuple[str, str]]" = {("*", "*")}
+        else:
+            want = {(board, WORK_FOLD) for board in boards}
+        with self._slot_sub_lock:
+            have = self._slot_subs
+            added: "dict[tuple[str, str], Callable[[], None]]" = {}
+            for cell in want - have.keys():
+                if cell == ("*", "*"):
+                    added[cell] = crew_log_bus.subscribe(
+                        crew_log_bus.FOLD_ADVANCED,
+                        self.on_slot_fold,
+                        scope=crew_log_bus.SCOPE_SLOT,
+                    )
+                else:
+                    added[cell] = crew_log_bus.subscribe(
+                        crew_log_bus.FOLD_ADVANCED,
+                        self.on_slot_fold,
+                        scope=crew_log_bus.SCOPE_SLOT,
+                        key=cell[0],
+                        fold=cell[1],
+                    )
+            removed = [have[cell] for cell in have.keys() - want]
+            self._slot_subs = {
+                **{cell: d for cell, d in have.items() if cell in want},
+                **added,
+            }
+            # Turned on only once the keyed subscriptions exist, and off before the
+            # wildcard one is the only one left, so no wanted fold is ever skipped.
+            crew_log_bus.set_slot_folds_on_demand(boards is not None)
+        for dispose in removed:
+            dispose()
+
+    def slot_subscription_cells(self) -> "frozenset[tuple[str, str]]":
+        """The (key, fold) cells subscribed, ``("*", "*")`` for the wildcard. For tests."""
+        with self._slot_sub_lock:
+            return frozenset(self._slot_subs)
 
     def on_fold_advanced(self, event: Any) -> None:
         """Route one :class:`FoldAdvanced` to the handler for its scope.
@@ -1016,6 +1147,12 @@ class CrewLogPublisher:
     def _push_tree(self) -> None:
         """Send the slots whose ``parent`` moved. On the loop. Never raises."""
         self._tree_scheduled = False
+        if self._watch_listener_remove is not None:
+            # A board created under a watched one joins the keyed subscriptions.
+            try:
+                self.sync_slot_subscriptions()
+            except Exception:  # pragma: no cover - a resync must not stop the push
+                logger.debug("slot subscription resync failed", exc_info=True)
         push = getattr(self._state, "push_lineage_patch", None)
         if push is None:
             return

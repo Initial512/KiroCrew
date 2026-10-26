@@ -1194,6 +1194,10 @@ class DashboardState:
     broadcast_ws_owners = _slots_push.broadcast_ws_owners
     ws_client_count = _slots_push.ws_client_count
     dashboard_user_ws_count = _slots_push.dashboard_user_ws_count
+    set_fold_delta_capable = _slots_push.set_fold_delta_capable
+    set_fold_watch = _slots_push.set_fold_watch
+    fold_watch_routing = _slots_push.fold_watch_routing
+    add_fold_watch_listener = _slots_push.add_fold_watch_listener
     broadcast_browser_event = _slots_push.broadcast_browser_event
     register_ws = _slots_push.register_ws
     send_members_subscribed = _slots_push.send_members_subscribed

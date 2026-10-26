@@ -672,7 +672,7 @@ describe('useWebSocket lifecycle trace', () => {
   it('uses a secure socket on https and keeps the socket across a re-render', async () => {
     const original = window.location
     const { ws, view } = await mountOpen()
-    expect(ws.url).toMatch(/^ws:\/\/[^/]+\/api\/ws\?caps=slot_patch$/)
+    expect(ws.url).toMatch(/^ws:\/\/[^/]+\/api\/ws\?caps=slot_patch,fold_delta\.1$/)
     // A re-render keeps the socket: no owner identity changes, so neither
     // the mount effect nor the connect it runs fires again.
     act(() => { view.rerender() })
@@ -684,7 +684,7 @@ describe('useWebSocket lifecycle trace', () => {
       wrapper: ({ children }) => createElement(Provider, { store: testStore },
         createElement(QueryClientProvider, { client: qc }, children)),
     })
-    expect(WS_INSTANCES[0].url).toBe('wss://crew.test/api/ws?caps=slot_patch')
+    expect(WS_INSTANCES[0].url).toBe('wss://crew.test/api/ws?caps=slot_patch,fold_delta.1')
   })
 
   it('unmount', async () => {
@@ -1467,7 +1467,7 @@ const EXPECTED_FRAMES: Record<string, string[]> = {
 
 const EXPECTED_LIFECYCLE: Record<string, string[]> = {
   "first connect": [
-    'connect ws:/api/ws?caps=slot_patch',
+    'connect ws:/api/ws?caps=slot_patch,fold_delta.1',
     'query invalidateQueries ["crew-log-projections"] {"cancelRefetch":false}',
     'action dashboard/sseConnected undefined',
     'query fetchQuery ["automation-seed","legacy"] {"staleTime":0,"retry":false}',
@@ -1487,7 +1487,7 @@ const EXPECTED_LIFECYCLE: Record<string, string[]> = {
   ],
   "reconnect catch-up": [
     'action dashboard/sseDisconnected undefined',
-    'connect ws:/api/ws?caps=slot_patch',
+    'connect ws:/api/ws?caps=slot_patch,fold_delta.1',
     'query invalidateQueries ["crew-log-projections"] {"cancelRefetch":false}',
     'action stream/flush {"slots":[{"slot":"slot-a","thinking":"kept","status":{"content":true,"thinking":true}}],"subagents":[],"recency":[]}',
     'cancel-frame 1',
@@ -1525,7 +1525,7 @@ const EXPECTED_LIFECYCLE: Record<string, string[]> = {
   ],
   "reconnect after an update restart reloads": [
     'action dashboard/sseDisconnected undefined',
-    'connect ws:/api/ws?caps=slot_patch',
+    'connect ws:/api/ws?caps=slot_patch,fold_delta.1',
     'query invalidateQueries ["crew-log-projections"] {"cancelRefetch":false}',
     'reload',
   ],
@@ -1537,7 +1537,7 @@ const EXPECTED_LIFECYCLE: Record<string, string[]> = {
   ],
   "forceReconnect": [
     'close',
-    'connect ws:/api/ws?caps=slot_patch',
+    'connect ws:/api/ws?caps=slot_patch,fold_delta.1',
     'query invalidateQueries ["crew-log-projections"] {"cancelRefetch":false}',
     'action dashboard/sseConnected undefined',
     'action dashboard/fetchSlots/pending',
@@ -1572,10 +1572,10 @@ const EXPECTED_LIFECYCLE: Record<string, string[]> = {
     'action chat/refreshSlot/fulfilled',
   ],
   "StrictMode mounts twice and connects once": [
-    'connect ws:/api/ws?caps=slot_patch',
+    'connect ws:/api/ws?caps=slot_patch,fold_delta.1',
     'close',
     'action chat/setVoicePlaying false',
-    'connect ws:/api/ws?caps=slot_patch',
+    'connect ws:/api/ws?caps=slot_patch,fold_delta.1',
     'query invalidateQueries ["crew-log-projections"] {"cancelRefetch":false}',
     'action dashboard/sseConnected undefined',
     'query fetchQuery ["automation-seed","legacy"] {"staleTime":0,"retry":false}',
