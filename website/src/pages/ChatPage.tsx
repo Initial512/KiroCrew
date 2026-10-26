@@ -651,7 +651,10 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
   })
 
   const currentSlot = slots.find(s => s.key === activeSlot)
-  const hasUserMessage = messages.some(m => m.role === 'user')
+  // Unknown counts as sent: while the transcript is still loading the mark does not
+  // offer to turn Crew Mode off, since the server refuses that once a message was
+  // sent (`crew_mode_locked`) and the loaded rows are the only way to know.
+  const hasUserMessage = slotLoading || messages.some(m => m.role === 'user')
   const { crewModeEligible, crewModeOn, crewModeChosen, crewModeLeaving, turnOnCrewMode, turnOffCrewMode, openTaskBoard } = useCrewModeSwitch({ currentSlot, defaultAgent, hasUserMessage, switchAgent, openView: tabsCtl.openView })
   const steerWorkerDone = useCrewWorkerIsDone(currentSlot?.crew_root ?? '', currentSlot?.key ?? '')
   // From the chip press to the first message the transcript shows the Crew Mode

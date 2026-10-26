@@ -374,6 +374,19 @@ describe('Crew Mode on ChatPage', () => {
     expect(chatSlotAgent).not.toHaveBeenCalled()
   })
 
+  it('offers no way off while the transcript is still loading, since a sent message may be in it', async () => {
+    // A reload of a conductor chat: its rows are not read yet, so whether the first
+    // message was sent is unknown. The mark is read-only until they land, as the
+    // server would refuse the switch (`crew_mode_locked`) on a chat that has one.
+    chatSlotAgent.mockClear()
+    detail.hold = true
+    await renderWith({ messages: [], agent: 'kirocrew-conductor', agentKind: 'template', slotLoading: true })
+    const mark = screen.getByTestId('crew-mode-composer-chip')
+    expect(mark).toHaveAttribute('aria-label', 'Crew Mode is on for this chat')
+    expect(screen.queryByRole('button', { name: 'Crew Mode', pressed: true })).toBeNull()
+    expect(chatSlotAgent).not.toHaveBeenCalled()
+  })
+
   it('has no note while the mode is off and no reply runs', async () => {
     await renderWith({ messages: [] })
     expect(screen.queryByTestId('crew-mode-note')).toBeNull()
