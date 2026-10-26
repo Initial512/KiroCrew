@@ -640,11 +640,6 @@ def test_a_ws_reconnect_with_nothing_new_reads_a_fixed_number_of_entries(meter, 
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="first history page read in a process frames the whole transcript: "
-    "history_projection_reads._row_index has no persisted index; issue #24254",
-)
 def test_a_first_history_page_in_a_new_process_reads_the_page_not_the_file(tmp_path, monkeypatch):
     from kiro_crew import history, history_projection
     from kiro_crew.history import ConversationLog
