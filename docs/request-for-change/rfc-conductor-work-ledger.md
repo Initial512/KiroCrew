@@ -1219,7 +1219,7 @@ recording each dispatched item while keeping their own skills' stores as detail.
 
 ## Open questions
 
-**Q1. Should `session_create` create and bind the item in one call?** The two-step create-then-bind sequence has a window in which a bound-in-intent worker is running unbound. Fusing them into `session_create(work_item=...)` closes it exactly, at the cost of coupling session control to the work ledger — a dependency that has to be justified against the current clean separation. Blocks nothing; Phase 2 ships the two-step form either way.
+**Q1. Should `session_create` create and bind the item in one call?** The two-step create-then-bind sequence has a window in which a bound-in-intent worker is running unbound. Fusing them into `session_create(work_item=...)` closes it exactly, at the cost of coupling session control to the work ledger — a dependency that has to be justified against the current clean separation. Blocks nothing; Phase 2 ships the two-step form either way. [rfc-work-dispatch.md](rfc-work-dispatch.md) proposes the answer: a separate, approval-gated `work_dispatch` tool on `kirocrew-dashboard` that runs the existing routes in order, leaving `session_create` and `kirocrew-work` unchanged.
 
 **Q2 — closed in v3. The ledger gate wins.** A conductor arms the ledger gate and never the pull-request gate: a worker reports the pull request it produced, so the ledger observes a superset of what the PR gate would, one report later. A composite probe was the alternative and is rejected as unnecessary complexity for a case that resolves by policy. A conductor that needs the PR gate directly is a conductor doing a worker's job.
 
