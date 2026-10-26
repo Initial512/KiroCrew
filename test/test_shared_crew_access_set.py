@@ -555,6 +555,24 @@ async def test_removing_a_person_stops_their_thread_reply_with_admission_off() -
 
 
 @pytest.mark.asyncio
+async def test_a_removed_persons_thread_reply_does_not_start_with_admission_off() -> None:
+    from kiro_crew.shared_crew import turn_gate
+
+    ag.install_service(None)
+    pid = tailnet_principal("mallory@example.com", "", Provenance.TAILSCALE_DIRECT).id
+    access_set._note_removed(frozenset({pid}))
+    ran: list[bool] = []
+    told: list[object] = []
+
+    async def reply() -> None:
+        ran.append(True)
+
+    with turn_gate.initiated_by(pid):
+        await turn_gate.run_admitted(reply(), session_key="thread:s1:m1", refused=told.append)
+    assert ran == [] and told == [ReasonCode.ACCESS_REMOVED]
+
+
+@pytest.mark.asyncio
 async def test_a_removed_persons_drained_turn_does_not_start_with_admission_off() -> None:
     from kiro_crew.dashboard.state import _ChatSlot
     from kiro_crew.shared_crew import turn_gate

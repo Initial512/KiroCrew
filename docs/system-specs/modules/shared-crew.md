@@ -215,8 +215,8 @@ Supported topologies:
 |---|---|---|
 | Direct tailnet listener (default on), Linux | yes, by stable user id | `whois` plus access set, no token |
 | Direct tailnet listener, macOS and Windows | yes (code path, unverified on those systems) | same |
-| `tailscale serve` to loopback, Linux with `tailscaled` as another user | yes, by login | token plus access set |
-| `tailscale serve` to loopback, macOS, Windows, same-user Linux | no, Unattributed | token plus access set |
+| `tailscale serve` to loopback, Linux with `tailscaled` as root | yes, by login | token plus access set |
+| `tailscale serve` to loopback, macOS, Windows, Linux with a non-root `tailscaled` | no, Unattributed | token plus access set |
 | Widened bind reached on a tailnet address | yes, by login, attribution only | token |
 
 The serve and widened-bind rows require the existing identity-trust opt-in
@@ -233,16 +233,16 @@ forwarding header (`origin.is_proxied_request`) is never the local operator, and
 its forwarded address is attributed only through the daemon, and only after the kernel
 proves the client end of the loopback socket belongs to `tailscaled`
 (`tailnet_proxy_proof.loopback_client_is_daemon`, Linux only; elsewhere the serve row
-never resolves and such a caller is Unknown). A process running as the gateway's own
-user is never that proof, so a local token holder adding `X-Forwarded-For` is Unknown,
+never resolves and such a caller is Unknown). Only a `tailscaled` running as root is
+that proof (any user can name a process `tailscaled`), so a local token holder adding `X-Forwarded-For` is Unknown,
 not the person it names. Without the proof the allowlist still decides admission
 (`tailnet.forwarded_peer_refusal`): a forwarded tailnet request is admitted, as
 Unknown, only when the daemon's `whois` of its single forwarded address names an
 allowlisted login, and refused otherwise, so access never widens where names cannot
 be proven.
 
-Supported matrix for the serve row: Linux with `tailscaled` running as a different
-user than the gateway names people; Linux with a same-user `tailscaled`, macOS and
+Supported matrix for the serve row: Linux with `tailscaled` running as root names
+people; Linux with a non-root `tailscaled`, macOS and
 Windows admit allowlisted people as Unknown. macOS gives an unprivileged process no
 owner for another user's loopback socket, Windows has no such check in this build,
 and `tailscale serve` does not register its loopback connections for a `whois` by

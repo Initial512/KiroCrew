@@ -409,6 +409,12 @@ async def run_admitted(
         budget_key=budget, session_key=session_key, text=text, operation=operation
     )
     if admission is None:
+        from kiro_crew.shared_crew import access_set
+
+        if access_set.principal_removed(budget):
+            work.close()
+            await _tell(ReasonCode.ACCESS_REMOVED)
+            return None
         with _running_unadmitted(session_key, budget):
             return await work
 

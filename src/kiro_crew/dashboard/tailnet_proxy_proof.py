@@ -113,8 +113,13 @@ def _socket_owner_uid(peer: tuple[str, int], local: tuple[str, int]) -> int | No
 
 
 def _scan_daemon_uids() -> frozenset[int]:
-    """Uids of every running process whose command name is ``tailscaled``."""
+    """Uids of every running ``tailscaled`` that runs as root or as this gateway's user.
+
+    Any user can name a process ``tailscaled``, so another user's uid is never
+    trusted: only root's, which no other user can take.
+    """
     uids: set[int] = set()
+    trusted = {0, _effective_uid()}
     try:
         entries = list(_PROC.iterdir())
     except OSError:
@@ -130,7 +135,9 @@ def _scan_daemon_uids() -> frozenset[int]:
                 if line.startswith("Uid:"):
                     # Real, effective, saved, filesystem: the socket is owned
                     # by the effective uid at creation.
-                    uids.add(int(line.split()[2]))
+                    uid = int(line.split()[2])
+                    if uid in trusted:
+                        uids.add(uid)
                     break
         except (OSError, ValueError, IndexError):
             continue

@@ -206,6 +206,11 @@ def fake_proc(tmp_path, monkeypatch):
     return tmp_path
 
 
+def test_another_users_process_named_tailscaled_is_not_proven(fake_proc):
+    _fake_proc(fake_proc, tcp=_ROW.format(uid=1001), daemon_uid=1001)
+    assert tailnet_proxy_proof.loopback_client_is_daemon(PEER, GW) is False
+
+
 def test_daemon_owned_socket_is_proven(fake_proc):
     _fake_proc(fake_proc, tcp=_ROW.format(uid=0))
     assert tailnet_proxy_proof.loopback_client_is_daemon(PEER, GW) is True

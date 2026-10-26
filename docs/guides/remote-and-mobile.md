@@ -1005,8 +1005,8 @@ kirocrew config set dashboard.tailscale.trust_identity true
 
 | Host | Direct Tailscale link | Through `tailscale serve` |
 |---|---|---|
-| Linux, `tailscaled` as root or its own user | Each person is named | Each person is named |
-| Linux, `tailscaled` as the gateway's user | Each person is named | Allowed people get in, shown as Unattributed |
+| Linux, `tailscaled` as root | Each person is named | Each person is named |
+| Linux, `tailscaled` as any other user | Each person is named | Allowed people get in, shown as Unattributed |
 | macOS | Each person is named | Allowed people get in, shown as Unattributed |
 | Windows | Each person is named | Allowed people get in, shown as Unattributed |
 
