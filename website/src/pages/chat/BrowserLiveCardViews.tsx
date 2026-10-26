@@ -1,4 +1,4 @@
-import { useRef, useState, type RefObject } from 'react'
+import { useRef, useState, type ReactNode, type RefObject } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
 import {
   Check, ExternalLink, Globe, Hand, History, Lock, LogIn, Maximize2,
@@ -108,8 +108,12 @@ export function BrowserLiveAllowView({ turn, onSwitchToBrowser, onUseKiroBrowser
 
 // ---- Live and In control -----------------------------------------------------
 
-export function BrowserLiveLiveView({ turn, onScreen, canvasRef, onClaim, onRelease, onOpenInBrowser, onExpand, onCloseLive }: {
+export function BrowserLiveLiveView({ turn, onScreen, canvasRef, onClaim, onRelease, onOpenInBrowser, onExpand, onCloseLive, frameOverlay, askSlot }: {
   turn: BrowserLiveTurn
+  /** Drawn over the frame (a quick ask's target ring or focused sheet). */
+  frameOverlay?: ReactNode
+  /** Drawn under the frame, above the steps (an inline quick ask). */
+  askSlot?: ReactNode
   onScreen: boolean
   canvasRef: RefObject<BrowserLiveCanvasHandle>
   onClaim: () => void
@@ -273,7 +277,10 @@ export function BrowserLiveLiveView({ turn, onScreen, canvasRef, onClaim, onRele
             <span className="truncate">{step}</span>
           </div>
         )}
+        {!inControl && frameOverlay}
       </div>
+
+      {!inControl && askSlot}
 
       {inControl && <BrowserLiveHandbackBar offered={turn.handbackOptions} onHandBack={onRelease} />}
 
