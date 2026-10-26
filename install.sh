@@ -65,7 +65,9 @@ NODE_VERSION="24"
 NODE_MIN_VERSION="22.12.0"
 PYTHON_VERSION="3.12"
 KIROCREW_PORT="${KIROCREW_PORT:-5476}"
-ACP_NPM_PKG="@agentclientprotocol/claude-agent-acp"
+# ACP_NPM_PKG and acp_adapter_spec (the exact pinned version).
+# shellcheck source=scripts/lib/acp-adapter-pin.sh
+. "$KIROCREW_APP_DIR/scripts/lib/acp-adapter-pin.sh"
 
 # ── Colors & Formatting ──
 if [ -t 1 ] && command -v tput >/dev/null 2>&1; then
@@ -414,12 +416,17 @@ step "Optional Agent Backend"
 if has claude-agent-acp; then
     ok "claude-agent-acp ($( which claude-agent-acp ))"
 elif has npm; then
-    info "Installing $ACP_NPM_PKG via npm…"
-    if npm install -g "$ACP_NPM_PKG" >/dev/null 2>&1; then
-        ok "claude-agent-acp installed"
+    if ! ACP_NPM_SPEC="$(acp_adapter_spec "$KIROCREW_APP_DIR")"; then
+        warn "Could not read the pinned $ACP_NPM_PKG version (packaging/acp-adapters/package.json) — skipping"
+        detail "npm i -g $ACP_NPM_PKG@<version>"
     else
-        warn "Global npm install failed — install it manually before first run:"
-        detail "npm i -g $ACP_NPM_PKG"
+        info "Installing $ACP_NPM_SPEC via npm…"
+        if npm install -g "$ACP_NPM_SPEC" >/dev/null 2>&1; then
+            ok "claude-agent-acp installed"
+        else
+            warn "Global npm install failed — install it manually before first run:"
+            detail "npm i -g $ACP_NPM_SPEC"
+        fi
     fi
 else
     warn "npm not available — install the agent backend later:"
