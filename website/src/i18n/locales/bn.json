@@ -19727,6 +19727,7 @@
     "send_race_send_now": "এখনই পাঠান",
     "sent_by": "{{name}} পাঠিয়েছেন",
     "sessions_created": "তৈরি করা সেশন: {{n}}",
+    "session_state_failed": "এই সেশনের শেয়ারিং বিবরণ লোড করা যায়নি।",
     "sessions_failed": "ফিল্টার করা সেশন লোড করা যায়নি।",
     "settings_tab_description": "কে এই Crew ব্যবহার করেছেন এবং অ্যাক্সেস কোথায় পরিচালিত হয়",
     "settings_tab_label": "লোকজন",

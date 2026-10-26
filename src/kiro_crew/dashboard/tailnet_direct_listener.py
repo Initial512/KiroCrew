@@ -48,11 +48,14 @@ def _resolve_blocking(
     except Exception:  # noqa: BLE001 - the set fails closed inside install
         logger.warning("shared crew access set could not be installed", exc_info=True)
     resolution = _resolve_gate(cfg, port, local_only)
-    gate = resolution.gate
-    if gate is not None:
+    owner = resolution.gate.owner if resolution.gate is not None else None
+    if resolution.reason in (tailnet_direct.REASON_DISABLED, REASON_BIND_NOT_LOOPBACK):
+        # The owner is admitted by every tailnet path, not just this listener.
+        owner = tailnet_direct.parse_status(tailnet_direct.tailnet_localapi.status().data)
+    if owner is not None and owner.login and owner.user_id:
         from kiro_crew.shared_crew import access_set
 
-        access_set.set_owner(gate.owner.login, gate.owner.user_id)
+        access_set.set_owner(owner.login, owner.user_id)
     return resolution
 
 

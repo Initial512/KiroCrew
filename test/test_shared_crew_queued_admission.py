@@ -416,13 +416,39 @@ async def test_gate_turn_runs_the_parked_work_it_was_handed(installed):
     entries = [{"id": "q", "meta": {entry.QUEUED_WORK_META_KEY: parked.work.work_id}}]
     state = SimpleNamespace(push_slots_update=lambda: None)
     with patch("kiro_crew.dashboard.chat_slack.slot_is_live", lambda _s, _slot: True):
-        with turn_gate.queued_work(entries):
+        with turn_gate.initiated_by(BOB.id), turn_gate.queued_work(entries):
             task = asyncio.ensure_future(turn_gate.gate_turn(state, slot, "hi", {}, run))
         await asyncio.wait_for(task, BOUND)
     assert ran == [parked.work.work_id]
     assert installed._store.get_sync(parked.work.work_id).state is S.COMPLETED
     # One record for the message, not a second admission for its turn.
     assert len(installed._store.list_sync()) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("who", [BOB.id, ""], ids=["edited-body", "merged-people"])
+async def test_a_drained_turn_unlike_its_parked_work_is_admitted_afresh(installed, who):
+    parked = await _park(installed, who=BOB.id)
+    slot = SimpleNamespace(key="s1", linked_session_key="", messages=[], total_messages=0)
+    slot.append = MagicMock()
+    ran: list[str] = []
+
+    async def run():
+        ran.append(turn_gate.admitted_work())
+
+    entries = [{"id": "q", "meta": {entry.QUEUED_WORK_META_KEY: parked.work.work_id}}]
+    text = "x" * (installed._limits.max_request_bytes + 1) if who else "hi"
+    state = SimpleNamespace(push_slots_update=lambda: None)
+    with patch("kiro_crew.dashboard.chat_slack.slot_is_live", lambda _s, _slot: True):
+        with turn_gate.initiated_by(who), turn_gate.queued_work(entries):
+            task = asyncio.ensure_future(turn_gate.gate_turn(state, slot, text, {}, run))
+        await asyncio.wait_for(task, BOUND)
+    assert installed._store.get_sync(parked.work.work_id).state is S.CANCELLED
+    if who:  # the edited body is held to the size limit like a fresh send
+        assert ran == [] and "request too large" in slot.append.call_args.args[1]
+    else:  # mixed authors run on their own fresh admission, not the first sender's
+        (fresh,) = [w for w in installed._store.list_sync() if w.work_id != parked.work.work_id]
+        assert ran == [fresh.work_id] and fresh.budget_key != BOB.id
 
 
 # -- a removed person's parked prompt, a late start, a failed terminal write --------

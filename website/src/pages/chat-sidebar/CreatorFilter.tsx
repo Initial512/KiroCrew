@@ -113,7 +113,7 @@ function CreatorFilterSelect({ value, onChange }: { value: CreatorFilterValue; o
     return { options: opts, labels: labs }
   }, [people.data, current])
   return (
-    <div className="mx-2 mb-1 flex items-center gap-1.5 min-w-0" data-testid="creator-filter">
+    <div className="mx-2 mb-1 flex flex-wrap items-center gap-1.5 min-w-0" data-testid="creator-filter">
       <Users size={12} className="shrink-0 text-muted" aria-hidden />
       <SimpleSelect
         options={options}
@@ -123,6 +123,14 @@ function CreatorFilterSelect({ value, onChange }: { value: CreatorFilterValue; o
         aria-label={i18nT('sharedCrew.filter_label')}
         className="h-7 min-w-0 flex-1"
       />
+      {people.isError && (
+        <ErrorNotice
+          message={people.error instanceof Error ? people.error.message : i18nT('sharedCrew.people_failed')}
+          variant="inline"
+          askAgent
+          testId="creator-filter-people-error"
+        />
+      )}
     </div>
   )
 }

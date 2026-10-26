@@ -39,6 +39,10 @@ export function QueuedSendLabel({ slotKey }: { slotKey: string }) {
   const [notice, setNotice] = useState('')
   const item = queueOn ? queuedChatTurn(work.data?.items ?? []) : null
   if (!item) {
+    if (queueOn && work.isError) {
+      const message = work.error instanceof Error ? work.error.message : i18nT('sharedCrew.session_state_failed')
+      return <ErrorNotice message={message} variant="inline" askAgent testId="queued-send-read-error" />
+    }
     return notice ? <p className="text-[12px] text-muted mb-1 pr-1" role="status">{notice}</p> : null
   }
   const cancel = async () => {

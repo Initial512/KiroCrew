@@ -19432,6 +19432,7 @@
     "send_race_send_now": "立即发送",
     "sent_by": "由 {{name}} 发送",
     "sessions_created": "已创建的会话：{{n}}",
+    "session_state_failed": "无法加载此会话的共享详情。",
     "sessions_failed": "无法加载筛选后的会话。",
     "settings_tab_description": "谁使用过此 Crew，以及访问权限在哪里管理",
     "settings_tab_label": "人员",

@@ -7,6 +7,7 @@
  *  reports this tab's presence for the session. */
 import { useEffect } from 'react'
 import { capabilityUsable } from '../../../api/sharedCrewUi'
+import ErrorNotice from '../../../components/ErrorNotice'
 import {
   useSessionDecisions,
   useSessionPresence,
@@ -44,6 +45,11 @@ export function SessionCollabStrip({ sessionKey, typing }: { sessionKey: string 
 
   const entries = presence.data?.entries ?? []
   const decisionItems = decisions.data?.items ?? []
+  const failed = presence.isError ? presence.error : decisions.isError ? decisions.error : null
+  if (sessionKey && failed) {
+    const message = failed instanceof Error ? failed.message : i18nT('sharedCrew.session_state_failed')
+    return <ErrorNotice message={message} variant="inline" askAgent testId="session-collab-error" />
+  }
   if (!sessionKey || (entries.length === 0 && decisionItems.length === 0)) return null
   return (
     <section

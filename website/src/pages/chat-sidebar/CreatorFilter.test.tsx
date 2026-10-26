@@ -106,6 +106,13 @@ describe('CreatorFilterBar', () => {
     await waitFor(() => expect(root.textContent).toContain('Unattributed'))
     expect(root.textContent).not.toContain('Unknown')
   })
+
+  it('a failed People read shows the error notice beside the choices', async () => {
+    people.mockRejectedValue(new Error('people read failed'))
+    modeApi.mockResolvedValue(modeBody('network'))
+    mount(<CreatorFilterBar value="all" onChange={() => {}} />)
+    expect(await screen.findByTestId('creator-filter-people-error')).toHaveTextContent('people read failed')
+  })
 })
 
 describe('useSharedCrewListView', () => {

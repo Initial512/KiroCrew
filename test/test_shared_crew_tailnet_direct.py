@@ -701,6 +701,18 @@ async def test_turning_the_flag_off_binds_nothing(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_flag_off_still_publishes_the_owner_so_phone_setup_admits_them(monkeypatch):
+    from kiro_crew.config.loader import KiroCrewConfig
+    from kiro_crew.dashboard import tailnet, tailnet_direct_listener
+
+    monkeypatch.setattr(tailnet_direct.tailnet_localapi, "status", _status_answer)
+    cfg = KiroCrewConfig()
+    cfg.dashboard.shared_crew.tailnet_direct = False
+    await tailnet_direct_listener.resolve(cfg, PORT, True)
+    assert tailnet.login_allowed(OWNER.login, ())
+
+
+@pytest.mark.asyncio
 async def test_a_widened_bind_does_not_start_the_direct_listener():
     from kiro_crew.config.loader import KiroCrewConfig
     from kiro_crew.dashboard import tailnet_direct_listener

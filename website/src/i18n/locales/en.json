@@ -10611,6 +10611,7 @@
     "send_race_send_now": "Send now",
     "sent_by": "Sent by {{name}}",
     "sessions_created": "Sessions created: {{n}}",
+    "session_state_failed": "Could not load this session's sharing details.",
     "sessions_failed": "Could not load the filtered sessions.",
     "settings_tab_description": "Who has used this Crew, and where access is managed",
     "settings_tab_label": "People",

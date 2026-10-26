@@ -19727,6 +19727,7 @@
     "send_race_send_now": "अभी भेजें",
     "sent_by": "{{name}} ने भेजा",
     "sessions_created": "बनाए गए सत्र: {{n}}",
+    "session_state_failed": "इस सत्र के साझाकरण विवरण लोड नहीं हो सके।",
     "sessions_failed": "फ़िल्टर किए गए सत्र लोड नहीं हो सके।",
     "settings_tab_description": "किसने इस Crew का इस्तेमाल किया और पहुँच कहाँ संभाली जाती है",
     "settings_tab_label": "लोग",

@@ -20317,6 +20317,7 @@
     "send_race_send_now": "Отправить сейчас",
     "sent_by": "Отправил(а) {{name}}",
     "sessions_created": "Создано сеансов: {{n}}",
+    "session_state_failed": "Не удалось загрузить сведения о совместном доступе к этому сеансу.",
     "sessions_failed": "Не удалось загрузить отфильтрованные сеансы.",
     "settings_tab_description": "Кто пользовался этим Crew и где управляется доступ",
     "settings_tab_label": "Люди",

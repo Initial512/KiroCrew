@@ -20,6 +20,8 @@ vi.mock('../../api/client', () => ({
     sharedCrewAckFirstShare: vi.fn(),
   },
 }))
+const copy = vi.hoisted(() => vi.fn<(text: string) => Promise<boolean>>())
+vi.mock('../../utils/clipboard', () => ({ copyToClipboard: copy }))
 const read = vi.mocked(api.tailscaleInvites)
 const connect = vi.mocked(api.tailscaleConnect)
 const create = vi.mocked(api.tailscaleCreateInvites)
@@ -47,7 +49,7 @@ function mount() {
   return render(<QueryClientProvider client={qc}><TailscaleInvites /></QueryClientProvider>)
 }
 
-beforeEach(() => { vi.clearAllMocks(); accessRead.mockResolvedValue(null) })
+beforeEach(() => { vi.clearAllMocks(); accessRead.mockResolvedValue(null); copy.mockResolvedValue(true) })
 
 describe('TailscaleInvites', () => {
   it('without a key: shows the admin-console share path and the one-time key form', async () => {
@@ -96,12 +98,34 @@ describe('TailscaleInvites', () => {
     expect(screen.queryByText(/exit node/i)).toBeNull()
   })
 
-  it('blocks a malformed email before sending', async () => {
+  it('blocks a malformed email before sending, with a field hint and no error notice', async () => {
     read.mockResolvedValue(status())
     mount()
     fireEvent.change(await screen.findByTestId('invite-emails'), { target: { value: 'not-an-email' } })
-    expect(screen.getByTestId('invite-email-error')).toBeInTheDocument()
+    expect(screen.getByTestId('invite-email-hint')).toHaveTextContent(inviteErrorText('invalid_email'))
+    expect(screen.queryByRole('alert')).toBeNull()
     expect(screen.getByTestId('invite-send')).toBeDisabled()
+  })
+
+  it('a picture of the wrong type is a field hint, not an upload error', async () => {
+    read.mockResolvedValue(status())
+    mount()
+    const file = new File(['x'], 'a.txt', { type: 'text/plain' })
+    fireEvent.change(await screen.findByTestId('invite-avatar-input'), { target: { files: [file] } })
+    expect(screen.getByTestId('invite-avatar-hint')).toHaveTextContent(inviteErrorText('avatar_type'))
+    expect(screen.queryByTestId('invite-avatar-error')).toBeNull()
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('a failed copy says so through the error notice', async () => {
+    read.mockResolvedValue(status())
+    create.mockResolvedValue({ invites: [invite({ kind: 'link', email: '', invite_url: 'https://login.tailscale.com/admin/invite/abc' })] })
+    copy.mockResolvedValue(false)
+    mount()
+    fireEvent.click(await screen.findByTestId('invite-mode-link'))
+    fireEvent.click(screen.getByTestId('invite-send'))
+    fireEvent.click(await screen.findByTestId('invite-copy-link'))
+    expect(await screen.findByTestId('invite-copy-error')).toBeInTheDocument()
   })
 
   it('makes a link invite and offers to copy it with a warning', async () => {

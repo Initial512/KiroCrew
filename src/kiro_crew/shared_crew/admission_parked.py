@@ -38,6 +38,20 @@ MERGED_INTO_KEY = "merged_into"
 PERSON_STOPS = frozenset({ReasonCode.CANCELLED_BY_USER, ReasonCode.ACCESS_REMOVED})
 
 
+async def dropped_as_changed(service: AdmissionService, lives: list[_Live], key: tuple) -> bool:
+    """End parked *lives* whose drained turn is not the (digest, budget) *key* they were parked as.
+
+    An edit or a merge changes the body or the person: that turn is admitted
+    afresh, so the size limit and the charge are taken on what really runs.
+    """
+    first = lives[0].work
+    if not key or (first.request_digest, first.budget_key) == key:
+        return False
+    for live in lives:
+        await service._end(live, S.CANCELLED, reason=ReasonCode.CANCELLED_BY_USER)
+    return True
+
+
 async def cancelled_parked(service: AdmissionService, work_ids: list[str]) -> Admission | None:
     """Refuse a merged prompt containing any work a person's stop ended.
 

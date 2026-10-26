@@ -20022,6 +20022,7 @@
     "send_race_send_now": "Enviar ahora",
     "sent_by": "Enviado por {{name}}",
     "sessions_created": "Sesiones creadas: {{n}}",
+    "session_state_failed": "No se pudieron cargar los detalles de uso compartido de esta sesión.",
     "sessions_failed": "No se pudieron cargar las sesiones filtradas.",
     "settings_tab_description": "Quién ha usado este Crew y dónde se gestiona el acceso",
     "settings_tab_label": "Personas",

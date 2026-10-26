@@ -19727,6 +19727,7 @@
     "send_race_send_now": "Jetzt senden",
     "sent_by": "Gesendet von {{name}}",
     "sessions_created": "Erstellte Sitzungen: {{n}}",
+    "session_state_failed": "Die Freigabedetails dieser Sitzung konnten nicht geladen werden.",
     "sessions_failed": "Die gefilterten Sitzungen konnten nicht geladen werden.",
     "settings_tab_description": "Wer diese Crew genutzt hat und wo der Zugriff verwaltet wird",
     "settings_tab_label": "Personen",

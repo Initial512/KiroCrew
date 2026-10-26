@@ -749,12 +749,11 @@ class AdmissionService:
     def queue_id_for(self, work_id: str) -> str:
         return self._queue_ids.get(work_id, "")
 
-    async def start_parked(self, work_ids: list[str]) -> Admission | None:
+    async def start_parked(self, work_ids: list[str], key: tuple = ()) -> Admission | None:
         """Hand a session drain's parked messages to the fair queue as one turn.
 
-        The first live parked id becomes the turn's work; the others, merged
-        into the same turn, end with its outcome. None when none of them is
-        still parked here (a restart, an expiry): the caller admits afresh.
+        The first live parked id becomes the turn's work; merged ones end with its
+        outcome. None when none is still parked here, or the turn's (digest, budget) *key* differs.
         """
         if not self.enabled or self._store is None:
             return None
@@ -778,6 +777,8 @@ class AdmissionService:
                 followers.append(live)
         if primary is None:
             return await self._cancelled_parked(work_ids)
+        if await _parked.dropped_as_changed(self, [primary, *followers], key):
+            return None
         now = self._clock()
         result = self._scheduler.submit_parked(
             primary.work.work_id, expires_at=now + self._limits.queue_expiry_seconds

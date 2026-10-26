@@ -82,6 +82,12 @@ function ErrorLine({ code, testId }: { code: string; testId: string }) {
   return <ErrorNotice variant="inline" message={inviteErrorText(code)} testId={testId} />
 }
 
+/** A client-side check on a field, not a failure: plain text, not an `ErrorNotice`. */
+function FieldHint({ code, id }: { code: string; id: string }) {
+  if (!code) return null
+  return <span id={id} className="text-[12px] text-text" data-testid={id}>{inviteErrorText(code)}</span>
+}
+
 /** No key yet: the manual share path, and the one-time key form. */
 function ConnectForm() {
   const qc = useQueryClient()
@@ -132,8 +138,9 @@ function InviteForm() {
   const [reusable, setReusable] = useState(false)
   const [avatarId, setAvatarId] = useState('')
   const [avatarErr, setAvatarErr] = useState('')
+  const [avatarHint, setAvatarHint] = useState('')
   const [lastLink, setLastLink] = useState('')
-  const [copied, setCopied] = useState(false)
+  const [copied, setCopied] = useState<boolean | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const parsed = useMemo(() => parseEmails(emails), [emails])
   const badEmail = parsed.find(e => !looksLikeEmail(e)) ?? ''
@@ -147,7 +154,7 @@ function InviteForm() {
     onSuccess: res => {
       const link = res.invites.find(i => i.kind === 'link')?.invite_url ?? ''
       setLastLink(link)
-      setCopied(false)
+      setCopied(null)
       setEmails('')
       setAlias('')
       setAvatarId('')
@@ -162,8 +169,10 @@ function InviteForm() {
   })
   const onPick = (file: File | undefined) => {
     if (!file) return
-    if (!AVATAR_TYPES.includes(file.type)) { setAvatarErr('avatar_type'); return }
-    if (file.size > AVATAR_MAX_BYTES) { setAvatarErr('avatar_too_large'); return }
+    setAvatarErr('')
+    if (!AVATAR_TYPES.includes(file.type)) { setAvatarHint('avatar_type'); return }
+    if (file.size > AVATAR_MAX_BYTES) { setAvatarHint('avatar_too_large'); return }
+    setAvatarHint('')
     upload.mutate(file)
   }
   const canSend = mode === 'link' || (parsed.length > 0 && !badEmail)
@@ -192,9 +201,11 @@ function InviteForm() {
             className="w-full min-w-0 rounded border border-border bg-bg text-text text-[13px] p-2"
             value={emails}
             onChange={e => setEmails(e.target.value)}
+            aria-invalid={badEmail ? true : undefined}
+            aria-describedby={badEmail ? 'invite-email-hint' : undefined}
             data-testid="invite-emails"
           />
-          {badEmail && <ErrorLine code="invalid_email" testId="invite-email-error" />}
+          <FieldHint code={badEmail ? 'invalid_email' : ''} id="invite-email-hint" />
         </div>
       ) : (
         <div className="flex items-center gap-2 min-w-0" data-testid="invite-link-options">
@@ -215,6 +226,7 @@ function InviteForm() {
         </div>
       </div>
       <p className="text-[12px] text-muted">{i18nT('sharedCrew.invite_alias_help')}</p>
+      <FieldHint code={avatarHint} id="invite-avatar-hint" />
       <ErrorLine code={avatarErr} testId="invite-avatar-error" />
       <Btn type="submit" primary className="self-start" disabled={!canSend || create.isPending} data-testid="invite-send">
         <UserPlus size={14} className="lucide-inline" aria-hidden /> {mode === 'email' ? i18nT('sharedCrew.invite_send') : i18nT('sharedCrew.invite_make_link')}
@@ -226,6 +238,7 @@ function InviteForm() {
           <Btn type="button" onClick={() => { void copyToClipboard(lastLink).then(ok => setCopied(ok)) }} data-testid="invite-copy-link">
             <Copy size={14} className="lucide-inline" aria-hidden /> {copied ? i18nT('sharedCrew.invite_copied') : i18nT('sharedCrew.invite_copy_link')}
           </Btn>
+          {copied === false && <ErrorNotice variant="inline" message={i18nT('sharedCrew.direct_link_copy_failed')} testId="invite-copy-error" />}
           <span className="text-[12px] text-muted w-full">{i18nT('sharedCrew.invite_link_warning')}</span>
         </div>
       )}

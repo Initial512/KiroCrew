@@ -323,12 +323,13 @@ async def gate_turn(
     from kiro_crew.dashboard.chat_utils import effective_session_key
 
     budget = turn_budget(kwargs, initiator)
-    admission = await _start_parked(parked)
+    text = message if isinstance(message, str) else ""
+    admission = await _start_parked(parked, admission_entry.chat_digest(slot.key, text), budget)
     if admission is None:
         admission = await admit_turn(
             budget_key=budget,
             session_key=effective_session_key(slot) or slot.key,
-            text=message if isinstance(message, str) else "",
+            text=text,
         )
     if admission is None:
         from kiro_crew.shared_crew import access_set
@@ -363,12 +364,14 @@ async def gate_turn(
     )
 
 
-async def _start_parked(work_ids: list[str]) -> _gate.Admission | None:
+async def _start_parked(
+    work_ids: list[str], digest: str, budget_key: str
+) -> _gate.Admission | None:
     """The parked work a drained turn runs as, or None to admit it afresh."""
     if not work_ids or not await admission_on():
         return None
     service = await _gate.current_service()
-    return await service.start_parked(work_ids)
+    return await service.start_parked(work_ids, (digest, budget_key))
 
 
 async def run_admitted(

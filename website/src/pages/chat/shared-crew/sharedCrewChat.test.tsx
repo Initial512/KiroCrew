@@ -70,9 +70,22 @@ describe('above the composer', () => {
     expect(screen.queryByRole('button')).toBeNull()
     expect(container).toBeEmptyDOMElement()
   })
+
+  it.each(['presence', 'decisions'] as const)('a failed %s read shows the error notice, not an empty strip', async (which) => {
+    const failed = which === 'presence' ? api.sharedCrewPresence : api.sharedCrewDecisions
+    vi.mocked(failed).mockRejectedValue(new Error(`${which} read failed`))
+    mount(<SessionCollabStrip sessionKey="s1" />)
+    expect(await screen.findByTestId('session-collab-error')).toHaveTextContent(`${which} read failed`)
+  })
 })
 
 describe('queued send on its bubble', () => {
+  it('a failed work read shows the error notice, not nothing', async () => {
+    workRead.mockRejectedValue(new Error('work read failed'))
+    mount(<QueuedSendLabel slotKey="s1" />)
+    expect(await screen.findByTestId('queued-send-read-error')).toHaveTextContent('work read failed')
+  })
+
   it('picks the newest chat turn waiting for capacity', () => {
     expect(queuedChatTurn([work({ work_id: 'a' }), work({ work_id: 'b' }), work({ work_id: 'c', state: 'running' })])?.work_id).toBe('b')
     expect(queuedChatTurn([work({ operation: 'app_launch' as never })])).toBeNull()

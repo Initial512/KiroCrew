@@ -19432,6 +19432,7 @@
     "send_race_send_now": "今すぐ送信",
     "sent_by": "送信者: {{name}}",
     "sessions_created": "作成したセッション: {{n}}",
+    "session_state_failed": "このセッションの共有の詳細を読み込めませんでした。",
     "sessions_failed": "絞り込んだセッションを読み込めませんでした。",
     "settings_tab_description": "この Crew を使った人と、アクセスを管理する場所",
     "settings_tab_label": "ユーザー",
