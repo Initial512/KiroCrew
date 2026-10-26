@@ -8,6 +8,7 @@ Windows resource ceiling, and :func:`cgroup_scope_argv`. One of the owners
 
 from __future__ import annotations
 
+import errno
 import logging
 import os
 import re
@@ -274,6 +275,7 @@ _WINDOWS_INERT_RESOURCE_LIMIT_KEYS = (
     "max_open_files",
     "max_total_memory_mb",
     "max_total_processes",
+    "slice_reclaim_trigger_pct",
 )
 _WINDOWS_INERT_LIMITS_WARNED = False
 
@@ -906,3 +908,315 @@ def check_agents_slice_pressure() -> str | None:
     )
     logger.warning("%s", message)
     return message
+
+
+# ── proactive page-cache reclaim on the agents slice ──
+# The kernel charges page cache to the cgroup that read the file, so ordinary
+# file-heavy agent work (build trees, checkouts, logs) fills the slice's
+# memory.high with CLEAN cache. memory.current then sits at memory.high and the
+# kernel throttles the whole agent subtree while it reclaims, even though almost
+# none of that memory is process memory. Writing the slice's memory.reclaim
+# drops the cache up front, so the throttle never engages for cache alone. The
+# resource-pressure sampler calls reclaim_agents_slice_page_cache() from its
+# worker thread every tick; the writes themselves run in their own thread so a
+# slow reclaim cannot eat the sampler's probe budget.
+
+# Default trigger: reclaim once memory.current reaches this percent of
+# memory.high. Overridden by resource_limits.slice_reclaim_trigger_pct (0 turns
+# the feature off; 50..99 is accepted, anything else uses this default).
+_SLICE_RECLAIM_DEFAULT_TRIGGER_PCT = 95
+_SLICE_RECLAIM_MIN_TRIGGER_PCT = 50
+_SLICE_RECLAIM_MAX_TRIGGER_PCT = 99
+# Reclaim brings memory.current down to about this fraction of memory.high --
+# or ten points under a lower configured trigger, so a reclaim always ends
+# below the line that started it.
+_SLICE_RECLAIM_TARGET_FRACTION = 0.85
+_SLICE_RECLAIM_TARGET_GAP_PCT = 10
+# Only reclaim when reclaimable file cache is at least this share of
+# memory.current. Below it the pressure is process memory, which reclaim
+# cannot free without swap, so writing would only stall the slice.
+_SLICE_RECLAIM_FILE_SHARE_MIN = 0.5
+# One memory.reclaim write asks for at most this much; the kernel holds the
+# writer until it has reclaimed the amount or given up, so a bounded chunk
+# bounds one write.
+_SLICE_RECLAIM_CHUNK_BYTES = 1024 * 1024 * 1024
+# An episode stops issuing chunks after this long; whatever is left waits for
+# the next episode.
+_SLICE_RECLAIM_EPISODE_BUDGET_SECS = 10.0
+# At most one episode per this many seconds.
+_SLICE_RECLAIM_MIN_INTERVAL_SECS = 60.0
+# A planned reclaim smaller than this is skipped. Arbitrary: a few MiB is too
+# little cache to be what holds a slice at its ceiling.
+_SLICE_RECLAIM_MIN_BYTES = 4 * 1024 * 1024
+# Host swap is read here. Module-level so tests can point it at a file.
+_PROC_MEMINFO = "/proc/meminfo"
+
+# Set after memory.reclaim proved unusable (missing on a pre-5.19 kernel,
+# refused, or rejected); the feature then stays off for the process.
+_SLICE_RECLAIM_DISARMED = False
+# time.monotonic() when the last episode started, for the rate limit.
+_SLICE_RECLAIM_LAST_AT: float | None = None
+# Held by the running episode's thread, so episodes never overlap.
+_SLICE_RECLAIM_LOCK = threading.Lock()
+# Each "skipped" reason is logged once per process at INFO.
+_SLICE_RECLAIM_SKIP_LOGGED: set[str] = set()
+
+
+def _slice_reclaim_trigger_pct() -> int:
+    """The configured trigger percent, ``0`` when the feature is off.
+
+    ``resource_limits.slice_reclaim_trigger_pct``: unset uses
+    :data:`_SLICE_RECLAIM_DEFAULT_TRIGGER_PCT`, ``0`` is off, 50..99 is used as
+    written, and a value the parse refuses or one under 50 uses the default.
+    """
+    try:
+        # circular import: same function-level pattern as _cgroup_limits_from_config.
+        # The full load, so a value (the off switch included) set only in the
+        # config.local.json overlay counts.
+        from kiro_crew.config.loader import KiroCrewConfig
+
+        pct = KiroCrewConfig.load().resource_limits.slice_reclaim_trigger_pct
+    except Exception:
+        logger.debug("slice reclaim: config unavailable, using the default trigger")
+        return _SLICE_RECLAIM_DEFAULT_TRIGGER_PCT
+    if pct == 0:
+        return 0
+    if pct is None or not (_SLICE_RECLAIM_MIN_TRIGGER_PCT <= pct <= _SLICE_RECLAIM_MAX_TRIGGER_PCT):
+        return _SLICE_RECLAIM_DEFAULT_TRIGGER_PCT
+    return pct
+
+
+def _slice_reclaimable_file(stat: dict[str, int]) -> int:
+    """Clean file cache reclaim can drop without writeback or swap.
+
+    In cgroup v2 ``file`` includes ``shmem`` (tmpfs, shared anonymous memory),
+    which reclaim can only swap, and dirty or in-flight pages need writeback
+    first; none of those count.
+    """
+    reclaimable = (
+        stat.get("file", 0)
+        - stat.get("shmem", 0)
+        - stat.get("file_dirty", 0)
+        - stat.get("file_writeback", 0)
+    )
+    return max(reclaimable, 0)
+
+
+def _plan_slice_reclaim(
+    slice_dir: Path, trigger_pct: int
+) -> tuple[int, int, dict[str, int]] | None:
+    """``(bytes_to_reclaim, target_current, memory.stat)``, or None for no reclaim.
+
+    All three must hold: ``memory.high`` is finite, ``memory.current`` is at
+    least *trigger_pct* percent of it, and reclaimable file cache is at least
+    :data:`_SLICE_RECLAIM_FILE_SHARE_MIN` of ``memory.current``. The amount
+    brings ``memory.current`` to the target, capped at the reclaimable cache.
+    """
+    high = read_cgroup_int(slice_dir / "memory.high")
+    current = read_cgroup_int(slice_dir / "memory.current")
+    if not high or current is None or current * 100 < high * trigger_pct:
+        return None
+    stat = _read_cgroup_counters(slice_dir / "memory.stat")
+    reclaimable = _slice_reclaimable_file(stat)
+    if reclaimable < current * _SLICE_RECLAIM_FILE_SHARE_MIN:
+        return None
+    target_fraction = min(
+        _SLICE_RECLAIM_TARGET_FRACTION, (trigger_pct - _SLICE_RECLAIM_TARGET_GAP_PCT) / 100
+    )
+    target = int(high * target_fraction)
+    amount = min(current - target, reclaimable)
+    if amount < _SLICE_RECLAIM_MIN_BYTES:
+        return None
+    return amount, target, stat
+
+
+def _host_swap_total_kb() -> int | None:
+    """``SwapTotal`` from ``/proc/meminfo`` in kB, or None when unreadable."""
+    try:
+        for line in Path(_PROC_MEMINFO).read_text(encoding="utf-8").splitlines():
+            key, _, rest = line.partition(":")
+            if key == "SwapTotal":
+                value = rest.split()
+                return int(value[0]) if value and value[0].isdigit() else None
+    except OSError:
+        return None
+    return None
+
+
+def _slice_reclaim_cannot_swap(slice_dir: Path) -> bool:
+    """Whether a reclaim on the slice can only drop cache, never swap anon out.
+
+    True when the slice's ``memory.swap.max`` reads ``0`` (what
+    ``ensure_agents_slice_limits`` sets with ``MemorySwapMax=0``) or the host
+    has no swap at all. Anything unreadable counts as "might swap".
+    """
+    if read_cgroup_int(slice_dir / "memory.swap.max") == 0:
+        return True
+    return _host_swap_total_kb() == 0
+
+
+def _write_memory_reclaim(path: Path, nbytes: int) -> None:
+    """Ask the kernel to reclaim *nbytes* from the cgroup owning *path*.
+
+    Raises ``OSError`` as the kernel reports it: ``EAGAIN`` means it reclaimed
+    less than asked.
+    """
+    fd = os.open(path, os.O_WRONLY | getattr(os, "O_CLOEXEC", 0))
+    try:
+        os.write(fd, str(nbytes).encode("ascii"))
+    finally:
+        os.close(fd)
+
+
+def _disarm_slice_reclaim(reason: object, *, level: int = logging.WARNING) -> None:
+    """Turn the reclaim off for this process, with one log line at *level*."""
+    global _SLICE_RECLAIM_DISARMED
+    if _SLICE_RECLAIM_DISARMED:
+        return
+    _SLICE_RECLAIM_DISARMED = True
+    logger.log(
+        level,
+        "agent slice %s: proactive page-cache reclaim is off for this process (%s); "
+        "the slice MemoryHigh ceiling still applies. See "
+        "docs/architecture/resource-protection.md.",
+        _CGROUP_AGENTS_SLICE,
+        reason,
+    )
+
+
+def _log_slice_reclaim_skip_once(reason: str) -> None:
+    if reason in _SLICE_RECLAIM_SKIP_LOGGED:
+        return
+    _SLICE_RECLAIM_SKIP_LOGGED.add(reason)
+    logger.info("agent slice %s: page-cache reclaim skipped: %s", _CGROUP_AGENTS_SLICE, reason)
+
+
+def _run_slice_reclaim_episode(slice_dir: Path, amount: int, target: int) -> None:
+    """Write *amount* bytes to the slice's ``memory.reclaim`` in bounded chunks.
+
+    Stops early once ``memory.current`` reaches *target*, when the kernel
+    answers ``EAGAIN`` (it reclaimed less than asked, which is normal), or when
+    the episode's time budget runs out. Any other error disarms the feature.
+    Logs one INFO line with the before and after figures. Never raises; always
+    releases :data:`_SLICE_RECLAIM_LOCK`.
+    """
+    try:
+        before_current = read_cgroup_int(slice_dir / "memory.current")
+        before = _read_cgroup_counters(slice_dir / "memory.stat")
+        reclaim_path = slice_dir / "memory.reclaim"
+        deadline = time.monotonic() + _SLICE_RECLAIM_EPISODE_BUDGET_SECS
+        remaining = amount
+        requested = 0
+        while remaining > 0:
+            chunk = min(_SLICE_RECLAIM_CHUNK_BYTES, remaining)
+            try:
+                _write_memory_reclaim(reclaim_path, chunk)
+            except OSError as exc:
+                if exc.errno == errno.EAGAIN:
+                    logger.debug("agent slice reclaim: kernel reclaimed less than %d bytes", chunk)
+                    requested += chunk
+                    break
+                _disarm_slice_reclaim(f"memory.reclaim write failed: {exc}")
+                return
+            requested += chunk
+            remaining -= chunk
+            current = read_cgroup_int(slice_dir / "memory.current")
+            if current is not None and current <= target:
+                break
+            if time.monotonic() >= deadline:
+                break
+        after_current = read_cgroup_int(slice_dir / "memory.current")
+        after = _read_cgroup_counters(slice_dir / "memory.stat")
+        logger.info(
+            "agent slice %s: reclaimed page cache (asked %d bytes): memory.current "
+            "%s -> %s, file %d -> %d, anon %d -> %d",
+            _CGROUP_AGENTS_SLICE,
+            requested,
+            before_current,
+            after_current,
+            before.get("file", 0),
+            after.get("file", 0),
+            before.get("anon", 0),
+            after.get("anon", 0),
+        )
+    except Exception:
+        logger.debug("agent slice reclaim episode failed", exc_info=True)
+    finally:
+        _SLICE_RECLAIM_LOCK.release()
+
+
+def reclaim_agents_slice_page_cache() -> threading.Thread | None:
+    """Start a page-cache reclaim on the agents slice when clean cache holds it at its ceiling.
+
+    Called each tick of the resource-pressure sampler, from its worker thread.
+    The decision costs a handful of cgroup file reads and, once the slice is
+    near its ceiling, one config load; when it says reclaim, the
+    writes run in a new daemon thread, which is returned so a caller can wait
+    for it. Returns None when nothing was started.
+
+    Nothing happens when the slice cannot be read (not Linux, no cgroup v2, the
+    slice not materialized), inside a pod (``KIROCREW_POD`` set: the slice is
+    the user's live one), when the feature is off
+    (``resource_limits.slice_reclaim_trigger_pct`` = 0) or disarmed, within
+    :data:`_SLICE_RECLAIM_MIN_INTERVAL_SECS` of the last episode, or when a
+    reclaim could push process memory to swap. Never raises.
+    """
+    global _SLICE_RECLAIM_LAST_AT
+    if _SLICE_RECLAIM_DISARMED:
+        return None
+    # A pod gateway shares the user's slice with the live one; only a gateway
+    # outside a pod reclaims it.
+    if os.environ.get("KIROCREW_POD"):
+        return None
+    try:
+        slice_dir = _agents_slice_cgroup_dir()
+        if slice_dir is None:
+            return None
+        now = time.monotonic()
+        last = _SLICE_RECLAIM_LAST_AT
+        if last is not None and now - last < _SLICE_RECLAIM_MIN_INTERVAL_SECS:
+            return None
+        # Cheap pre-check before the config read: no accepted trigger is under
+        # the minimum percent, so a slice below it never needs the config.
+        high = read_cgroup_int(slice_dir / "memory.high")
+        current = read_cgroup_int(slice_dir / "memory.current")
+        if not high or current is None or current * 100 < high * _SLICE_RECLAIM_MIN_TRIGGER_PCT:
+            return None
+        trigger_pct = _slice_reclaim_trigger_pct()
+        if trigger_pct == 0:
+            return None
+        plan = _plan_slice_reclaim(slice_dir, trigger_pct)
+        if plan is None:
+            return None
+        amount, target, _stat = plan
+        if not _slice_reclaim_cannot_swap(slice_dir):
+            _log_slice_reclaim_skip_once(
+                "the slice may swap (memory.swap.max is not 0 and the host has swap), "
+                "so a reclaim could push agent memory to swap"
+            )
+            return None
+        if not (slice_dir / "memory.reclaim").exists():
+            # The normal state on an older kernel, not a fault.
+            _disarm_slice_reclaim(
+                "this kernel has no memory.reclaim (needs Linux 5.19+)", level=logging.INFO
+            )
+            return None
+        if not _SLICE_RECLAIM_LOCK.acquire(blocking=False):
+            return None
+        _SLICE_RECLAIM_LAST_AT = now
+        worker = threading.Thread(
+            target=_run_slice_reclaim_episode,
+            args=(slice_dir, amount, target),
+            name="agent-slice-reclaim",
+            daemon=True,
+        )
+        try:
+            worker.start()
+        except RuntimeError:
+            _SLICE_RECLAIM_LOCK.release()
+            logger.debug("agent slice reclaim: could not start the worker thread")
+            return None
+        return worker
+    except Exception:
+        logger.debug("agent slice reclaim check failed", exc_info=True)
+        return None

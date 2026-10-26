@@ -310,7 +310,17 @@ _MOVED: dict[str, tuple[str, ...]] = {
         _USER_MANAGER_CGROUP_BASE _agents_slice_cgroup_dir _read_cgroup_counters
         read_cgroup_int _SLICE_THROTTLE_PROBE_SEEN _SLICE_THROTTLE_EDGE_AT
         _SLICE_THROTTLE_EDGE_HOLD_SECS agents_slice_throttling _SLICE_OOM_SEEN
-        check_agents_slice_pressure
+        check_agents_slice_pressure _SLICE_RECLAIM_DEFAULT_TRIGGER_PCT
+        _SLICE_RECLAIM_MIN_TRIGGER_PCT _SLICE_RECLAIM_MAX_TRIGGER_PCT
+        _SLICE_RECLAIM_TARGET_FRACTION _SLICE_RECLAIM_TARGET_GAP_PCT
+        _SLICE_RECLAIM_FILE_SHARE_MIN _SLICE_RECLAIM_CHUNK_BYTES
+        _SLICE_RECLAIM_EPISODE_BUDGET_SECS _SLICE_RECLAIM_MIN_INTERVAL_SECS
+        _SLICE_RECLAIM_MIN_BYTES _PROC_MEMINFO _SLICE_RECLAIM_DISARMED
+        _SLICE_RECLAIM_LAST_AT _SLICE_RECLAIM_LOCK _SLICE_RECLAIM_SKIP_LOGGED
+        _slice_reclaim_trigger_pct _slice_reclaimable_file _plan_slice_reclaim
+        _host_swap_total_kb _slice_reclaim_cannot_swap _write_memory_reclaim
+        _disarm_slice_reclaim _log_slice_reclaim_skip_once _run_slice_reclaim_episode
+        reclaim_agents_slice_page_cache
         """.split()),
     "kiro_crew.sandbox_rlimit": tuple("""
         _UNSET _RESOURCE_PREEXEC resource_limit_preexec _EXTRACTOR_PREEXEC

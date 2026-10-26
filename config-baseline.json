@@ -5281,6 +5281,7 @@
         "max_cpu_percent": null,
         "max_total_memory_mb": null,
         "max_total_processes": null,
+        "slice_reclaim_trigger_pct": null,
         "xdist_auto_cap": null
       }
     },
@@ -5399,6 +5400,21 @@
       "tags": [],
       "label": "Max total processes",
       "help": "cgroup TasksMax for the whole agents SLICE, counting tasks (threads) across every agent tree. 0 or unset uses the module default; the aggregate ceiling is never left unset where a systemd user manager is available (Linux); not enforced on Windows/macOS.",
+      "hasChildren": false,
+      "enumValues": null,
+      "defaultValue": null,
+      "nullable": true
+    },
+    {
+      "path": "resource_limits.slice_reclaim_trigger_pct",
+      "kind": "core",
+      "type": "integer",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "label": "Slice page-cache reclaim trigger (%)",
+      "help": "The gateway writes the agents SLICE's memory.reclaim once memory.current reaches this percent of the slice memory.high and clean page cache is at least half of it, so cached files alone do not hold the slice at its ceiling and throttle every agent. Unset uses 95, 0 turns it off for this gateway only (the slice is shared by every gateway of the user), 50-99 is accepted and anything else uses 95. Never runs inside a pod. Linux with cgroup v2 only.",
       "hasChildren": false,
       "enumValues": null,
       "defaultValue": null,

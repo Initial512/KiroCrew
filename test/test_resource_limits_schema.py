@@ -36,6 +36,7 @@ _ALL_KEYS = (
     "max_cpu_percent",
     "max_total_memory_mb",
     "max_total_processes",
+    "slice_reclaim_trigger_pct",
     "xdist_auto_cap",
 )
 
