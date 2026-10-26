@@ -253,6 +253,26 @@ describe('quick ask: answer and secrets', () => {
     expect(JSON.stringify(browserLiveStore.current(S), (k, v) => (k === 'ring' ? undefined : v))).not.toContain('hunter2-secret')
   })
 
+  it('typing in the sheet reaches neither the takeover proxy nor the page', async () => {
+    show(asks.credentials)
+    act(() => browserLiveStore.applyFrame(frame(1)))
+    const proxy = screen.getByTestId('browser-live-type-proxy') as HTMLTextAreaElement
+    const before = proxy.value
+    const pw = screen.getByTestId('quick-ask-password') as HTMLInputElement
+    pw.focus()
+    for (const key of ['h', 'u', 'n', 't', 'Backspace', 'Enter']) {
+      fireEvent.keyDown(pw, { key, code: key.length === 1 ? `Key${key.toUpperCase()}` : key })
+      fireEvent.keyUp(pw, { key, code: key.length === 1 ? `Key${key.toUpperCase()}` : key })
+    }
+    pw.dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertText', data: 'hunter2-secret', bubbles: true, cancelable: true }))
+    type(pw, 'hunter2-secret')
+    expect(document.activeElement).toBe(pw)
+    expect(document.activeElement).not.toBe(proxy)
+    expect(proxy.value).toBe(before)
+    expect(writes.input).not.toHaveBeenCalled()
+    expect(writes.answer).not.toHaveBeenCalled()
+  })
+
   it('an otp is posted digits-only and never stored', async () => {
     show(asks.otp)
     type(screen.getByTestId('quick-ask-otp'), '123 456')
