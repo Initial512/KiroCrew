@@ -41,6 +41,9 @@ vi.mock('react-router-dom', () => ({
   useNavigate: () => mocks.navigate,
 }))
 
+const apiMock = vi.hoisted(() => ({ sessions: vi.fn() }))
+vi.mock('../../../api/client', () => ({ api: apiMock }))
+
 vi.mock('@tanstack/react-query', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@tanstack/react-query')>()
   return {
@@ -486,5 +489,31 @@ describe('useRecentsProvider — Older dedupe against live slots', () => {
     expect(rows.filter((r) => r.id === 'recents:cur:chat-2-2')).toHaveLength(0)
     // ...and must NOT come back as an Older row.
     expect(rows.filter((r) => r.id === 'recents:old:dashboard_chat-2-2')).toHaveLength(0)
+  })
+})
+
+/**
+ * The Older group is the person's own History. The server leaves a Crew Mode
+ * root's workers out of that list only on its `user_only` read (the sidebar's
+ * History read), so the palette must ask for the same list: without the flag a
+ * closed worker came back as an Older row while the sidebar hid it.
+ */
+describe('useRecentsProvider — Older is the person\'s History', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.state.dashboard.slots = []
+    mocks.state.dashboard.unreadSlots = []
+    mocks.state.chat.slotStatusDetail = {}
+    // Run the history queryFn for real; answer the others empty.
+    mocks.fetchQuery.mockImplementation(({ queryKey, queryFn }: { queryKey: unknown[]; queryFn: () => unknown }) =>
+      queryKey[2] === 'history' ? Promise.resolve(queryFn()) : Promise.resolve([]))
+    apiMock.sessions.mockResolvedValue({ sessions: [] })
+  })
+
+  it('reads History with user_only, the read that leaves Crew Mode workers out', async () => {
+    const { renderHook } = await import('@testing-library/react')
+    const { result } = renderHook(() => useRecentsProvider())
+    await result.current.search('')
+    expect(apiMock.sessions).toHaveBeenCalledWith(20, 0, true, false, true)
   })
 })

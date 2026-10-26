@@ -273,7 +273,9 @@ export function useRecentsProvider(): ResourceProvider {
           queryClient
             .fetchQuery<HistoryResponse>({
               queryKey: ['palette', 'recents', 'history'],
-              queryFn: () => api.sessions(HISTORY_LIMIT, 0, true),
+              // The person's own History (`user_only`): a Crew Mode worker, closed
+              // or under a closed root, is its conductor's to show, never an Older row.
+              queryFn: () => api.sessions(HISTORY_LIMIT, 0, true, false, true),
               staleTime: RECENTS_STALE_MS,
             })
             .catch(() => ({ sessions: [] as HistorySession[] })),
