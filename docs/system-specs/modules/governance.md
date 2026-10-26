@@ -2210,7 +2210,13 @@ read-your-writes should add it deliberately, with its own tests.
   it later);
   durable memory writes in
   `mcp_core._vet_memory_writes_governance` (at `learn_add`); script-hook
-  execution in `hooks._script_hooks_capability_denied` (at `run_script_hook`);
+  execution in `hooks._script_hooks_capability_denied` (at `run_script_hook`,
+  asking `events:<event>` so the row's inner `events` list can name the trigger
+  events a hook may fire on; an unnamed list permits every event); inbound
+  webhook sources in `webhook_sources.source_refusal` (the `webhooks` scope,
+  members `agent` for `POST /api/hooks/agent` and `ops-mission-control` for that
+  app's signal webhook; policy layer only, asked before the token or signature is
+  checked; with no policy each source keeps its own switch);
   app activation in `apps.manager._app_activation_denied` (at `enable_app`).
 
 Plane A carries **no live ordinal clamp**. The computer-use governance model —

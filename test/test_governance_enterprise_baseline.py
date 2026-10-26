@@ -45,6 +45,7 @@ _BASELINE_TABLE: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "sandbox.min_level": (("strict",), ()),
     "yolo_duration": ((), ("permanent", "until_shutdown", "1h")),
     "agent_backend": (("kiro",), ("claude", "kas")),
+    "webhooks": ((), ("agent", "ops-mission-control")),
     "capabilities.publish": (("", "destinations:default"), ("destinations:s3",)),
 }
 

@@ -58,6 +58,7 @@ BASELINE_CONTROLS: Dict[str, Mapping[str, object]] = {
     "network.egress": _OFF,
     "channels": {"members": _OFF},
     "yolo_duration": _OFF,
+    "webhooks": _OFF,
     # ``acp_backends.POLICY_ID_KIRO``.
     "agent_backend": {"mode": "allow", "allow": ["kiro"]},
     "capabilities.spawn": _CAPABILITY_OFF,

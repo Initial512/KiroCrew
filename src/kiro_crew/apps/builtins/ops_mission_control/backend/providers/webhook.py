@@ -40,7 +40,7 @@ from kiro_crew.apps.builtins.ops_mission_control.backend.secrets import (
     get_secret,
     has_secrets,
 )
-from kiro_crew.edition_locks import LOCKED_REASON, locked_off
+from kiro_crew.webhook_sources import SOURCE_OPS_MISSION_CONTROL, source_refusal
 
 logger = logging.getLogger(__name__)
 
@@ -343,10 +343,12 @@ def signals_from_payload(payload: dict[str, Any]) -> list[Signal]:
 
 def enqueue(raw_body: bytes, signature: str) -> tuple[bool, str]:
     """Verify and queue a delivery. Returns ``(accepted, detail)``."""
-    # Enterprise: inbound webhooks are off for every source, this one included
-    # (RFC enterprise edition, Red "Webhooks by source").
-    if locked_off():
-        return False, f"webhook source is {LOCKED_REASON}"
+    # The ``webhooks`` governance scope names the sources that may deliver; in an
+    # enterprise build none may until a policy names one (RFC enterprise edition,
+    # Red "Webhooks by source").
+    refusal = source_refusal(SOURCE_OPS_MISSION_CONTROL)
+    if refusal:
+        return False, refusal
     if not provider_enabled(PROVIDER_ID):
         return False, "webhook source is not enabled"
     if not has_secrets(PROVIDER_ID, _REQUIRED_SECRETS):
