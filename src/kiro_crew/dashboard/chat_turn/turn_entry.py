@@ -468,11 +468,9 @@ async def _turn_open(turn: _ChatTurn) -> _Flow | None:
     # Booleans only, by contract. _turn_settle_answer's empty-response branch reaches its
     # verdict from these, and a WARNING names the cause it derived; every field
     # is safe to log because none of them can carry a prompt, a response, a tool
-    # argument, a path, an identity, a token count or a cost. What the incident
-    # they exist for needed was exactly this: whether a terminal event arrived at
-    # all, whether the provider or the backend closed the turn, and whether the
-    # turn had done work — none of which the single "Empty model response"
-    # warning could say.
+    # argument, a path, an identity, a token count or a cost. They answer
+    # whether a terminal event arrived at all, whether the provider or the
+    # backend closed the turn, and whether the turn had done work.
     #
     # `_turn_flushed_visible_text` above and `_turn_tool_calls` / `_turn_thought`
     # below already carry three of the observations, so only what nothing else

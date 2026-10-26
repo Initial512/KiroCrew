@@ -658,7 +658,7 @@ class DashboardState:
         # successful exec replaces this state with the successor process.
         self._gateway_restart_task: asyncio.Task[None] | None = None
         self._gateway_restart_in_progress: bool = False
-        # FIX 2: unattended-turn concurrency cap. Semaphore is created lazily
+        # Unattended-turn concurrency cap. Semaphore is created lazily
         # (see _background_turn_sema) because this object outlives / predates
         # the event loop in some hosts. The counters exist so a queued fleet is
         # observable — see background_turn_stats().
@@ -888,12 +888,13 @@ class DashboardState:
 
     _FLUSH_INTERVAL = 5  # seconds between dirty-slot flushes
 
-    # ── FIX 2: bounded concurrency for unattended, app-owned turns ──────────
-    # Nothing capped chat slots or concurrent turns. The nearest analogue caps
-    # at 12 (dashboard/handlers/terminal_session.py::_MAX_SESSIONS, 429 on excess) and
-    # the only real ceiling was asyncio.Semaphore(4) on agent cold starts plus
-    # host memory — so an app that arms N worker slots could put N turns on the
-    # runtime at once and exhaust it. Shape copied from
+    # ── Bounded concurrency for unattended, app-owned turns ──────────
+    # Without this cap nothing bounds chat slots or concurrent turns. The nearest
+    # analogue caps at 12 (dashboard/handlers/terminal_session.py::_MAX_SESSIONS,
+    # 429 on excess), and the only other ceiling is asyncio.Semaphore(4) on agent
+    # cold starts plus host memory, so an app
+    # that arms N worker slots could put N turns on the runtime at once and
+    # exhaust it. Shape copied from
     # apps/builtins/code_review_sage/sage_lib/review_pool.py (default +
     # ``MAX_CONCURRENT_CEIL`` clamp): configurable, but never unbounded.
     MAX_BACKGROUND_TURNS = 4  # default in-flight unattended turns

@@ -214,7 +214,6 @@ async def api_artifact_post_comment(request: web.Request) -> web.Response:
     except ArtifactNotFoundError as exc:
         return _err(str(exc), status=404)
 
-    # Build anchor if provided
     anchor_data = body.get("anchor")
     anchor_quote = None
     anchor_prefix = None

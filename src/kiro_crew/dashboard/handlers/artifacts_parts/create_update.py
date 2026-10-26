@@ -481,8 +481,8 @@ async def api_artifacts_create(request: web.Request) -> web.Response:
     # Theme-contrast verdict for the clients, same relay pattern as
     # ``slug_collided_with``: computed once here at the convergence point so
     # EVERY authoring surface (MCP tool, CLI, dashboard) sees the same
-    # verdict -- the motivating incident traveled the CLI, which never runs
-    # the MCP-layer hint. Scans ``art.content`` (what was actually persisted),
+    # verdict -- the CLI never runs the MCP-layer hint. Scans ``art.content``
+    # (what was actually persisted),
     # not the request body: a file-promoted save persists the server-read
     # bytes, and the client's copy can be stale or redacted. Advisory only;
     # the save has already succeeded.
@@ -863,8 +863,8 @@ async def api_artifact_update(request: web.Request) -> web.Response:
     payload = _serialize(art, include_content=True)
     # Same relay as the save path's ``theme_contrast_warning``: a
     # content-carrying update gets the verdict computed here at the
-    # convergence point, so the CLI's PATCH (the motivating incident's
-    # path) hears it too. Unlike save, PATCH never file-promotes, so the
+    # convergence point, so the CLI's PATCH hears it too. Unlike save, PATCH never
+    # file-promotes, so the
     # body IS the persisted content -- and scanning the body (not
     # ``art.content``) keeps metadata-only updates (rename/retag) from
     # warning about pre-existing content they didn't touch.

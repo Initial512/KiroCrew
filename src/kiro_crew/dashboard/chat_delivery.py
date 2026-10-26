@@ -1090,7 +1090,7 @@ def queue_for_next_turn(
         # The whole-message quote rides the entry for the same reason the
         # attachment lists do: the drain unions entry meta onto the row it
         # writes, and without it the row would render its blockquote as text
-        # instead of the card (fork GPT review). Already bounded by
+        # instead of the card. Already bounded by
         # :func:`quote_meta`, which also redacted it when the sender was not
         # the session's own human.
         meta[QUOTE_META_KEY] = quote

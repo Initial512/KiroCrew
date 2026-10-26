@@ -511,14 +511,15 @@ async def api_lessons_create(request: web.Request) -> web.Response:
         # This store never answers ``deduped``, so there is no winner to name.
         winner = None
         winner_repo_scope = None
-    # Refreshed unconditionally, and deliberately so. An earlier revision of this
-    # change gated the push on the write having landed, which is wrong: a DECLINING
+    # Refreshed unconditionally, and deliberately so. Gating the push on the
+    # write having landed would be wrong: a DECLINING
     # outcome can still have mutated the store. ``write_lesson``'s second pass
     # DELETES a row it supersedes and keeps scanning, so with a containment chain
     # (A inside R inside B) whose rows are visited A-first -- and the scan order is
     # effectively random, since get_lessons orders by updated_at DESC, then by md5
     # key within one stamp -- A is removed and the call then returns ``deduped`` for
-    # B. The store changed while ``wrote`` is False, so gating on it left connected dashboards showing a lesson that is gone.
+    # B. The store changed while ``wrote`` is False, so gating on it would leave
+    # connected dashboards showing a lesson that is gone.
     # Reporting mutation separately would buy nothing over refreshing always: an extra
     # refresh on a no-op re-submit costs a redundant list fetch, a missed one shows
     # deleted data.
@@ -1072,9 +1073,8 @@ async def api_lessons(request: web.Request) -> web.Response:
             # not the operator either -- falls through to the per-session branch
             # and, with no resolvable slot, sees the global rows only. A keyless
             # internal-secret agent (``internal_auth`` set) likewise never
-            # reaches the union. That is the cross-workspace data-isolation harm
-            # this PR removes: only the operator's own browser sees every
-            # workspace.
+            # reaches the union. That keeps workspace data isolated: only the
+            # operator's own browser sees every workspace.
             sk = request.headers.get("X-Session-Key", "")
             if workspace:
                 union = [workspace]

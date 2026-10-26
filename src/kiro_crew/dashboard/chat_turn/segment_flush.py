@@ -941,7 +941,7 @@ async def _turn_settle_answer(turn: _ChatTurn) -> None:
     # answer branch:
     # the post-compaction continuation is an `elif` UNDER that branch, so
     # entering it would shadow the continuation and leave the request
-    # unanswered — the exact hang this PR exists to fix. Flush here and fall
+    # unanswered, a hang. Flush here and fall
     # through to the chain. (This is also why the notice cannot simply be
     # kept out of `assistant_text`: the answer branch owns the only terminal
     # `_flush_text_stream`, and the rolling redactor withholds the notice
@@ -1343,13 +1343,12 @@ async def _turn_settle_answer(turn: _ChatTurn) -> None:
                 _empty_msg = EMPTY_TURN_NOTICE
             slot.append("notice", _empty_msg, "msg msg-info", meta={"kind": EMPTY_TURN_NOTICE_KIND})
         # ONE warning per empty verdict, emitted AFTER the rung is chosen so
-        # the log line carries the decision rather than only the symptom. The
-        # predecessor logged just "Empty model response (attempt N)", which
-        # could not distinguish a provider that generated nothing from a turn
+        # the log line carries the decision rather than only the symptom. It
+        # must distinguish a provider that generated nothing from a turn
         # whose answer a tool boundary flushed away, from a turn no terminal
         # event ever closed — three different faults with three different
-        # owners, and the field incident hit all three in three consecutive
-        # attempts. Every field here is a closed value or a bool by
+        # owners, which can all occur in consecutive attempts of one turn.
+        # Every field here is a closed value or a bool by
         # construction (see EmptyTurnActivity): no prompt, no response, no
         # thinking, no tool arguments or results, no paths, no identities, no
         # token counts and no costs.

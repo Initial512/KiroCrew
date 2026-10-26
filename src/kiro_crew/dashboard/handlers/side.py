@@ -207,8 +207,8 @@ def _drain_side_queue(state: DashboardState, slot, run_id: str) -> None:
     if side.last_run_id != run_id or not side.is_complete or side.is_stopping:
         # ``is_stopping`` holds a deliberately-cancelled turn busy through the
         # stop handler's cleanup even after its own ``finally`` flipped
-        # ``is_complete`` True; draining a successor in that window is the exact
-        # GPT F1 race (a replacement over the still-settling cancelled turn).
+        # ``is_complete`` True; draining a successor in that window would race
+        # a replacement over the still-settling cancelled turn.
         return
     entry = side.queue_pop()
     if entry is None:
@@ -1170,7 +1170,7 @@ async def api_side_turn(request: web.Request) -> web.Response:
         # the turn busy through its cleanup: the cancelled turn's own ``finally``
         # flips ``is_complete`` True as it unwinds, which lands during the stop
         # handler's bounded await, and without this clause a successor could
-        # dispatch in that window before the stopped row is recorded (GPT F1).
+        # dispatch in that window before the stopped row is recorded.
         # Bind the commit to the sidecar OBJECT and run the steer was aimed at,
         # captured before the RPC suspends. Re-reading them afterwards would
         # attribute a steer to whatever is live now: a close+reopen swaps in a
@@ -1467,7 +1467,7 @@ async def api_side_stop(request: web.Request) -> web.Response:
     # ``is_complete`` True here would read as idle, dispatching a replacement R2
     # over the still-cancelling R1, after which the stop handler sees the
     # replacement and returns ``superseded``, leaving R1's user line unanswered
-    # in the history fed to the next turn (GPT F1 / Opus, security-class). Leaving
+    # in the history fed to the next turn (a security-class gap). Leaving
     # ``is_complete`` False keeps both ``api_side_turn`` and ``_drain_side_queue``
     # seeing the turn as in flight, so no replacement is dispatched during the
     # cancel window. ``task`` is already captured above, so clearing the field
@@ -1478,8 +1478,8 @@ async def api_side_stop(request: web.Request) -> web.Response:
     # that lands DURING the ``await`` of the task cleanup below — reopening the
     # busy gate before this handler resumes to record the stopped row. So we also
     # raise ``is_stopping``, which the busy gate honours as "in flight", holding
-    # the turn busy until we clear it in the ``finally`` after settling (GPT F1 /
-    # Opus, security-class). Both writes are a single synchronous claim with no
+    # the turn busy until we clear it in the ``finally`` after settling. Both writes
+    # are a single synchronous claim with no
     # await between them, so the check-and-claim stays atomic.
     side.task = None
     side.is_stopping = True
@@ -1523,8 +1523,8 @@ async def _cancel_and_settle_side_turn(
     # Cancel the task, then AWAIT its cancellation cleanup before publishing
     # idle. ``_run_side_turn`` re-raises CancelledError (marking the turn
     # ``cancelled`` so its finally holds the queue) and its finally releases the
-    # session lease and flips ``is_complete``. Awaiting it here closes the race
-    # GPT flagged: a concurrent side-turn request that replaced ``last_run_id``
+    # session lease and flips ``is_complete``. Awaiting it here closes a race:
+    # a concurrent side-turn request that replaced ``last_run_id``
     # before the cleanup ran would make the cancelled turn's identity-gated
     # requeue skip, losing a pending steer. Awaiting (bounded, shielded from a
     # cancel of THIS request) lets that cleanup finish first.
@@ -1560,12 +1560,12 @@ async def _cancel_and_settle_side_turn(
     #      ``task.cancel()`` landed, the turn took its SUCCESS path — the real
     #      answer was appended and broadcast — and ``task.cancelled()`` is False
     #      with the task genuinely done. Appending a ``(side response stopped)``
-    #      row on top of a delivered answer would corrupt the transcript (Opus
-    #      FINDING), so a genuinely-normal completion gets no row. But a TIMEOUT
+    #      row on top of a delivered answer would corrupt the transcript, so a
+    #      genuinely-normal completion gets no row. But a TIMEOUT
     #      is NOT a normal completion: the task is still running, its finally is
     #      wedged, and ``task.cancelled()`` is also False — folding that into the
     #      normal-completion branch would leave the panel streaming forever in
-    #      the exact deep-hang the endpoint exists to escape (Design FINDING). So
+    #      the exact deep-hang the endpoint exists to escape. So
     #      we settle the stopped row whenever the task was cancelled OR the
     #      cleanup timed out, and skip it only on a genuine normal completion.
     settled_as = None

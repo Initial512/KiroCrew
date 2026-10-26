@@ -52,7 +52,7 @@ if TYPE_CHECKING:
 def init_ladder_fields(self: _ChatSlot) -> None:
     """Set this module's slot fields to their defaults (``_ChatSlot.__init__``)."""
     self._pending_subagent_failures = []
-    # Fix 2 (B1): armed by gateway when the LAST sub-agent of a fan-out
+    # Armed by gateway when the LAST sub-agent of a fan-out
     # completes; consumed once by chat_runner's drain/idle branch to fire a
     # single post-fan-out synthesis turn. Cleared if a user message drains
     # first (user takes over).
@@ -74,7 +74,7 @@ def init_ladder_fields(self: _ChatSlot) -> None:
     # result, so the turn-end fire gate drops the arm instead of running a
     # synthesis that restates it.
     self._synthesis_completion_turns = 0
-    # Fix 2 (B1) race guard: number of sub-agent completion deliveries
+    # Race guard: number of sub-agent completion deliveries
     # currently in flight for this slot (incremented in gateway._subagent_done
     # from entry until the completion is queued/launched). The synthesis
     # fire-gate requires this to be 0 so a concurrently-finishing sibling
@@ -503,7 +503,7 @@ def init_ladder_fields(self: _ChatSlot) -> None:
     # True once two sleeps have been seen sharing this slot: neither may be
     # tracked or ended, because there is no way to know which one the user is
     # looking at. Latched for the rest of the turn and cleared by the same
-    # turn-end block that clears the two fields above -- an earlier revision
-    # expired it on a timer, which let whichever sleep pinged first after
-    # expiry re-publish its deadline onto the other's pill.
+    # turn-end block that clears the two fields above, never on a timer: an
+    # expiry would let whichever sleep pinged first re-publish its deadline
+    # onto the other's pill.
     self._wait_contested = False

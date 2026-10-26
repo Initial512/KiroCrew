@@ -95,7 +95,7 @@ class SideState:
     #: parsing its body in those few event-loop ticks would pass the busy gate,
     #: dispatch a successor, and make the stop handler see a replacement and skip
     #: settlement — leaving the cancelled question in the next turn's history with
-    #: no stopped row (GPT F1 / Opus, security-class). ``is_stopping`` keeps the
+    #: no stopped row (a security-class gap). ``is_stopping`` keeps the
     #: deliberately-cancelled turn BUSY through cleanup: the busy gate and the
     #: queue drain both honour it, so no successor is admitted until the stop
     #: handler clears it after recording and broadcasting the terminal row.
