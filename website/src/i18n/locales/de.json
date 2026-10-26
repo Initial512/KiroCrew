@@ -12345,7 +12345,12 @@
         "replay_action_take_over": "du hast übernommen",
         "replay_action_done": "du bist fertig",
         "replay_action_confirm": "du hast bestätigt",
-        "replay_action_cancel": "du hast abgebrochen"
+        "replay_action_cancel": "du hast abgebrochen",
+        "replay_action_ask": "Kiro hat gefragt",
+        "replay_action_timeout": "Zeit abgelaufen",
+        "replay_action_hand_back": "du hast zurückgegeben",
+        "replay_action_page_moved": "die Seite hat gewechselt",
+        "replay_action_auto": "von selbst bestanden"
       }
     },
     "chatPage": {

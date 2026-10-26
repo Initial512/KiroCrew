@@ -175,6 +175,11 @@ function personLabel(e: ReplayEvent): string {
     done: i18nT('pages.chat.quickAsk.replay_action_done'),
     confirm: i18nT('pages.chat.quickAsk.replay_action_confirm'),
     cancel: i18nT('pages.chat.quickAsk.replay_action_cancel'),
+    ask: i18nT('pages.chat.quickAsk.replay_action_ask'),
+    timeout: i18nT('pages.chat.quickAsk.replay_action_timeout'),
+    hand_back: i18nT('pages.chat.quickAsk.replay_action_hand_back'),
+    page_moved: i18nT('pages.chat.quickAsk.replay_action_page_moved'),
+    auto: i18nT('pages.chat.quickAsk.replay_action_auto'),
   }
   const kind = (p && kinds[p.kind]) || i18nT('pages.chat.quickAsk.replay_kind_other')
   const action = p ? actions[p.action] : ''

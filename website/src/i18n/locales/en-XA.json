@@ -12053,7 +12053,12 @@
         "replay_action_take_over": "[ýøù ţøøķ øṽèŕ ············]",
         "replay_action_done": "[ýøù ƒìñìşĥèð ···········]",
         "replay_action_confirm": "[ýøù çøñƒìŕɱèð ············]",
-        "replay_action_cancel": "[ýøù çàñçèĺĺèð ············]"
+        "replay_action_cancel": "[ýøù çàñçèĺĺèð ············]",
+        "replay_action_ask": "[Ķìŕø àşķèð ···············]",
+        "replay_action_timeout": "[ìţ ţìɱèð øùţ ···········]",
+        "replay_action_hand_back": "[ýøù ĥàñðèð ƀàçķ ··············]",
+        "replay_action_page_moved": "[ţĥè þàğè ɱøṽèð øñ ···············]",
+        "replay_action_auto": "[þàşşèð øñ ìţş øẁñ ···············]"
       }
     },
     "chatPage": {

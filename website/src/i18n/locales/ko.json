@@ -12156,7 +12156,12 @@
         "replay_action_take_over": "직접 조작함",
         "replay_action_done": "완료함",
         "replay_action_confirm": "확인함",
-        "replay_action_cancel": "취소함"
+        "replay_action_cancel": "취소함",
+        "replay_action_ask": "Kiro가 질문함",
+        "replay_action_timeout": "시간 초과",
+        "replay_action_hand_back": "다시 넘겨줌",
+        "replay_action_page_moved": "페이지가 바뀜",
+        "replay_action_auto": "자동 통과"
       }
     },
     "chatPage": {

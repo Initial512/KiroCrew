@@ -5671,7 +5671,12 @@
         "replay_action_take_over": "you took over",
         "replay_action_done": "you finished",
         "replay_action_confirm": "you confirmed",
-        "replay_action_cancel": "you cancelled"
+        "replay_action_cancel": "you cancelled",
+        "replay_action_ask": "Kiro asked",
+        "replay_action_timeout": "it timed out",
+        "replay_action_hand_back": "you handed back",
+        "replay_action_page_moved": "the page moved on",
+        "replay_action_auto": "passed on its own"
       }
     },
     "chatPage": {

@@ -12534,7 +12534,12 @@
         "replay_action_take_over": "tomaste el control",
         "replay_action_done": "terminaste",
         "replay_action_confirm": "confirmaste",
-        "replay_action_cancel": "cancelaste"
+        "replay_action_cancel": "cancelaste",
+        "replay_action_ask": "Kiro preguntó",
+        "replay_action_timeout": "se agotó el tiempo",
+        "replay_action_hand_back": "devolviste el control",
+        "replay_action_page_moved": "la página cambió",
+        "replay_action_auto": "pasó sola"
       }
     },
     "chatPage": {

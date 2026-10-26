@@ -12534,7 +12534,12 @@
         "replay_action_take_over": "hai preso il controllo",
         "replay_action_done": "hai finito",
         "replay_action_confirm": "hai confermato",
-        "replay_action_cancel": "hai annullato"
+        "replay_action_cancel": "hai annullato",
+        "replay_action_ask": "Kiro ha chiesto",
+        "replay_action_timeout": "tempo scaduto",
+        "replay_action_hand_back": "hai restituito il controllo",
+        "replay_action_page_moved": "la pagina è cambiata",
+        "replay_action_auto": "superato da solo"
       }
     },
     "chatPage": {

@@ -29,10 +29,11 @@ export type ReplayOp = 'click' | 'type' | 'key' | 'drag' | 'scroll' | 'navigate'
 const OPS: ReadonlySet<string> = new Set(['click', 'type', 'key', 'drag', 'scroll', 'navigate', 'person', 'other'])
 
 /**
- * A quick ask the person answered (`op: 'person'`): which kind, what they did
- * and how it ended, and the origin it was for. The gateway never records the
- * values; the card draws only these four words, never the event's own label
- * or args.
+ * A quick ask's step (the gateway sends `actor: 'person'` with an `ask`
+ * object; the card files it under its own op `person`): which kind, what
+ * happened and how it ended, and the origin it was for. The gateway never
+ * records the values; the card draws only these words, never the event's
+ * own label or args.
  */
 export interface ReplayPerson { kind: string; action: string; outcome: string; origin: string }
 
@@ -110,12 +111,9 @@ function readPath(v: unknown): ReplayPoint[] | null {
   return out.length >= 2 ? out : null
 }
 
-const PERSON_FAILED: ReadonlySet<string> = new Set(['origin_changed', 'stale', 'error', 'failed'])
-
-/** A person event's four words, from the event itself or its `args`. */
-function readPerson(r: Record<string, unknown>, args: Record<string, unknown>): ReplayPerson {
-  const word = (k: string) => (str(r[k]) || str(args[k])).slice(0, 40)
-  return { kind: word('kind'), action: word('action'), outcome: word('outcome'), origin: (str(r.origin) || str(args.origin)).slice(0, 200) }
+/** A person event's `ask`: four short words, nothing else. */
+function readPerson(a: Record<string, unknown>): ReplayPerson {
+  return { kind: str(a.kind).slice(0, 40), action: str(a.action).slice(0, 40), outcome: str(a.outcome).slice(0, 40), origin: str(a.origin).slice(0, 200) }
 }
 
 /** The recordings list, or [] for anything that is not one. */
@@ -165,10 +163,10 @@ export function readRecording(raw: unknown, sessionKey: string): Recording | nul
     const r = e as Record<string, unknown>
     const ts = num(r.ts)
     if (ts === null) continue
-    const op = typeof r.op === 'string' && OPS.has(r.op) ? (r.op as ReplayOp) : 'other'
     n += 1
     const args = r.args && typeof r.args === 'object' && !Array.isArray(r.args) ? r.args as Record<string, unknown> : {}
-    const person = op === 'person' ? readPerson(r, args) : undefined
+    const person = r.actor === 'person' && r.ask && typeof r.ask === 'object' ? readPerson(r.ask as Record<string, unknown>) : undefined
+    const op: ReplayOp = person ? 'person' : typeof r.op === 'string' && OPS.has(r.op) ? (r.op as ReplayOp) : 'other'
     events.push({
       id: str(r.id) || `e${n}`,
       ts,
@@ -180,9 +178,8 @@ export function readRecording(raw: unknown, sessionKey: string): Recording | nul
       point: readPoint(r.point),
       path: readPath(r.path),
       url: str(r.url),
-      // A person event that filled nothing (the page moved on) reads as failed.
-      status: r.status === 'error' || (person && PERSON_FAILED.has(person.outcome)) ? 'error' : 'ok',
-      actor: r.actor === 'user' ? 'user' : 'agent',
+      status: r.status === 'error' ? 'error' : 'ok',
+      actor: r.actor === 'user' || r.actor === 'person' ? 'user' : 'agent',
       loop: r.loop === true,
       ...(num(r.fw) && num(r.fh) ? { fw: num(r.fw) as number, fh: num(r.fh) as number } : {}),
     })

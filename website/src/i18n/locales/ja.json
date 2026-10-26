@@ -12156,7 +12156,12 @@
         "replay_action_take_over": "操作しました",
         "replay_action_done": "完了しました",
         "replay_action_confirm": "確認しました",
-        "replay_action_cancel": "キャンセルしました"
+        "replay_action_cancel": "キャンセルしました",
+        "replay_action_ask": "Kiro が質問",
+        "replay_action_timeout": "時間切れ",
+        "replay_action_hand_back": "操作を戻しました",
+        "replay_action_page_moved": "ページが移動",
+        "replay_action_auto": "自動で通過"
       }
     },
     "chatPage": {

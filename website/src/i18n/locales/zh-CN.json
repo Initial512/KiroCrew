@@ -12156,7 +12156,12 @@
         "replay_action_take_over": "你接管了",
         "replay_action_done": "你完成了",
         "replay_action_confirm": "你确认了",
-        "replay_action_cancel": "你取消了"
+        "replay_action_cancel": "你取消了",
+        "replay_action_ask": "Kiro 提问",
+        "replay_action_timeout": "超时了",
+        "replay_action_hand_back": "你交还了",
+        "replay_action_page_moved": "页面已变",
+        "replay_action_auto": "自动通过"
       }
     },
     "chatPage": {

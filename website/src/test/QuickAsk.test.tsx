@@ -259,6 +259,11 @@ describe('quick ask: answer and secrets', () => {
     expect(localStorage.getItem(__REMEMBER_STORAGE_KEY)).toBeNull()
   })
 
+  it('typed values are capped at the gateway limit, so a paste cannot earn too_large', () => {
+    show(asks.credentials)
+    expect(screen.getByTestId('quick-ask-password')).toHaveAttribute('maxlength', '1024')
+  })
+
   it('Decline posts decline with no values', async () => {
     show(asks.text)
     fireEvent.click(screen.getByTestId('quick-ask-decline'))
@@ -334,12 +339,19 @@ describe('quick ask: surfaces and parsing', () => {
   })
 
   it('a replay person event keeps only its four words', () => {
-    const rec = readRecording({ turn_id: 't1', events: [{ ts: 5, op: 'person', label: 'typed hunter2', args: { kind: 'credentials', action: 'fill', outcome: 'filled', origin: ORIGIN, value: 'hunter2' } }] }, S)!
+    // The gateway's shape: op 'other', actor 'person', the four words under `ask`.
+    const rec = readRecording({ turn_id: 't1', events: [
+      { ts: 5, op: 'other', label: 'typed hunter2', args: { value: 'hunter2' }, point: null, path: null, url: ORIGIN, status: 'ok', actor: 'person', ask: { kind: 'credentials', action: 'fill', outcome: 'filled', origin: ORIGIN } },
+      { ts: 6, op: 'other', label: 'not a person', args: {}, actor: 'agent', ask: { kind: 'otp' } },
+    ] }, S)!
     const e = rec.events[0]
     expect(e.op).toBe('person')
     expect(e.args).toEqual({})
     expect(e.person).toEqual({ kind: 'credentials', action: 'fill', outcome: 'filled', origin: ORIGIN })
     expect(eventLabel(e)).toBe(t('replay_label', { kind: t('replay_kind_credentials'), action: t('replay_action_fill') }))
     expect(eventLabel(e)).not.toContain('hunter2')
+    expect(e.actor).toBe('user')
+    expect(rec.events[1].op).toBe('other')
+    expect(rec.events[1].person).toBeUndefined()
   })
 })

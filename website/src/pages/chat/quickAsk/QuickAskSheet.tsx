@@ -167,6 +167,9 @@ function AskBody({ ask, busy, send }: { ask: QuickAsk; busy: boolean; send: Send
 
 // ---- shared bits --------------------------------------------------------------
 
+/** The gateway refuses a value over 1024 characters (`too_large`). */
+const VALUE_MAX = 1024
+
 const inputCls = 'h-11 w-full min-w-0 rounded-md border border-border bg-bg px-2.5 text-[15px] text-text placeholder:text-muted focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/30'
 
 /** Empty every input on unmount, so a value never outlives its sheet. */
@@ -293,7 +296,7 @@ function CredentialsBody({ ask, busy, send }: { ask: QuickAsk; busy: boolean; se
         <Field label={i18nT('pages.chat.quickAsk.label_username_optional')}>
           {id => (
             <div className="flex min-w-0 gap-1.5">
-              <input id={id} ref={userRef} aria-label={i18nT('pages.chat.quickAsk.label_username_optional')} className={inputCls} autoComplete="username" autoCapitalize="none" spellCheck={false}
+              <input id={id} ref={userRef} aria-label={i18nT('pages.chat.quickAsk.label_username_optional')} className={inputCls} maxLength={VALUE_MAX} autoComplete="username" autoCapitalize="none" spellCheck={false}
                 onInput={e => setUserEmpty(!e.currentTarget.value)} onFocus={keepInView} data-testid="quick-ask-username" />
               {rem.saved && userEmpty && <UseSavedChip value={rem.saved} target={userRef} onUsed={() => setUserEmpty(false)} />}
             </div>
@@ -302,7 +305,7 @@ function CredentialsBody({ ask, busy, send }: { ask: QuickAsk; busy: boolean; se
       )}
       <Field label={i18nT('pages.chat.quickAsk.label_password')}>
         {id => (
-          <input id={id} ref={passRef} aria-label={i18nT('pages.chat.quickAsk.label_password')} type="password" className={inputCls} autoComplete="current-password" required
+          <input id={id} ref={passRef} aria-label={i18nT('pages.chat.quickAsk.label_password')} type="password" className={inputCls} maxLength={VALUE_MAX} autoComplete="current-password" required
             onFocus={keepInView} data-testid="quick-ask-password" />
         )}
       </Field>
@@ -346,7 +349,7 @@ function TextBody({ ask, busy, send }: { ask: QuickAsk; busy: boolean; send: Sen
       <Field label={labelWord(label)}>
         {id => (
           <div className="flex min-w-0 gap-1.5">
-            <input id={id} ref={ref} aria-label={labelWord(label)} className={inputCls} type={props.type} inputMode={props.inputMode} autoComplete={props.autoComplete}
+            <input id={id} ref={ref} aria-label={labelWord(label)} className={inputCls} maxLength={VALUE_MAX} type={props.type} inputMode={props.inputMode} autoComplete={props.autoComplete}
               spellCheck={false} onInput={e => setEmpty(!e.currentTarget.value)} onFocus={keepInView} data-testid="quick-ask-text" />
             {rem.saved && empty && <UseSavedChip value={rem.saved} target={ref} onUsed={() => setEmpty(false)} />}
           </div>

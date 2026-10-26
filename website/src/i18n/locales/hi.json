@@ -12345,7 +12345,12 @@
         "replay_action_take_over": "तुमने संभाला",
         "replay_action_done": "तुमने पूरा किया",
         "replay_action_confirm": "तुमने पुष्टि की",
-        "replay_action_cancel": "तुमने रद्द किया"
+        "replay_action_cancel": "तुमने रद्द किया",
+        "replay_action_ask": "Kiro ने पूछा",
+        "replay_action_timeout": "समय खत्म हुआ",
+        "replay_action_hand_back": "तुमने वापस सौंपा",
+        "replay_action_page_moved": "पेज बदल गया",
+        "replay_action_auto": "अपने आप पास हुआ"
       }
     },
     "chatPage": {

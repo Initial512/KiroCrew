@@ -12723,7 +12723,12 @@
         "replay_action_take_over": "вы взяли управление",
         "replay_action_done": "вы закончили",
         "replay_action_confirm": "вы подтвердили",
-        "replay_action_cancel": "вы отменили"
+        "replay_action_cancel": "вы отменили",
+        "replay_action_ask": "Kiro спросил",
+        "replay_action_timeout": "время вышло",
+        "replay_action_hand_back": "вы вернули управление",
+        "replay_action_page_moved": "страница сменилась",
+        "replay_action_auto": "прошло само"
       }
     },
     "chatPage": {
