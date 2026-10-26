@@ -26,7 +26,7 @@ import { RUN_IN_TERMINAL_READY_DEADLINE_MS } from '../utils/fenceShell'
 import ChatInput from '../components/ChatInput'
 import { expandAll, formatToken } from '../utils/pasteTokens'
 import { renderWithProviders } from './helpers'
-import { namedCeiling } from './namedCeiling'
+import { LAZY_COMPOSER_MOUNT } from './lazyComposerReady'
 import {
   setTerminalEnabledFlag,
   isTerminalEnabled,
@@ -138,11 +138,6 @@ function openSocket(sessionId: string): MockWebSocket {
   return ws
 }
 
-/** The Lexical editor sits behind ChatInput's React.lazy boundary
- *  (components/chat-input/engine.tsx). A cold import of that chunk on a
- *  loaded shard outlasts waitFor's 1 s default, so the wait for the editor
- *  gets a named ceiling. */
-const LAZY_COMPOSER_MOUNT = namedCeiling('LAZY_COMPOSER_MOUNT', 5000)
 
 describe('terminalRegistry', () => {
   beforeEach(() => {

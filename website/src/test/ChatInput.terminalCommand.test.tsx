@@ -13,6 +13,7 @@ import { KILLING_ESCAPE_MS } from '../hooks/useStopEscapeHatch'
 import { parseDirTokens } from '../utils/fileTokens'
 import { formatToken } from '../utils/pasteTokens'
 import { renderWithProviders as renderWithAppProviders } from './helpers'
+import { LAZY_COMPOSER_MOUNT } from './lazyComposerReady'
 import { changeLanguage, registerCatalogs } from '../i18n'
 import ru from '../i18n/locales/ru.json'
 import bn from '../i18n/locales/bn.json'
@@ -451,7 +452,7 @@ describe('direct terminal commands', () => {
       )
     }
     renderWithProviders(<Host />)
-    const input = await screen.findByRole('textbox')
+    const input = await screen.findByRole('textbox', undefined, LAZY_COMPOSER_MOUNT)
     fireEvent.click(screen.getByRole('button', { name: option }))
     const expectDraft = () => {
       if (lexicalComposer) expect(input).toHaveTextContent(option)
@@ -512,7 +513,7 @@ describe('direct terminal commands', () => {
       )
     }
     const { rerender } = renderWithProviders(<Host />)
-    const input = await screen.findByRole('textbox')
+    const input = await screen.findByRole('textbox', undefined, LAZY_COMPOSER_MOUNT)
     const expectDraft = (text: string) => {
       if (lexicalComposer) expect(input).toHaveTextContent(text)
       else expect(input).toHaveValue(text)
@@ -723,7 +724,7 @@ describe('direct terminal commands', () => {
       )
     }
     const { rerender } = renderWithProviders(<Host />)
-    const input = await screen.findByRole('textbox')
+    const input = await screen.findByRole('textbox', undefined, LAZY_COMPOSER_MOUNT)
     expect(screen.getByRole('button', { name: 'Review terminal command' })).toBeDisabled()
     expect(screen.getByText(/Remove the leading ! to return to chat\./)).toBeVisible()
     await user.click(input)
