@@ -412,24 +412,38 @@ def test_a_warm_read_does_not_hash_the_records_it_already_folded(monkeypatch):
     assert asked == [], f"the warm path still hashed the folded prefix: {asked}"
 
 
-def test_a_warm_read_of_a_log_with_no_counter_still_hashes_its_folded_records(monkeypatch):
-    """The upgrade story: a log written before the counter existed keeps the old proof.
+def test_a_warm_read_of_a_log_with_no_counter_checks_a_window_not_the_prefix(monkeypatch):
+    """The upgrade story: a log written before the counter existed is continued on the
+    sealed window of its resume point, and never on a hash of everything folded.
 
     Nothing migrates such a log, and nothing has to. Its counter is absent, which reads
-    as unproven, and the digest is then the only evidence there is -- so the reader uses
-    it, exactly as it did before, until the log's first cut creates a counter.
+    as unproven, so the evidence is the bounded window the last walk sealed beside its
+    resume point (``CrewLog.seal_point``). A whole-prefix digest per read was the term
+    that grew with the log on every eager advance.
     """
     _unit(UNIT)
     _ledger(UNIT, goal="g", event="one", event_kind="progress")
     (_dir(UNIT) / crew_log_store._CUTS_FILE).unlink()
     units = (UNIT,)
     crew_log.fold_slot_warm("ledger", units, slot=SLOT)
+    key = (str(crew_log.data_home()), SLOT, "ledger")
+    assert crew_log._slot_memos[key].resumes[UNIT].window, "no window was sealed"
 
     asked = _digest_calls(monkeypatch)
-    _ledger(UNIT, event="two", event_kind="progress")
-    assert _warm(units) == _cold(units)
+    windows: "list[int]" = []
+    real_holds = CrewLog.point_holds
 
-    assert asked, "a log with no counter was continued on no evidence at all"
+    def _spy(self, point):
+        windows.append(point.seq)
+        return real_holds(self, point)
+
+    monkeypatch.setattr(CrewLog, "point_holds", _spy)
+    for step in range(2, 6):
+        _ledger(UNIT, event=f"e{step}", event_kind="progress")
+        assert _warm(units) == _cold(units)
+
+    assert asked == [], f"a warm read of a counterless log hashed its prefix: {asked}"
+    assert windows, "a log with no counter was continued on no evidence at all"
 
 
 def test_a_counter_that_moved_folds_cold_rather_than_continuing():
@@ -767,26 +781,27 @@ def test_a_savepoint_whose_counter_was_deleted_is_refused(_cheap_writes):
     assert parsed and min(parsed) == 1, "the savepoint was refused and the log read whole"
 
 
-def test_a_log_with_no_counter_still_gets_a_digest_witness(_cheap_writes):
-    """The upgrade story on the disk path: no counter, so the old evidence, and it works.
+def test_a_log_with_no_counter_writes_no_digest_savepoint(_cheap_writes, monkeypatch):
+    """The disk path for a counterless log: no savepoint rather than a whole-prefix hash.
 
-    Nothing migrates and nothing is rewritten. Such a log keeps being settled by the
-    digest exactly as before -- which is also what keeps the narrowing above bounded.
+    The only witness the savepoint format has for a unit with no counter is a digest of
+    every folded record, and the write runs on the eager advance. So none is written, and
+    a restart folds such a log cold -- slower once, never wrong.
     """
+    from kiro_crew.crew_log import checkpoint as savepoints
+
     _unit(UNIT)
     _ledger(UNIT, event="one", event_kind="progress")
     (_dir(UNIT) / crew_log_store._CUTS_FILE).unlink()
+    asked = _digest_calls(monkeypatch)
     for step in range(2, 7):
         _ledger(UNIT, event=f"e{step}", event_kind="progress")
     units = (UNIT,)
     assert _warm(units) == _cold(units)
 
-    witness = _savepoint(UNIT)["witness"]
-
-    assert len(witness["prefix_sha"]) == 64
-    assert witness["prefix_records"] >= witness["seq"]
-    assert "prefix_cuts" not in witness, "one spelling, never both"
-    assert _after_a_restart(units) == _cold(units), "and it resumes from that witness"
+    assert asked == [], f"the fold hashed a counterless prefix: {asked}"
+    assert not savepoints.slot_checkpoint_path(lg.KIND_SESSION, UNIT, "ledger").exists()
+    assert _after_a_restart(units) == _cold(units), "and a restart still reaches the answer"
 
 
 # --------------------------------------------------------------------------- #
@@ -979,9 +994,10 @@ def test_a_savepoint_cannot_be_written_or_admitted_from_a_mid_cut_reading(_cheap
     crew_log.forget_slot_folds()
 
     assert _warm(units) == _cold(units), "the refused savepoint still reaches the cold answer"
-    assert "prefix_cuts" not in _savepoint(UNIT)["witness"], (
-        "the stale count must not survive: a unit whose counter states nothing falls all "
-        "the way back to the digest, on the write side as well as the read side"
+    witness = _savepoint(UNIT)["witness"]
+    assert witness.get("prefix_cuts") == 0 and "prefix_sha" not in witness, (
+        "nothing new may be written while the counter states nothing: the file keeps the "
+        "settled count it had, which `_cuts_admit` refuses above"
     )
 
 

@@ -332,8 +332,36 @@ class _Fold:
     lazy_reason: str = ""
     count_rows: Callable[[Mapping[str, Any]], int] | None = None
     count_opaque: Callable[[Mapping[str, Any]], int] | None = None
+    #: How a SLOT fold orders the entries of its several units. ``"unit"`` folds each
+    #: unit whole, in the order the slot lists them. ``"time"`` keeps each SLOT's units
+    #: in that order and merges the slots by ``(entry time, slot)``
+    #: (:class:`~kiro_crew.crew_log.projection_slot_memo._MergedRead`). A fold whose
+    #: units are written CONCURRENTLY -- a conductor's own unit beside each bound
+    #: worker's -- wants the second: its entries arrive in the middle of the unit list,
+    #: and only an order by time lets the warm cell take them without refolding every
+    #: unit, because entries appended anywhere sort last. A fold that keeps the latest
+    #: value per field across SUCCESSIVE units of one session keeps ``"unit"``, so a
+    #: clock that stepped back between two units cannot make a retired unit win.
+    unit_order: Literal["unit", "time"] = "unit"
+    #: For a ``"time"`` fold whose state tracks WHICH unit it is reading (a cursor set by
+    #: a unit's opener, say): called on the state with the slot of the lane an entry came
+    #: from, before that entry is stepped. A unit-ordered fold reads one unit whole at a
+    #: time, so such a cursor is right by construction; merged lanes interleave, and this
+    #: is what puts the cursor back before each entry.
+    from_lane: Callable[[dict[str, Any], str], None] | None = None
 
     def __post_init__(self) -> None:
+        if self.from_lane is not None and self.unit_order != "time":
+            raise ValueError(
+                f"the {self.name} fold names a from_lane hook but folds its units in list "
+                "order, where nothing calls it"
+            )
+        if self.unit_order == "time" and self.affects is None:
+            raise ValueError(
+                f"the {self.name} fold merges its units by time with no affects set: the "
+                "merge keeps only the entries that can move the fold, and with no affects "
+                "it would hold every entry of every unit in memory to sort them"
+            )
         if self.mode == "eager" and self.affects is None:
             raise ValueError(
                 f"the {self.name} fold is eager with no affects set: an eager fold is "

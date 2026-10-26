@@ -5,11 +5,12 @@ write of each cell's savepoint.
 
 from __future__ import annotations
 
+import heapq
 import logging
 import threading
 from collections import OrderedDict
-from collections.abc import Iterator, Sequence
-from dataclasses import dataclass, replace
+from collections.abc import Iterable, Iterator, Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Final, NamedTuple
 
 from kiro_crew.config.paths import data_home
@@ -23,14 +24,22 @@ from kiro_crew.crew_log.projection_kernel import Checkpoint, require_name
 from kiro_crew.crew_log.projection_registry import _FOLDS
 from kiro_crew.crew_log.projection_session import _HeldCheckpoints
 from kiro_crew.crew_log.projection_session_log import _log_identity, open_session_log
-from kiro_crew.crew_log.schema import Entry
-from kiro_crew.crew_log.store import CrewLog, ReadCursor, ResumePoint, log_exception_text
+from kiro_crew.crew_log.schema import KIND_SESSION, Entry
+from kiro_crew.crew_log.store import (
+    _CUTS_FILE,
+    CrewLog,
+    ReadCursor,
+    ResumePoint,
+    log_exception_text,
+    segment_paths,
+    unit_header_slot,
+)
 from kiro_crew.projection import ProjectionRegistry
 
 if TYPE_CHECKING:
     # Type-only: the savepoint module imports the fold surface, so a runtime
     # import here would close the cycle its function-local imports avoid.
-    from kiro_crew.crew_log.checkpoint import CutWitness, PrefixWitness
+    from kiro_crew.crew_log.checkpoint import CutWitness
 
 
 class _Ordinal(NamedTuple):
@@ -56,6 +65,9 @@ class _Ordinal(NamedTuple):
 
     ordinal: int
     entry: Entry
+    #: The slot of the lane *entry* came from, for a time-ordered fold's ``from_lane``
+    #: hook; empty for a unit-ordered stream and for a unit whose header names no slot.
+    lane: str = ""
 
 
 def _ordinal_seq(event: _Ordinal) -> int:
@@ -84,16 +96,16 @@ class _UnitMark:
     ``origin``, so carrying them costs no extra stat.
 
     The fingerprint settles the units a continuation does not re-read. It cannot settle
-    the newest one, which a continuation exists to let GROW: an append moves size and
-    mtime by itself, so a stat has nothing left to compare there.
+    one that GREW: an append moves size and mtime by itself, so a stat has nothing left
+    to compare there.
 
     ``cuts`` is what settles that one. It is :meth:`CrewLog.cuts`, the number of times
     the store has cut this unit's history back, and a cut is the only thing that can
     change a record a fold already consumed -- so the same count twice means those
     records are the same bytes, read off a file a few bytes long rather than off the
     log. ``None`` is NOT PROVEN rather than zero, and a mark carrying it falls back to
-    :class:`_PrefixSeen`, the decode-free digest of the records already folded, which is
-    what a log created before the counter existed is settled by.
+    the unit's sealed resume point (:func:`_folded_prefix_holds`), a bounded window
+    digest, which is what a log created before the counter existed is settled by.
     """
 
     origin: str | None
@@ -101,6 +113,48 @@ class _UnitMark:
     size: int | None = None
     mtime_ns: int | None = None
     cuts: int | None = None
+    #: The slot the unit's HEADER names, written once at create. What a time-ordered
+    #: fold groups units by (:func:`_lane_of`): one slot's units are successive sessions
+    #: and stay in list order, and only different slots are merged by time.
+    slot: str | None = None
+
+
+#: Most unit marks :func:`_unit_mark` remembers at once, least recently stored first out.
+#: A mark is a few hundred bytes, and a miss costs one open of that unit's log.
+MARK_CACHE_LIMIT: Final[int] = 16384
+
+#: The last mark read for each (data home, unit), beside the stat fingerprint it was
+#: read under (:func:`_unit_fingerprint`). Guarded by :data:`_mark_cache_guard`.
+_mark_cache: "OrderedDict[tuple[str, str], tuple[tuple[Any, ...], _UnitMark]]" = OrderedDict()
+_mark_cache_guard = threading.Lock()
+
+
+def _unit_fingerprint(unit_id: str) -> "tuple[Any, ...] | None":
+    """*unit_id*'s files as stat calls see them, or ``None`` when one cannot be stat'ed.
+
+    Every segment's name, device, inode, size and mtime, and the cut counter's inode,
+    size and mtime (or its absence). That is every input a mark is computed from: the
+    header's ``createdAt`` and the newest seq live in the segments, the cut count in the
+    counter, and the counter is only ever replaced by a rename (a new inode) or emptied
+    in place (a new size). So two equal fingerprints describe one mark, and checking one
+    costs a directory listing and a stat per file -- never an open or a tail read.
+    """
+    try:
+        paths = segment_paths(KIND_SESSION, unit_id)
+        if not paths:
+            return None
+        parts: list[Any] = []
+        for path in paths:
+            stat = path.stat()
+            parts.append((path.name, stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns))
+        try:
+            counter = (paths[0].parent / _CUTS_FILE).stat()
+            parts.append((counter.st_ino, counter.st_size, counter.st_mtime_ns))
+        except FileNotFoundError:
+            parts.append(None)
+        return tuple(parts)
+    except OSError:
+        return None
 
 
 def _unit_mark(unit_id: str) -> _UnitMark:
@@ -110,7 +164,34 @@ def _unit_mark(unit_id: str) -> _UnitMark:
     treats that as unknown and folds cold -- which is also why the fingerprint needs no
     separate unknown test: :func:`_log_identity` returns an identity only when the same
     stat calls that produced the fingerprint succeeded.
+
+    CACHED by the unit's stat fingerprint, because an eager advance asks for every unit
+    of the slot and usually one of them moved. Reading a mark opens the log, which reads
+    its tail; a slot of a hundred units would pay a hundred opens for one append. So a
+    unit whose files stat the same as when its mark was read answers from the cache, and
+    only a unit that moved is opened. A mark is stored only when the fingerprint taken
+    after the read equals the one taken before it, so a file that moved during the read
+    is never cached under a fingerprint that describes other bytes.
     """
+    key = (str(data_home()), unit_id)
+    seen = _unit_fingerprint(unit_id)
+    if seen is not None:
+        with _mark_cache_guard:
+            held = _mark_cache.get(key)
+        if held is not None and held[0] == seen:
+            return held[1]
+    mark = _read_unit_mark(unit_id)
+    if seen is not None and mark.origin is not None and _unit_fingerprint(unit_id) == seen:
+        with _mark_cache_guard:
+            _mark_cache[key] = (seen, mark)
+            _mark_cache.move_to_end(key)
+            while len(_mark_cache) > MARK_CACHE_LIMIT:
+                _mark_cache.popitem(last=False)
+    return mark
+
+
+def _read_unit_mark(unit_id: str) -> _UnitMark:
+    """:func:`_unit_mark` read off the log itself: one open, its tail and its counter."""
     try:
         handle = open_session_log(unit_id)
         if handle is None:
@@ -124,6 +205,7 @@ def _unit_mark(unit_id: str) -> _UnitMark:
             size,
             mtime_ns,
             handle.cuts(),
+            unit_header_slot(KIND_SESSION, unit_id),
         )
     except Exception:
         return _UnitMark(None, 0)
@@ -134,58 +216,11 @@ def _unit_marks(unit_ids: Sequence[str]) -> "tuple[_UnitMark, ...]":
     return tuple(_unit_mark(unit_id) for unit_id in unit_ids)
 
 
-#: Stands for "every record in the file" when a digest wants no boundary.
-#: :meth:`CrewLog.raw_prefix_digest` stops at end of file and reports the count it
-#: reached, so a boundary above any real log yields the whole-file digest.
-_ALL_RECORDS = 1 << 62
-
-
-class _PrefixSeen(NamedTuple):
-    """A digest of the newest unit's raw records, read at one known moment.
-
-    ``records`` is a RAW record count, not an entry span: a blank or unparseable
-    interior line is a record to the digest walk while the fold skips it, so the two
-    numbers differ and only the walk's own count can bound it.
-    """
-
-    records: int
-    sha: str
-
-
-def _unit_prefix(unit_id: str, records: int = _ALL_RECORDS) -> "_PrefixSeen | None":
-    """*unit_id*'s raw digest through *records*, or the whole file; ``None`` if unread.
-
-    Decode-free: :meth:`CrewLog.raw_prefix_digest` frames and hashes raw records
-    without parsing any of them, which is what makes this affordable on a read path.
-    A short walk reports the count it reached, and the caller compares counts.
-    """
-    try:
-        handle = open_session_log(unit_id)
-        if handle is None:
-            return None
-        sha, hashed = handle.raw_prefix_digest(records)
-        return _PrefixSeen(records=hashed, sha=sha)
-    except Exception:
-        return None
-
-
-def _prefix_holds(unit_id: str, seen: _PrefixSeen) -> bool:
-    """Whether *unit_id*'s first ``seen.records`` raw records still hash to *seen*.
-
-    Growth above them is not a change, because the walk stops at the count *seen*
-    names. This is the question a stat cannot answer: a size and an mtime say a file
-    moved, never whether the bytes a fold already consumed are the same bytes.
-    """
-    again = _unit_prefix(unit_id, seen.records)
-    return again is not None and again.records == seen.records and again.sha == seen.sha
-
-
-#: What :func:`_folded_prefix_holds` concluded, and how.
+#: What :func:`_cut_verdict` concluded.
 #:
 #: ``UNCUT`` and ``CUT`` are decided by the cut counter alone; ``UNPROVEN`` is the
-#: counter declining to answer, and the digest decides instead. Three values rather
-#: than a bool because the costs differ: two of them are a few bytes read, and the
-#: third is a byte walk of the whole folded prefix.
+#: counter declining to answer, and :func:`_folded_prefix_holds` decides instead from
+#: the unit's sealed resume point -- a bounded window, never the folded prefix.
 _UNCUT = "uncut"
 _CUT = "cut"
 _UNPROVEN = "unproven"
@@ -215,27 +250,45 @@ def _cut_verdict(now: "int | None", held: "int | None") -> str:
     return _UNCUT if now == held else _CUT
 
 
-def _folded_prefix_holds(unit_id: str, memo: "_SlotMemo", mark: _UnitMark) -> bool:
-    """Whether the records *memo* already folded from *unit_id* are still those bytes.
+def _folded_prefix_holds(
+    unit_id: str, held: _UnitMark, now: _UnitMark, point: "ResumePoint | None"
+) -> bool:
+    """Whether the records a cell folded from *unit_id* (as *held*) are still those bytes.
 
     The cheap proof first. A unit whose cut counter reads the same as it did when the
-    memo was built has not been cut since, and nothing else in the store can disturb a
+    cell was built has not been cut since, and nothing else in the store can disturb a
     committed record -- so the question is settled by a few bytes, and the warm read
     costs the same on a log of ten entries and a log of a hundred thousand.
 
-    The digest is the fallback, not the rule. It walks and hashes every record the fold
-    consumed, so its price rises with the log: the records it re-reads are exactly the
-    ones the reader has paid for once already. It is here for the readings the counter
-    declines to make -- a log created before the counter existed carries none until its
-    first cut, and a log whose cut is in flight right now has nothing settled to report
-    -- and for those the digest is the only evidence there is.
+    A counter on ONE side only is a cut, not a missing proof. The counter goes from
+    absent to a number only when a cut raises it (:func:`_open_cut` starts an absent
+    one at a fresh phase), and from a number to nothing only when a cut is in flight or
+    its raise failed. Either way records may have moved, and the cell folds cold.
+
+    Neither side counting -- a log created before the counter existed -- is settled by
+    *point*, the resume point this cell's last walk of the unit sealed with a bounded
+    window digest (:meth:`CrewLog.seal_point`). It names the last record folded, and
+    :meth:`CrewLog.point_holds` re-hashes that window and checks the record is still
+    there. That costs the window, never the prefix: a digest of the folded records would
+    grow with the log on every eager advance. No point means no evidence, which folds
+    cold rather than trusting a stat.
+
+    A unit nothing was folded from has nothing to prove.
     """
-    verdict = _cut_verdict(mark.cuts, memo.marks[-1].cuts if memo.marks else None)
+    if held.last_seq <= 0:
+        return True
+    verdict = _cut_verdict(now.cuts, held.cuts)
     if verdict == _UNCUT:
         return True
-    if verdict == _CUT:
+    if verdict == _CUT or held.cuts is not None or now.cuts is not None:
         return False
-    return memo.prefix is not None and _prefix_holds(unit_id, memo.prefix)
+    if point is None or point.window is None or point.seq > held.last_seq:
+        return False
+    try:
+        handle = open_session_log(unit_id)
+        return handle is not None and handle.point_holds(point)
+    except Exception:
+        return False
 
 
 class _SlotFold:
@@ -269,6 +322,8 @@ class _SlotFold:
         if not self._fold.touched_by(entry):
             return state
         grown = self._fold.copied(state)
+        if event.lane and self._fold.from_lane is not None:
+            self._fold.from_lane(grown, event.lane)
         self._fold.step(grown, entry)
         return grown
 
@@ -336,6 +391,7 @@ class _SlotStream:
                 continue
             top = base
             reached = self._since
+            last: "Entry | None" = None
             # One cursor PER UNIT. A shared one would end the pass holding whichever
             # unit yielded last, and a later unit that yielded nothing would leave an
             # earlier unit's offset standing as this unit's position.
@@ -349,12 +405,15 @@ class _SlotStream:
                 ordinal = base + entry.seq
                 top = max(top, ordinal)
                 reached = max(reached, entry.seq)
+                last = entry
                 yield _Ordinal(ordinal, entry)
             base = top
             self.heights[unit_id] = reached
             self.reached = reached
             if cursor.at is not None:
-                self.points[unit_id] = cursor.at
+                # Sealed once per unit, after its walk: on a log with no cut counter the
+                # window is the only evidence a later continuation of this unit has.
+                self.points[unit_id] = handle.seal_point(cursor.at, expect=last)
 
 
 @dataclass
@@ -367,11 +426,10 @@ class _SlotMemo:
     fold discard another's warm cell -- and the three slot folds are read over
     different unit lists, so they go stale independently.
 
-    ``marks`` is the per-unit watermark vector the reuse test compares, and the bases
-    the ordinals are built from are derived from it: unit *i*'s base is the total
-    height of the units before it. That derivation is what makes a warm continuation
-    land on the same ordinals the earlier pass used, and it holds because a memo is
-    only kept when every earlier unit's mark is unchanged.
+    ``marks`` is the per-unit watermark vector the reuse test compares, and the
+    ordinals are built from it: an entry's ordinal is the total folded height of every
+    unit once that entry is counted (:func:`_drive_steps`). The total only rises, so a
+    continuation always lands above the cell's watermark, whichever unit grew.
 
     A memo is never edited once stored. A read that carries one forward stores a NEW
     memo over the SAME registry, so two reads racing on one slot cannot leave a pair of
@@ -385,30 +443,28 @@ class _SlotMemo:
     units: "tuple[str, ...]"
     marks: "tuple[_UnitMark, ...]"
     reached: int
-    #: The NEWEST unit's raw digest as of the pass that built this cell, and the one
-    #: thing a continuation must check that a mark cannot. Every earlier unit is held
-    #: to whole-mark equality, so a rewrite there already folds cold; the newest unit is
-    #: admitted precisely because it GREW, and growth moves its size and mtime by
-    #: itself, which leaves a stat with nothing to say about the bytes underneath.
-    #: ``None`` means no digest is vouched for, which has two causes now. The unit's cut
-    #: counter settles the question on its own, so no digest was taken -- the ordinary
-    #: case. Or one was wanted and could not be had: the file moved during the pass, or
-    #: could not be read. The two are told apart by the mark's own ``cuts``, and a
-    #: continuation with neither is refused rather than trusted.
-    prefix: "_PrefixSeen | None" = None
     #: The kernel ORDINAL this cell is persisted through on disk
     #: (:func:`kiro_crew.crew_log.checkpoint.save_slot`), or 0 when nothing is. What
     #: :func:`_persist_slot_fold` measures a write against, carried on the cell so a
     #: continuation decides without reading the file to find out.
     saved: int = 0
-    #: Where in the NEWEST unit's log this cell's fold stopped, as a byte offset the
-    #: next read can open the file at. Without it a continuation still decodes every
-    #: record below the seq it resumes from, so an idle board's poll costs the whole
-    #: log however little arrived -- the second linear term in a warm read, beside the
-    #: digest the cut counter replaced. ``None`` means no position is vouched for and
-    #: the next read walks from the top: a pass that yielded nothing new, a unit list
-    #: that changed, or a point the store itself declined to issue.
-    resume: "ResumePoint | None" = None
+    #: Where in EACH unit's log this cell's fold stopped, as a byte offset the next read
+    #: can open the file at, keyed by unit. Without one a continuation of that unit
+    #: still decodes every record below the seq it resumes from, so a poll costs the
+    #: whole log however little arrived. Per unit rather than the newest one alone,
+    #: because a conductor's slot grows in the MIDDLE: its own unit and each bound
+    #: worker's are all written to, and a continuation reads whichever of them moved.
+    #: A unit absent here has no position vouched for and is walked from the top: a
+    #: unit that never yielded, or a point the store declined to issue. On a log with no
+    #: cut counter the point is also the evidence its folded prefix is intact
+    #: (:func:`_folded_prefix_holds`).
+    resumes: "Mapping[str, ResumePoint]" = field(default_factory=dict)
+    #: The greatest merge key folded, for a fold whose units merge by time
+    #: (:func:`_time_ordered`): ``(entry time, lane)``. A continuation is admitted
+    #: only when every entry it adds sorts above it, because that is exactly when the
+    #: cold merge would place them last too. ``None`` for a unit-ordered fold and for a
+    #: time-ordered cell nothing touched yet.
+    last_key: "tuple[int, str] | None" = None
     #: What ORDERS this cell against every other value of the same (slot, fold). Minted
     #: when the cell is built, so a cell CARRIED FORWARD unchanged keeps its number and a
     #: cell that folded anything new gets a higher one. See :func:`_next_slot_revision`.
@@ -541,6 +597,8 @@ def forget_slot_folds(slot: str = "", name: str = "") -> None:
         if not slot and not name:
             _slot_memos.clear()
             _oversize_slot_cells.clear()
+            with _mark_cache_guard:
+                _mark_cache.clear()
             return
         for table in (_slot_memos, _oversize_slot_cells):
             for key in [
@@ -673,32 +731,107 @@ def _minted_revision() -> int:
         return _next_slot_revision()
 
 
-def _continuable(marks: "tuple[_UnitMark, ...]", held: "tuple[_UnitMark, ...]") -> bool:
-    """Whether *marks* is *held* with the newest unit grown, and nothing else moved.
+def _time_ordered(name: str) -> bool:
+    """Whether fold *name* merges its units by entry time rather than folding them in
+    list order (:attr:`_Fold.unit_order`)."""
+    return _FOLDS[name].unit_order == "time"
 
-    The one shape a warm cell can be carried over, because its state was folded
-    through every earlier unit already. Everything else describes different bytes and
-    folds cold: a changed unit list, a unit whose identity changed or is unknown, an
-    EARLIER unit that grew (a forced reset tears a session down while a turn is still
-    appending through the handle it holds, so an earlier unit is not closed to writes),
-    an earlier unit whose bytes changed without its seq moving, and any unit whose seq
-    went backwards.
 
-    "Nothing else moved" is decided by whole-mark equality, so it covers each earlier
-    unit's stat fingerprint as well as its identity and height -- that is what makes an
-    in-place rewrite of an already-folded entry a cold fold rather than an equal
-    comparison. The newest unit is compared on identity and growth alone, because this
-    function exists to admit exactly its growth and an append moves its fingerprint by
-    itself.
+class _Step(NamedTuple):
+    """One unit a continuation reads: from above *since*, at *resume* when one holds."""
+
+    unit: str
+    since: int
+    resume: "ResumePoint | None"
+
+
+def _continuable(
+    name: str,
+    memo: "_SlotMemo",
+    units: "tuple[str, ...]",
+    marks: "tuple[_UnitMark, ...]",
+) -> "list[_Step] | None":
+    """The units a warm continuation of *memo* must read, or ``None`` to fold cold.
+
+    Every unit is compared with what the cell holds for it, and each lands in one of
+    three places. UNCHANGED (the whole mark is equal) is not read at all. GROWN (same
+    identity, a higher seq, and its folded records proven intact by
+    :func:`_folded_prefix_holds`) is read from above the height the cell folded, at the
+    point the cell's last walk stopped. NEW (a unit the cell never held) is read from
+    its first record. Everything else describes bytes the cell did not fold and returns
+    ``None``: a unit that left the list, units that changed order, an unknown or changed
+    identity, a seq that went backwards, files that moved with no growth (an in-place
+    rewrite keeps every seq), a folded prefix that cannot be proven.
+
+    Which grown or new units may be read depends on the fold's LANES (:func:`_lane_of`).
+    A lane is the concatenation of its units, so new entries may only land at a lane's
+    END: every unit of a lane after its first one that yields must have held nothing
+    before. A unit-ordered fold (the default) is one lane. A conductor's board does not
+    grow that way -- the conductor's own unit and each bound worker's are written all the
+    time, and they sit in the middle of the list -- which is why the folds that read
+    those lists are time-ordered: one lane per slot, merged by time, so an append to the
+    newest unit of any slot sorts last, and :func:`_continue_slot_fold` checks that it
+    does before driving it.
     """
-    return (
-        bool(marks)
-        and len(marks) == len(held)
-        and all(mark.origin is not None for mark in marks)
-        and marks[:-1] == held[:-1]
-        and marks[-1].origin == held[-1].origin
-        and marks[-1].last_seq > held[-1].last_seq
-    )
+    if not marks or any(mark.origin is None for mark in marks):
+        return None
+    held = dict(zip(memo.units, memo.marks))
+    if len(held) != len(memo.units):
+        return None
+    where = {unit: index for index, unit in enumerate(units)}
+    if len(where) != len(units):
+        return None
+    kept = [where.get(unit) for unit in memo.units]
+    if any(index is None for index in kept) or kept != sorted(kept):  # type: ignore[type-var]
+        return None
+    steps: list[_Step] = []
+    for unit, mark in zip(units, marks):
+        before = held.get(unit)
+        if before is None:
+            steps.append(_Step(unit, 0, None))
+            continue
+        if mark == before:
+            continue
+        if mark.origin != before.origin or mark.last_seq < before.last_seq:
+            return None
+        if mark.last_seq == before.last_seq and before.size is not None:
+            # Same height with files that moved is bytes changing under entries already
+            # folded -- an in-place rewrite keeps every seq -- and no append explains it.
+            return None
+        point = _resume_for(memo, unit, before.last_seq)
+        if not _folded_prefix_holds(unit, before, mark, point):
+            return None
+        if mark.last_seq > before.last_seq:
+            steps.append(_Step(unit, before.last_seq, point))
+        # Otherwise the cell folded past what its last pass sampled (an append landed
+        # mid-pass, see :func:`_folded_marks`), and nothing new is here: the proof held,
+        # so only the mark is refreshed.
+    lane = _lane_of(name, units, marks)
+    for group in {lane[step.unit] for step in steps}:
+        # Within one lane the units are concatenated, so new entries may only land at the
+        # lane's END: every unit of the lane after its first one that yields must have
+        # held nothing before.
+        members = [unit for unit in units if lane[unit] == group]
+        first = next(index for index, unit in enumerate(members) if unit in {s.unit for s in steps})
+        if any(held[unit].last_seq > 0 for unit in members[first + 1 :] if unit in held):
+            return None
+    return steps
+
+
+def _lane_of(name: str, units: "Sequence[str]", marks: "Sequence[_UnitMark]") -> "dict[str, str]":
+    """Which LANE each unit's entries are folded in, for fold *name*.
+
+    A lane is concatenated: its units are folded whole, in list order. A unit-ordered
+    fold is one lane. A time-ordered fold has one lane per slot the unit headers name,
+    and merges the lanes by time (:class:`_MergedRead`). Successive units of one slot are
+    one session after another, so their order is the list's -- the order the work fold
+    already relies on when a header clock steps back between two of them -- while
+    different slots are written at the same time and only their entry times can order
+    them. A unit whose header names no slot is a lane of its own.
+    """
+    if not _time_ordered(name):
+        return {unit: "" for unit in units}
+    return {unit: (mark.slot if mark.slot else f"unit:{unit}") for unit, mark in zip(units, marks)}
 
 
 def _note_slot_fold_origin(origin: str) -> None:
@@ -830,8 +963,9 @@ def _fold_slot_warm_locked(
     marks = _unit_marks(unit_ids)
     units = tuple(unit_ids)
     known = all(mark.origin is not None for mark in marks)
-    if memo is not None and memo.units == units:
-        if known and memo.marks == marks:
+    ordered = _time_ordered(name)
+    if memo is not None and known:
+        if memo.units == units and memo.marks == marks:
             # NOTHING FOLDED, so the cell keeps the revision it was built with. Minting
             # one here would move the number on every poll of an idle board, and a client
             # would re-seed from a frame that carries the value it already holds.
@@ -844,36 +978,36 @@ def _fold_slot_warm_locked(
             _note_slot_fold_origin("warm")
             _note_slot_fold_idle()
             return _slot_checkpoint(name, memo)
-        if _continuable(marks, memo.marks) and _folded_prefix_holds(units[-1], memo, marks[-1]):
+        steps = _continuable(name, memo, units, marks)
+        if steps is not None and not steps:
+            # Nothing to read, only marks to refresh (an append the last pass folded after
+            # sampling). The value is the one the cell holds, so it keeps its revision.
             _note_slot_fold_origin("warm")
-            before = _digest_to_carry(units, marks)
-            tail = _SlotStream(
-                units[-1:],
-                base=sum(mark.last_seq for mark in marks[:-1]),
-                since=memo.reached,
-                resume=_resume_from(memo),
-            )
-            for event in tail:
-                memo.registry.drive(memo.store, event)
-            grown = _SlotMemo(
-                registry=memo.registry,
-                store=memo.store,
-                units=units,
-                marks=_folded_marks(units, marks, tail, carried=memo.marks),
-                reached=tail.reached,
-                prefix=_vouched(units[-1], before),
-                saved=memo.saved,
-                resume=tail.points.get(units[-1], memo.resume),
-                revision=_minted_revision(),
-                weight=_cell_weight(name, memo.registry, memo.store),
-            )
-            grown = _persist_slot_fold(name, grown, slot=slot, sampled=marks[-1])
+            _note_slot_fold_idle()
+            refreshed = replace(memo, marks=marks)
+            _remember_slot_fold(key, refreshed)
+            return _slot_checkpoint(name, refreshed)
+        grown = None if not steps else _continue_slot_fold(name, memo, units, marks, steps)
+        if steps and grown is None:
+            # A refused time-ordered continuation may have driven part of its tail into
+            # this cell, so the cell is dropped before anything else can serve it.
+            with _slot_memo_guard:
+                if _slot_memos.get(key) is memo:
+                    del _slot_memos[key]
+        if grown is not None:
+            _note_slot_fold_origin("warm")
+            if not ordered:
+                grown = _persist_slot_fold(name, grown, slot=slot, sampled=marks[-1])
             _remember_slot_fold(key, grown)
             return _slot_checkpoint(name, grown)
     # Nothing warm to carry forward. Ask the DISK before folding every unit: a savepoint
     # beside the newest unit's log reaches the same value over the entries appended since
     # it was written, where the cold fold below streams every unit from its first record.
-    if known and units:
+    #
+    # Not for a time-ordered fold. Its savepoint would have to prove the tail above it
+    # sorts after everything the savepoint folded, and the savepoint records no merge key
+    # to prove that with, so such a fold neither resumes from one nor writes one.
+    if known and units and not ordered:
         resumed = _resume_slot_fold(name, units, marks, slot=slot)
         if resumed is not None:
             _note_slot_fold_origin("savepoint")
@@ -883,22 +1017,33 @@ def _fold_slot_warm_locked(
     # Nothing warm and no savepoint: every unit of the slot is streamed from its
     # first record. The counter exists to make that share visible.
     _note_slot_fold_origin("cold")
-    cold = _SlotStream(units)
     registry = ProjectionRegistry(seq_of=_ordinal_seq)
     registry.register(_SlotFold(_FOLDS[name], slot))
-    before = _digest_to_carry(units, marks)
-    registry.prime(slot, cold)
+    last_key: "tuple[int, str] | None" = None
+    if ordered:
+        merged = _MergedRead(
+            name, [_Step(unit, 0, None) for unit in units], _lane_of(name, units, marks)
+        )
+        registry.prime(slot, _merged_ordinals(((u, e, lane) for _k, u, e, lane in merged), {}))
+        heights: "dict[str, int]" = dict(merged.heights)
+        points: "dict[str, ResumePoint]" = dict(merged.points)
+        last_key = merged.last_key
+    else:
+        cold = _SlotStream(units)
+        registry.prime(slot, cold)
+        heights = dict(cold.heights)
+        points = dict(cold.points)
     fresh = _SlotMemo(
         registry=registry,
         store=slot,
         units=units,
-        marks=_folded_marks(units, marks, cold),
-        reached=cold.reached,
-        prefix=_vouched(units[-1], before) if units else None,
+        marks=_folded_marks(units, marks, heights),
+        reached=heights.get(units[-1], 0) if units else 0,
         # Nothing on disk is standing behind this value: a cold fold is what happens when
         # no savepoint could be used, so the next write is owed for the whole position.
         saved=0,
-        resume=cold.points.get(units[-1]) if units else None,
+        resumes=points,
+        last_key=last_key,
         # A cold fold is where the three rollover cases land -- a new unit, a unit
         # recreated under the same id, a rewritten prefix -- and every one of them can
         # leave ``reached`` unmoved or lower. The mint is what makes the value after them
@@ -907,9 +1052,246 @@ def _fold_slot_warm_locked(
         weight=_cell_weight(name, registry, slot),
     )
     if known:
-        fresh = _persist_slot_fold(name, fresh, slot=slot, sampled=marks[-1] if units else None)
+        if not ordered:
+            fresh = _persist_slot_fold(name, fresh, slot=slot, sampled=marks[-1] if units else None)
         _remember_slot_fold(key, fresh)
     return _slot_checkpoint(name, fresh)
+
+
+class _UnitTail:
+    """One unit of a continuation: its entries above ``step.since``, oldest first.
+
+    Opens the unit's log once and resumes at ``step.resume`` when the store confirms it,
+    so a unit that grew by one entry costs that entry and the tail read of the open.
+    :attr:`reached` is the last seq yielded (``step.since`` when nothing was), and
+    :attr:`point` is where the walk stopped, sealed for the next continuation, or
+    ``None`` when it yielded nothing.
+    """
+
+    def __init__(self, step: _Step) -> None:
+        self.step = step
+        self.reached = step.since
+        self.point: "ResumePoint | None" = None
+        self._handle: "CrewLog | None" = None
+        self._cursor = ReadCursor()
+        self._last: "Entry | None" = None
+
+    def __iter__(self) -> "Iterator[Entry]":
+        handle = open_session_log(self.step.unit)
+        if handle is None:
+            return
+        self._handle = handle
+        for entry in handle.iter_from(
+            self.step.since + 1,
+            known=KNOWN_TYPES,
+            resume=self.step.resume,
+            cursor=self._cursor,
+        ):
+            self.reached = max(self.reached, entry.seq)
+            self._last = entry
+            yield entry
+        self.point = self.seal_last()
+
+    def seal_last(self) -> "ResumePoint | None":
+        """The point at the last entry yielded, sealed; for a walk stopped early too."""
+        if self._handle is None or self._cursor.at is None:
+            return None
+        return self._handle.seal_point(self._cursor.at, expect=self._last)
+
+
+class _MergedRead:
+    """The entries a time-ordered fold takes from *steps*, merged across lanes by time.
+
+    *lanes* maps each unit to its lane (:func:`_lane_of`, one per slot). A lane is its
+    units' entries concatenated in list order, and the lanes are merged by ``(entry
+    time, lane)`` with :func:`heapq.merge`, which never reorders one lane's entries.
+    Entries that cannot move the fold are read and counted in the unit's height but not
+    kept: they change no state, so where they sort is no question at all.
+
+    Why the merge makes a middle-of-the-list append continuable. Say the cell holds the
+    merge of every lane's old entries, new entries arrive only at the end of a lane
+    (:func:`_continuable` refuses anything else), and every new entry sorts above the
+    greatest key the cell folded. Then a cold merge of old plus new takes every old entry
+    first -- a lane whose old entries ran out offers a new entry, which loses to every
+    old head still waiting -- in exactly the order the cell took them, and only then
+    merges the new ones. That is the same sequence a continuation produces by merging the new entries
+    alone and driving them after the cell's state, so the warm value and the cold value
+    are one value. The condition is checked, not assumed (each key against the
+    cell's ``last_key``); an entry stamped at or below it -- a clock that stepped back, a
+    write committed late -- folds cold instead.
+    """
+
+    def __init__(self, name: str, steps: "Sequence[_Step]", lanes: "Mapping[str, str]") -> None:
+        self._fold = _FOLDS[name]
+        self._steps = tuple(steps)
+        self._lanes = lanes
+        self.heights: "dict[str, int]" = {}
+        self.points: "dict[str, ResumePoint]" = {}
+        self.last_key: "tuple[int, str] | None" = None
+
+    def __iter__(self) -> "Iterator[tuple[tuple[int, str], str, Entry, str]]":
+        """Every kept entry as ``(key, unit, entry, lane slot)``, in merge order.
+
+        STREAMED: each lane is read in batches of at most :data:`MERGE_BATCH` kept
+        entries, and no file stays open between batches, so what the merge holds is a
+        batch per lane however long the history is, and one open file at most. The lane
+        slot is what a fold's ``from_lane`` hook is handed; empty for a unit whose header
+        names no slot (a lane of its own). :attr:`last_key` is the greatest key yielded
+        so far.
+        """
+        lanes: "dict[str, list[_Step]]" = {}
+        for step in self._steps:
+            lanes.setdefault(self._lanes.get(step.unit, f"unit:{step.unit}"), []).append(step)
+        merged = heapq.merge(
+            *(self._lane(lane, steps) for lane, steps in lanes.items()),
+            key=lambda item: item[0],
+        )
+        for key, unit, entry in merged:
+            if self.last_key is None or key > self.last_key:
+                self.last_key = key
+            lane = key[1]
+            yield key, unit, entry, ("" if lane.startswith("unit:") else lane)
+
+    def _lane(
+        self, lane: str, steps: "Sequence[_Step]"
+    ) -> "Iterator[tuple[tuple[int, str], str, Entry]]":
+        """One lane's kept entries, its units in list order, read a batch at a time."""
+        for step in steps:
+            since, resume = step.since, step.resume
+            self.heights[step.unit] = since
+            while True:
+                tail = _UnitTail(_Step(step.unit, since, resume))
+                batch: "list[tuple[tuple[int, str], str, Entry]]" = []
+                walk = iter(tail)
+                full = False
+                for entry in walk:
+                    if self._fold.touched_by(entry):
+                        batch.append(((entry.time, lane), step.unit, entry))
+                        if len(batch) >= MERGE_BATCH:
+                            full = True
+                            break
+                # Closing the generator closes the file before this lane waits on the
+                # merge; the next batch reopens at the point this one sealed.
+                close = getattr(walk, "close", None)
+                if close is not None:
+                    close()
+                if tail.point is None and full:
+                    tail.point = tail.seal_last()
+                self.heights[step.unit] = tail.reached
+                if tail.point is not None:
+                    self.points[step.unit] = tail.point
+                yield from batch
+                if not full:
+                    break
+                since, resume = tail.reached, tail.point
+
+    @property
+    def reached(self) -> int:
+        """The last unit's folded height, once the merge has been read to the end."""
+        return self.heights.get(self._steps[-1].unit, 0) if self._steps else 0
+
+
+#: Most kept entries one lane of a time merge holds at once (:class:`_MergedRead`).
+MERGE_BATCH: Final[int] = 64
+
+
+def _merged_ordinals(
+    lanes: "Iterable[tuple[str, Entry, str]]", heights: "Mapping[str, int]"
+) -> "Iterator[_Ordinal]":
+    """*lanes* as kernel events, each at the slot's total folded height once it counts.
+
+    *heights* is what the cell had folded of each unit before these entries. One unit's
+    entries arrive in its own seq order, so each one raises that unit's height and the
+    total with it: the ordinals rise strictly, and the first one lands above every
+    ordinal the cell already holds, which never exceeds the total it started from.
+    """
+    seen = dict(heights)
+    total = sum(seen.values())
+    for unit, entry, slot in lanes:
+        total += entry.seq - seen.get(unit, 0)
+        seen[unit] = entry.seq
+        yield _Ordinal(total, entry, slot)
+
+
+def _continue_slot_fold(
+    name: str,
+    memo: _SlotMemo,
+    units: "tuple[str, ...]",
+    marks: "tuple[_UnitMark, ...]",
+    steps: "Sequence[_Step]",
+) -> "_SlotMemo | None":
+    """*memo* carried forward over *steps*, the units :func:`_continuable` chose.
+
+    Only those units are opened, each from the point its last walk stopped, so an
+    advance costs the units that grew and their new entries. ``None`` when the new
+    entries of a time-ordered fold do not all sort above what the cell folded, which
+    the caller answers with a cold fold; nothing has been driven by then.
+    """
+    heights = {unit: mark.last_seq for unit, mark in zip(memo.units, memo.marks)}
+    present = set(units)
+    points = {unit: point for unit, point in memo.resumes.items() if unit in present}
+    last_key = memo.last_key
+    if _time_ordered(name):
+        merged = _MergedRead(name, steps, _lane_of(name, units, marks))
+        floor = last_key
+        refused = False
+
+        def admitted() -> "Iterator[tuple[str, Entry, str]]":
+            nonlocal refused
+            for key, unit, entry, slot in merged:
+                if floor is not None and key <= floor:
+                    refused = True
+                    return
+                yield unit, entry, slot
+
+        for event in _merged_ordinals(admitted(), heights):
+            memo.registry.drive(memo.store, event)
+        if refused:
+            # Already-driven entries changed this cell, and the caller folds cold into a
+            # fresh registry that replaces it -- the lock this runs under means nothing
+            # else reads the cell in between.
+            return None
+        heights.update(merged.heights)
+        points.update(merged.points)
+        if merged.last_key is not None:
+            last_key = merged.last_key if last_key is None else max(last_key, merged.last_key)
+    else:
+        for step in steps:
+            # Every unit after this one held nothing (:func:`_continuable`), so the units
+            # before it are the whole folded height below it: its entries land above the
+            # cell's watermark, on the ordinals a cold fold of the same units gives them.
+            base = sum(heights.get(unit, 0) for unit in units[: units.index(step.unit)])
+            tail = _UnitTail(step)
+            for entry in tail:
+                memo.registry.drive(memo.store, _Ordinal(base + entry.seq, entry))
+            heights[step.unit] = tail.reached
+            if tail.point is not None:
+                points[step.unit] = tail.point
+    return _SlotMemo(
+        registry=memo.registry,
+        store=memo.store,
+        units=units,
+        marks=_folded_marks(units, marks, heights),
+        reached=heights.get(units[-1], 0),
+        saved=memo.saved,
+        resumes=points,
+        last_key=last_key,
+        revision=_minted_revision(),
+        weight=_cell_weight(name, memo.registry, memo.store),
+    )
+
+
+def time_merged_read(name: str, unit_ids: Sequence[str]) -> _MergedRead:
+    """A from-scratch read of time-ordered fold *name* over *unit_ids*, as a merge.
+
+    The same merge the warm path uses (:class:`_MergedRead`), so the reference fold and
+    the warm cell cannot disagree about the order of the same bytes. Iterate it for
+    ``(key, unit, entry, lane slot)``; :attr:`_MergedRead.reached` is the newest unit's
+    last seq once it is exhausted. A unit with no log is skipped, as everywhere else.
+    """
+    units = [unit for unit in unit_ids if CrewLog.exists(KIND_SESSION, unit)]
+    marks = _unit_marks(units)
+    return _MergedRead(name, [_Step(unit, 0, None) for unit in units], _lane_of(name, units, marks))
 
 
 def _slot_cell(name: str, memo: _SlotMemo) -> "tuple[Any, int] | None":
@@ -975,21 +1357,10 @@ def _resume_slot_fold(
     )
     if saved is None:
         return None
-    # The newest unit's own evidence, read before this pass consumes it -- the same thing
-    # the cold and warm paths read, and for the same reason. On a unit with a cut counter
-    # that is the counter, already in ``marks[-1]``, and nothing is hashed. On one without
-    # it is a FULL digest, and the savepoint's own witness cannot stand in for that
-    # digest: the witness ends at the seq the savepoint was written at, and this pass is
-    # about to fold the TAIL above it, so a cell carrying it would vouch for bytes it did
-    # not read. Two things go wrong when it does, and both are silent. A continuation then
-    # asks :func:`_prefix_holds` about the saved boundary only, so a tail rewritten in
-    # place -- the store's own recovery truncates an unreachable chunk group and
-    # re-appends with the seqs continuing from the cut -- compares equal, and the cell
-    # keeps state folded from bytes the file has replaced. And :func:`_persist_slot_fold`
-    # would write a witness whose ``seq`` is above its own ``prefix_records``, which
-    # :func:`prefix_admit` refuses on the next read, so every other restart pays a cold
-    # fold.
-    before = _digest_to_carry(units, marks)
+    # The newest unit's own evidence for a later continuation is its cut counter, already
+    # in ``marks[-1]``, or -- on a unit without one -- the window the tail's walk seals
+    # beside its resume point (below). The prefix under that point was admitted by the
+    # savepoint's own witness on the way in.
     registry = ProjectionRegistry(seq_of=_ordinal_seq)
     registry.register(_SlotFold(_FOLDS[name], slot))
     tail = _SlotStream(units[-1:], base=base, since=saved.reached)
@@ -1049,21 +1420,18 @@ def _resume_slot_fold(
         registry=registry,
         store=slot,
         units=units,
-        # ``carried=marks``: this pass re-stat'ed every unit, and the savepoint's identity
-        # block confirmed the earlier ones are the vector its state was folded over, so
-        # only the newest unit's height comes from the stream.
-        marks=_folded_marks(units, marks, tail, carried=marks),
+        # This pass re-stat'ed every unit, and the savepoint's identity block confirmed
+        # the earlier ones are the vector its state was folded over, so only the newest
+        # unit's height comes from the stream.
+        marks=_folded_marks(units, marks, tail.heights),
         reached=tail.reached,
-        prefix=_vouched(units[-1], before),
         saved=saved.watermark,
-        # No resume point, so the first continuation of a cell that stood on a savepoint
-        # walks the newest unit once and reports a point of its own. The tail folded here
-        # could issue one, and it would be as sound as any other: the cut count is what
-        # vouches for an unread prefix, and this pass holds it. It is left unset because
-        # a point is an optimisation and this is the one pass that cannot be checked
-        # against the loop that wrote it -- the state it continues came from another
-        # process, so ``reached`` here is the savepoint's position advanced by this tail
-        # rather than a height this cell folded end to end.
+        # The tail's own point, sealed by the walk that folded it. Without one the next
+        # continuation walks the newest unit from its first record, and on a unit with no
+        # cut counter it has no evidence at all and folds cold -- after which the cold
+        # fold finds the savepoint again and resumes, so every advance would pay the
+        # savepoint's whole-prefix check. A tail that yielded nothing issues no point.
+        resumes=dict(tail.points),
         revision=_minted_revision(),
         weight=_cell_weight(name, registry, slot),
     )
@@ -1082,10 +1450,12 @@ def _persist_slot_fold(
     session half, where a pass standing on a cached bundle writes nothing. The reason the
     session half refuses is that a cached bundle records no evidence, so nothing a later
     pass can read says anything about the bytes below its seq. A slot cell is different:
-    it CARRIES its evidence -- the newest unit's cut count in ``_SlotMemo.marks``, or its
-    digest in ``_SlotMemo.prefix`` on a unit that states no count -- and
+    it CARRIES its evidence -- the newest unit's cut count in ``_SlotMemo.marks`` -- and
     :func:`_folded_prefix_holds` re-checks it before carrying the cell forward, so custody
-    of the already-folded prefix survives from the pass that folded it to this one.
+    of the already-folded prefix survives from the pass that folded it to this one. A
+    unit that states no count writes no savepoint: the only witness the savepoint format
+    has for one is a digest of the whole folded prefix, which is the cost an eager
+    advance must not pay.
     Without this, a gateway that stays up leaves the savepoint wherever the process first
     folded, and the restart it exists for replays the whole gap.
 
@@ -1095,25 +1465,18 @@ def _persist_slot_fold(
     a pass that ended somewhere ELSE -- the file grew under it -- matches nothing and
     writes nothing: the evidence would then cover fewer bytes than the state was folded
     from, which is the one savepoint no later read recovers from. That costs the savepoint
-    and never the read, which is already served. And its ``cuts`` is which of the two
-    witnesses this unit gets.
+    and never the read, which is already served. And its ``cuts`` is the witness.
 
-    THE EVIDENCE IS CONFIRMED HERE, at the write, and that is what makes one rule cover
-    every pass that reaches this function. A digest taken before a pass and never asked
-    again would certify bytes a concurrent truncation changed afterwards, and because
-    every later resume recomputes the same changed bytes it would match, and the state
-    would be served for the life of the unit while disagreeing with a cold fold. The cold
-    and warm passes also vouch for their own digest (:func:`_vouched`), which they need
-    for their cell; asking again here costs one decode-free walk on a pass that has just
-    parsed and folded the same file, and it buys the property that NOTHING writes a
-    savepoint without re-reading the evidence its state came from. The counter is
-    re-confirmed for the same reason and at a fraction of the price -- and it is the
-    stronger of the two here, because a cut during the pass RAISES it rather than being
-    hashed into agreement with itself.
+    THE EVIDENCE IS CONFIRMED HERE, at the write: the counter is read again
+    (:func:`_slot_witness`), and a cut during the pass RAISES it, so a savepoint is never
+    written with a witness that agrees with bytes the state did not come from.
+
+    Never for a time-ordered fold (:func:`_time_ordered`), whose savepoint could not
+    prove its tail sorts last.
     """
     if not memo.units or sampled is None or sampled.origin is None:
         return memo
-    if sampled.cuts is None and memo.prefix is None:
+    if sampled.cuts is None or _time_ordered(name):
         return memo
     if memo.reached != sampled.last_seq:
         return memo
@@ -1159,9 +1522,7 @@ def _persist_slot_fold(
     return replace(memo, saved=watermark)
 
 
-def _slot_witness(
-    handle: CrewLog, memo: _SlotMemo, sampled: _UnitMark
-) -> "PrefixWitness | CutWitness | None":
+def _slot_witness(handle: CrewLog, memo: _SlotMemo, sampled: _UnitMark) -> "CutWitness | None":
     """The evidence *memo*'s savepoint records, re-confirmed now, or ``None``.
 
     The cut count where the unit states one: *sampled*'s reading, taken before the pass,
@@ -1169,21 +1530,15 @@ def _slot_witness(
     answers ``None`` and the savepoint is skipped rather than written with a witness its
     own resume could never admit.
 
-    The digest otherwise, re-labelled with the boundary it was taken at. It covers at
-    least every record the fold consumed -- a whole-file walk reaches past the newest
-    entry, never short of it -- so it is a witness through ``reached`` and a stricter one
-    than the seq span alone would be.
+    ``None`` for a unit with no counter: the digest witness the format also accepts
+    would hash every folded record, and this runs on the eager advance.
     """
     from kiro_crew.crew_log import checkpoint as savepoints
 
-    if sampled.cuts is not None:
-        held = savepoints.CutWitness(seq=memo.reached, cuts=sampled.cuts)
-        return held if savepoints.cuts_unchanged(handle, held) else None
-    if memo.prefix is None or not _prefix_holds(memo.units[-1], memo.prefix):
+    if sampled.cuts is None:
         return None
-    return savepoints.PrefixWitness(
-        seq=memo.reached, records=memo.prefix.records, sha=memo.prefix.sha
-    )
+    held = savepoints.CutWitness(seq=memo.reached, cuts=sampled.cuts)
+    return held if savepoints.cuts_unchanged(handle, held) else None
 
 
 def _cell_weight(name: str, registry: ProjectionRegistry, store: str) -> int:
@@ -1200,67 +1555,33 @@ def _cell_weight(name: str, registry: ProjectionRegistry, store: str) -> int:
     return slot_fold_cell_bytes(name, state)
 
 
-def _digest_to_carry(
-    units: "tuple[str, ...]", marks: "tuple[_UnitMark, ...]"
-) -> "_PrefixSeen | None":
-    """The newest unit's whole-file digest, for a memo that will NEED one.
+def _resume_for(memo: "_SlotMemo", unit: str, height: int) -> "ResumePoint | None":
+    """*memo*'s resume point for *unit*, but only where it agrees with what was folded.
 
-    A memo needs one only when the next read of this unit cannot be settled by its cut
-    counter, and the counter's presence is what says which case this is. So a unit that
-    HAS a counter skips the hash on the write side of the memo as well as the read side
-    -- which is where most of the saving is, because this digest covers the whole file
-    rather than the records a fold consumed.
+    The point and the unit's folded *height* are two records of the same fact -- the
+    last entry this cell consumed from that unit -- written by the same loop, so they
+    agree by construction today. This asserts it anyway, because the two failures are
+    not the same size. A point BELOW the height costs a few extra records on the next
+    read. A point ABOVE it would make the next read open the file past entries the cell
+    never folded and never yield them, which is state silently missing from a fold that
+    reports itself complete.
 
-    A unit with no counter gets the digest, and the next read is settled by it exactly
-    as before.
+    So a point above the height drops back to the full walk: the store's own checks
+    cannot catch this one, since an offset that is a perfectly good record boundary for
+    the seq it names is exactly what this would hand them. A point BELOW it is kept: the
+    height can sit above the last entry yielded when the records after it were skipped
+    (an ignorable type this reader does not know), see :func:`_folded_marks`.
     """
-    if not units or not marks:
-        return None
-    return None if marks[-1].cuts is not None else _unit_prefix(units[-1])
-
-
-def _resume_from(memo: "_SlotMemo") -> "ResumePoint | None":
-    """*memo*'s resume point, but only where it agrees with what *memo* folded.
-
-    The point and ``reached`` are two records of the same fact -- the last entry this
-    cell consumed from its newest unit -- written by the same loop, so they agree by
-    construction today. This asserts it anyway, because the two failures are not the
-    same size. A point BELOW ``reached`` costs a few extra records on the next read.
-    A point ABOVE it would make the next read open the file past entries the cell
-    never folded and never yield them, which is state silently missing from a fold
-    that reports itself complete.
-
-    So anything other than equality drops back to the full walk: the store's own
-    checks cannot catch this one, since an offset that is a perfectly good record
-    boundary for the seq it names is exactly what this would hand them.
-    """
-    point = memo.resume
-    if point is None or point.seq != memo.reached:
+    point = memo.resumes.get(unit)
+    if point is None or point.seq > height:
         return None
     return point
-
-
-def _vouched(unit_id: str, before: "_PrefixSeen | None") -> "_PrefixSeen | None":
-    """*before*, but only if *unit_id* is byte-identical now to what it was then.
-
-    A digest read only AFTER a pass would certify bytes the pass never read: an entry
-    rewritten while the fold was running would be hashed together with state folded
-    from its earlier value, every later continuation would recompute that same digest,
-    match, and keep serving the state. So the digest is taken before the pass and
-    confirmed after it, and a file that moved in between vouches for nothing -- which
-    costs the next read a cold fold and never a wrong answer.
-    """
-    if before is None:
-        return None
-    return before if _unit_prefix(unit_id) == before else None
 
 
 def _folded_marks(
     units: "tuple[str, ...]",
     sampled: "tuple[_UnitMark, ...]",
-    stream: _SlotStream,
-    *,
-    carried: "tuple[_UnitMark, ...] | None" = None,
+    heights: "Mapping[str, int]",
 ) -> "tuple[_UnitMark, ...]":
     """*sampled*, with each streamed unit's height replaced by what was FOLDED.
 
@@ -1274,8 +1595,8 @@ def _folded_marks(
     only fall the other way: a slot whose bytes moved mid-pass fails the comparison, and
     the next read folds cold, which costs time and not correctness.
 
-    *carried* is a warm continuation's earlier marks, which this pass did not read and
-    has already found unchanged; only the newest unit is re-stated from the stream.
+    *heights* is what the pass folded of each unit it read. A unit it did not read keeps
+    its sampled mark, which a continuation has already found equal to the cell's own.
 
     Built by REPLACING one field of the sampled mark rather than by naming the fields to
     keep. A mark is compared whole, so a field this function forgot to carry would read
@@ -1283,11 +1604,29 @@ def _folded_marks(
     cold fold -- a mark rebuilt field by field makes that the default outcome of adding
     one.
     """
-    base = list(carried if carried is not None else sampled)
     return tuple(
-        replace(sampled[index], last_seq=stream.heights.get(unit, base[index].last_seq))
-        for index, unit in enumerate(units)
+        _folded_mark(sampled[index], heights.get(unit)) for index, unit in enumerate(units)
     )
+
+
+def _folded_mark(sampled: _UnitMark, folded: "int | None") -> _UnitMark:
+    """*sampled* restated for a unit this pass folded through seq *folded*.
+
+    THREE CASES. Folded exactly what was sampled: only the height is restated. Folded
+    PAST it -- an append landed between the sample and the walk -- and the sampled
+    fingerprint describes fewer bytes than were folded, so it is dropped (``None``): the
+    next pass then finds the files moved at the same height and refreshes the mark on
+    the cut-count or window proof, where a kept fingerprint would read as an in-place
+    rewrite and fold every unit cold on a busy log. Folded SHORT of it: every record
+    after the last entry yielded was skipped (an ignorable type this reader does not
+    know, or a damaged line), so the unit is folded through the sampled height, and a
+    later pass does not re-read that tail as growth.
+    """
+    if folded is None or folded == sampled.last_seq:
+        return sampled if folded is None else replace(sampled, last_seq=folded)
+    if folded > sampled.last_seq:
+        return replace(sampled, last_seq=folded, size=None, mtime_ns=None)
+    return sampled
 
 
 def _slot_checkpoint(name: str, memo: _SlotMemo) -> "tuple[Checkpoint, int]":

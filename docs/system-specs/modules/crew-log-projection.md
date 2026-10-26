@@ -456,15 +456,44 @@ can be handed the listing as stored without the owner's ordering.
 A reader that folds on every loop wake would re-walk the whole log each time, since
 the fold interprets only its own entry type but still reads every line to find it.
 So the ledger and the radar store read through one shared memo, `fold_slot_warm`,
-kept per data home, slot and fold. A warm read reads ONE file -- the newest unit, from
-its remembered position -- after checking each unit's `_UnitMark` fingerprint and
-proving the newest unit's already-folded prefix intact, which it needs because the store
-can rewrite a committed prefix on its recovery paths. The proof is the unit's CUT COUNT
-(`CrewLog.cuts`, section 7.2), read in a few bytes; hashing that prefix is the fallback
-for a log that states no count. A changed unit list, a unit whose seq went backwards,
-growth in any unit but the newest, a cut count that moved, a prefix that hashes
-differently, or a cold memo each force a full refold, because each would otherwise be a
-wrong answer rather than a slow one.
+kept per data home, slot and fold. A warm read opens only the units that GREW (or are new
+to the list), each from the resume point its last walk stopped at. Every other unit is
+settled by its `_UnitMark`, which is cached against a stat fingerprint of the unit's
+segments and cut counter (`_unit_fingerprint`), so an unchanged unit costs a directory
+listing and a few stats -- no open, no tail read. A grown unit's already-folded records
+must be proven intact, because the store can rewrite a committed prefix on its recovery
+paths. The proof is the unit's CUT COUNT (`CrewLog.cuts`, section 7.2), read in a few
+bytes. A log that states no count on either reading (one created before the counter
+existed) is proven by its resume point's sealed WINDOW instead: `CrewLog.seal_point`
+hashes the 8 KiB before the last folded record plus that record, and
+`CrewLog.point_holds` re-hashes it -- bounded, never the prefix. A count on only one side
+is a cut. A unit that left the list, units that changed order, a unit whose identity
+changed or whose seq went backwards, a unit whose files moved with no growth, a cut count
+that moved, a window that hashes differently, or a cold memo each force a full refold,
+because each would otherwise be a wrong answer rather than a slow one.
+
+Where new entries may land depends on the fold's `unit_order` (`_Fold.unit_order`). A
+`"unit"` fold (the default) concatenates its units in list order, so a continuation may
+only read units at the END of the list: every unit after the first one that grew must
+have held nothing. A `"time"` fold -- `work` and `workstreams`, whose list is the
+conductor's units followed by every bound worker's, all written at once -- keeps each
+SLOT's units concatenated (one lane per header slot, `_lane_of`) and merges the lanes by
+`(entry time, slot)` with `heapq.merge`, cold and warm alike (`_MergedRead`; the reference
+`fold_slot_checkpoint` reads the same merge through `time_merged_entries`). An append to
+the newest unit of any lane then sorts last, so the cell takes it without refolding the
+other units; the cell records the greatest key it folded (`_SlotMemo.last_key`), and an
+entry that would not sort above it -- a clock that stepped back -- folds cold instead.
+Within one slot the list order still decides, which is what keeps a later unit's report
+winning when a header clock stepped back between two units of one session. Two pieces of
+fold state depend on which unit a line came from, and both are kept per lane. The
+`workstreams` spend cursor (set by a unit's `session/opened`) is restored for each
+entry's lane by the fold's `from_lane` hook, so a charge stays with its own session when
+lanes interleave. The `work` fold holds a worker entry whose board generation no
+conductor entry has started yet (`held`, bounded) and applies it when that conductor
+entry arrives, so a clock step that sorts a report before its board's create loses
+nothing; an entry naming a generation whose board ended (`retired`) is still dropped.
+A time-ordered fold neither writes nor resumes a slot savepoint: resuming one would need
+the merge key the file does not record, so after a restart such a slot folds cold once.
 
 The radar fold's own rules, applied to the bytes as the writer applies them to a
 request: an entry naming a crew other than the fold's first is left out (every unit
@@ -1913,7 +1942,7 @@ slot fold, so one directory would have the two overwrite each other -- each then
 by the other's identity block for the life of the unit, which is correct and leaves
 neither fold a savepoint it ever gets to use.
 
-**At the NEWEST unit**, which is the only unit a continuation lets grow and the one whose
+**At the NEWEST unit**, the unit a unit-ordered continuation lets grow and the one whose
 bytes the witness stands for. The file therefore inherits the `crew-log` fence and is
 removed with the unit, and a slot that gains a unit -- a session reset -- finds no
 savepoint at its new newest unit and folds cold once, which is what the warm cell already
@@ -1941,9 +1970,8 @@ past entries the tail then folds again, or short of ones it never folds.
 **A warm continuation writes too**, which is where this departs from the session half. A
 session pass standing on a cached bundle writes nothing, because a bundle records no
 evidence and nothing a later pass can read says anything about the bytes below its seq. A
-slot cell CARRIES its evidence -- the newest unit's cut count in `_SlotMemo.marks`, or its
-digest in `_SlotMemo.prefix` on a unit that states no count -- and `_folded_prefix_holds`
-re-checks it before carrying the cell forward, so custody of the already-folded prefix
+slot cell CARRIES its evidence -- the newest unit's cut count in `_SlotMemo.marks` -- and
+`_folded_prefix_holds` re-checks it before carrying the cell forward, so custody of the already-folded prefix
 survives from the pass that folded it to this one. Without this a gateway that stays up
 would leave the savepoint wherever the process first folded, and the restart it exists for
 would replay the whole gap.
@@ -1980,12 +2008,17 @@ boundary only, so the tail repair named above -- the one this digest exists for 
 compares equal while the file is taller, growth is admitted, and the cell keeps state
 folded from bytes the file has replaced. And `_persist_slot_fold` writes a witness whose
 `seq` sits above its own `prefix_records`, which `prefix_admit` refuses on the next read,
-so every OTHER restart cold-folds behind a savepoint that looks healthy on disk. So
-`_resume_slot_fold` reads `_digest_to_carry(units, marks)` before its pass and `_vouched`
-after it -- the cut count where the unit states one, in which case nothing is hashed on
-this path either, and a full digest where it does not -- and `save_slot` refuses a digest
+so every OTHER restart cold-folds behind a savepoint that looks healthy on disk. So the
+resumed cell's evidence is its newest unit's cut count, or -- on a unit that states none
+-- the resume point its tail walk sealed (`_SlotMemo.resumes`), whose window covers the
+last record that pass folded. `seal_point` re-reads that record after hashing and seals
+nothing unless it is still the entry the walk yielded. A unit with no counter is never
+WRITTEN a savepoint: the only witness the format has for one is a digest of the whole
+folded prefix, and the write runs on the eager advance. That trades the restart resume
+of such a log (it folds cold once per process) for an eager path that never hashes a
+prefix; the digest witness is not to be restored on the write side. `save_slot` still refuses a digest
 witness whose `records` is below `seq - first_seq + 1`, `prefix_admit`'s own inequality,
-asked at the write so a payload that could only ever be refused is never written. A cut
+for any caller that writes one. A cut
 witness has no span to fall short of: it says the records this unit holds are the ones they
 were, and retention taking the front off is caught by `first_seq` in the identity block.
 `SlotSavepoint` hands back no witness at all for the same reason the digest is re-read: a

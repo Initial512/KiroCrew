@@ -142,6 +142,7 @@ from kiro_crew.crew_log.projection_workers import (
 from kiro_crew.crew_log.projection_workstreams import (
     _workstreams_bind_slot,
     _workstreams_copy,
+    _workstreams_from_lane,
     _workstreams_render,
     _workstreams_rows,
     _workstreams_start,
@@ -386,6 +387,8 @@ def _work_rows(state: Mapping[str, Any]) -> int:
     return (
         rows
         + _rows_in(state.get("parked"))
+        + _rows_in(state.get("held"))
+        + _rows_in(state.get("retired"))
         + _rows_in(state.get("order"))
         + _rows_in(state.get("closed"))
         + _rows_in(state.get("tombstones"))
@@ -406,10 +409,10 @@ def _work_opaque(state: Mapping[str, Any]) -> int:
         for item in items.values():
             if isinstance(item, Mapping):
                 count += bool(item.get("acceptance")) + bool(item.get("artifacts"))
-    parked = state.get("parked")
-    if isinstance(parked, dict):
-        for held in parked.values():
-            count += _rows_in(held)
+    for waiting in (state.get("parked"), state.get("held")):
+        if isinstance(waiting, dict):
+            for entries in waiting.values():
+                count += _rows_in(entries)
     return count
 
 
@@ -656,8 +659,11 @@ _FOLDS: Final[dict[str, _Fold]] = {
         # ``forgotten``, and a closed item past the window leaves ``items``: a
         # savepoint of the shape that holds every item would resume holding them.
         # Each item carries ``pending_since``, which a savepoint without it would
-        # resume short of.
-        state_version=_FOLD_STATE_VERSION_BASE + 2,
+        # resume short of. Three: ``held`` and ``retired`` joined the state.
+        state_version=_FOLD_STATE_VERSION_BASE + 3,
+        # The conductor's units and every bound worker's are written at once, so new
+        # entries land in the middle of the unit list; by time they land last.
+        unit_order="time",
     ),
     PANEL_FOLD_NAME: _Fold(
         PANEL_FOLD_NAME,
@@ -705,6 +711,11 @@ _FOLDS: Final[dict[str, _Fold]] = {
         affects=WORKSTREAMS_TYPES,
         copy_state=_workstreams_copy,
         count_rows=_workstreams_rows,
+        # One past the base: ``lane`` and ``lane_cursors`` joined the state.
+        state_version=_FOLD_STATE_VERSION_BASE + 1,
+        # The same conductor-and-workers unit list as ``work``, written the same way.
+        unit_order="time",
+        from_lane=_workstreams_from_lane,
     ),
     # A crewmate's own record, the two folds its Dashboard page binds for the goal and
     # for what waits on the person. Each entry is a whole snapshot the gateway appends

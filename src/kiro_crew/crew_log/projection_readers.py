@@ -28,7 +28,7 @@ from kiro_crew.crew_log.projection_catalogue import (
 from kiro_crew.crew_log.projection_kernel import Checkpoint, advance, projection_of, require_name
 from kiro_crew.crew_log.projection_registry import _FOLDS
 from kiro_crew.crew_log.projection_session_log import open_session_log
-from kiro_crew.crew_log.projection_slot_memo import fold_slot_warm_revised
+from kiro_crew.crew_log.projection_slot_memo import fold_slot_warm_revised, time_merged_read
 from kiro_crew.crew_log.projection_work import _work_units
 from kiro_crew.crew_log.projection_workers import (
     merge_render,
@@ -90,6 +90,15 @@ def fold_slot_checkpoint(name: str, unit_ids: Sequence[str], *, slot: str = "") 
     state = fold_spec.start()
     if slot and fold_spec.bind_slot is not None:
         fold_spec.bind_slot(state, slot)
+    if fold_spec.unit_order == "time":
+        # Merged across units by time, the order the warm cell folds this fold in
+        # (:func:`time_merged_read`), so the two cannot disagree about the same bytes.
+        merged = time_merged_read(name, unit_ids)
+        for _key, _unit, entry, lane in merged:
+            if lane and fold_spec.from_lane is not None:
+                fold_spec.from_lane(state, lane)
+            fold_spec.step(state, entry)
+        return Checkpoint(name=name, last_seq=merged.reached, state=state)
     reached = 0
     for unit_id in unit_ids:
         handle = open_session_log(unit_id)

@@ -298,16 +298,25 @@ def test_a_slot_fold_resumed_from_disk_records_the_savepoint_origin(rec):
     The unit is grown past the savepoint floor first, because a write is only
     earned once a fold has advanced that far: a shorter log leaves nothing on
     disk and the next pass is honestly cold.
+
+    The ``ledger`` fold, because it folds its units in list order and so keeps a
+    savepoint. The ``work`` fold merges its slots by time and writes none (its
+    resume would have to prove the tail sorts last, and the file records no
+    merge key to prove it with).
     """
     from kiro_crew.crew_log import checkpoint as savepoints
 
     handle = _slot_log("acp-health-savepoint", WORK_SLOT)
     for nth in range(savepoints.MIN_ADVANCE_ENTRIES + 4):
-        _work_entry(handle, f"it-{nth}")
-    crew_log.read_slot_projection(WORK_SLOT, "work")  # earns and writes the savepoint
+        handle.append(
+            "ledger/recorded",
+            {"slot": WORK_SLOT, "event": f"e{nth}", "event_kind": "progress"},
+            src="gateway",
+        )
+    crew_log.read_slot_projection(WORK_SLOT, "ledger")  # earns and writes the savepoint
     crew_log.forget_slot_folds()  # the cell is gone, the file beside it is not
     health.claim_fold_worker_thread()
-    eager._advance(WORK_SLOT, "work")
+    eager._advance(WORK_SLOT, "ledger")
     assert rec.attrs_for(health.FOLD_START) == [{"scope": "slot", "origin": "savepoint"}]
 
 
@@ -369,7 +378,7 @@ def test_an_applied_slot_fold_is_counted_once_with_its_name(rec):
 def test_a_slot_fold_that_raises_mid_apply_records_its_start_and_no_apply(rec, monkeypatch):
     """A fold that died AFTER choosing its start is the failing-fold signal.
 
-    The raise is planted past the start branch (`_persist_slot_fold` runs after
+    The raise is planted past the start branch (`_remember_slot_fold` runs after
     the cold fold has been stamped), so the pass really does get far enough to
     stamp an origin. Replacing `read_slot_projection` wholesale instead would
     mean the fold never started, and the assertion would hold for the wrong
@@ -382,7 +391,7 @@ def test_a_slot_fold_that_raises_mid_apply_records_its_start_and_no_apply(rec, m
     def boom(*_a, **_k):
         raise RuntimeError("fold exploded mid-apply")
 
-    monkeypatch.setattr(projection_slot_memo, "_persist_slot_fold", boom)
+    monkeypatch.setattr(projection_slot_memo, "_remember_slot_fold", boom)
     health.claim_fold_worker_thread()
     eager._advance(WORK_SLOT, "work")  # swallowed by the worker, as a bad fold is
     assert rec.attrs_for(health.FOLD_START) == [{"scope": "slot", "origin": "cold"}]

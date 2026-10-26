@@ -66,14 +66,32 @@ class ResumePoint:
     ``cuts`` is :meth:`CrewLog.cuts` as it read when the offset was taken. A cut is
     the only thing in this store that moves a committed record, so an unchanged count
     is what says the bytes BELOW the offset -- which the resumed walk does not read --
-    are the bytes they were. ``None`` is not proven and never resumes: a log with no
-    counter has no evidence for its prefix, so it gets the full walk.
+    are the bytes they were. ``None`` is not proven, and on its own never resumes: a log
+    with no counter has no counter evidence for its prefix.
+
+    ``window`` is the evidence such a log gets instead, and only it: the SHA-256 of a
+    BOUNDED stretch of the segment, :data:`RESUME_WINDOW_BYTES` before ``offset``
+    through the end of the record AT ``offset`` (:meth:`CrewLog.seal_point`). A cut is
+    the only thing that moves a committed record, and every cut truncates the file at
+    some byte and appends from there. A cut that lands above the record at ``offset``
+    moved nothing the walk consumed. One that lands inside the window changes bytes the
+    digest covers. One that lands below it rewrites the whole window too, and the new
+    bytes there are closers and later records, not a copy of the old ones. So an
+    unchanged window is what says the prefix below it is the prefix that was folded,
+    and checking it costs the window, never the log. ``None`` on a point that has a
+    counter, and on one nobody sealed, which then resumes only on the counter.
     """
 
     segment: str
     offset: int
     seq: int
     cuts: int | None
+    window: str | None = None
+
+
+#: How far below a resume point's record :meth:`CrewLog.seal_point` hashes. A bound on
+#: the bytes a counterless resume re-reads, independent of the log's length.
+RESUME_WINDOW_BYTES = 8192
 
 
 @dataclass

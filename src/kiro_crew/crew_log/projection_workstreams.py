@@ -164,6 +164,13 @@ def _workstreams_start() -> dict[str, Any]:
         # This is what a charge is attributed to; empty means no opener has been seen
         # in this unit yet, and a charge then lands in ``spend_unattributed``.
         "cursor": "",
+        # The fold merges its slots' units by time, so one unit's lines interleave with
+        # another's. ``lane`` is the slot of the unit the current line came from, and
+        # ``lane_cursors`` each lane's own cursor, so a charge is attributed to the
+        # opener of ITS unit rather than to whichever opener was merged last
+        # (:func:`_workstreams_from_lane`).
+        "lane": "",
+        "lane_cursors": {},
         "boards": {},
         "order": [],
         "omitted": 0,
@@ -211,6 +218,18 @@ def _workstreams_bind_slot(state: dict[str, Any], slot: str) -> None:
     """
     state["slot"] = slot
     state["units_omitted"] = _workstreams_units_dropped(slot)
+
+
+def _workstreams_from_lane(state: dict[str, Any], slot: str) -> None:
+    """Restore the spend cursor of the lane the next entry came from.
+
+    The fold merges its slots' units by time, so a charge can follow another slot's
+    ``session/opened``. Each lane keeps the cursor its own last opener set, and a lane
+    whose opener has not been folded yet has none, so its charges stay unattributed
+    exactly as a unit read whole would leave them.
+    """
+    state["lane"] = slot
+    state["cursor"] = state["lane_cursors"].get(slot, "")
 
 
 def _workstreams_new_board(board_id: str, slot: str, generation: str) -> dict[str, Any]:
@@ -568,6 +587,8 @@ def _workstreams_step(state: dict[str, Any], entry: Entry) -> None:
         # Where a unit begins, and the only entry that names its session's slot. Every
         # charge after this line is that session's until the next opener.
         state["cursor"] = _as_str(entry.data.get("slot"))[:TEXT_LIMIT]
+        if state["lane"]:
+            state["lane_cursors"][state["lane"]] = state["cursor"]
         return
     if entry.type == WORK_ENTRY_TYPE:
         _workstreams_advanced(state, entry)
@@ -602,6 +623,7 @@ def _workstreams_copy(state: dict[str, Any]) -> dict[str, Any]:
         # The ring itself is copied; its rows are not, because nothing mutates a row
         # after it is appended -- an event is a line of record, written once.
         "events": list(state["events"]),
+        "lane_cursors": dict(state["lane_cursors"]),
         "spend": {
             slot: {
                 **row,
@@ -940,7 +962,12 @@ def _workstreams_rows(state: Mapping[str, Any]) -> int:
     """``workstreams``: each board keeps its tasks and its hourly series, and each
     spender keeps its own series."""
     boards = state.get("boards")
-    rows = _rows_in(boards) + _rows_in(state.get("order")) + _rows_in(state.get("events"))
+    rows = (
+        _rows_in(boards)
+        + _rows_in(state.get("order"))
+        + _rows_in(state.get("events"))
+        + _rows_in(state.get("lane_cursors"))
+    )
     if isinstance(boards, dict):
         for board in boards.values():
             if isinstance(board, Mapping):

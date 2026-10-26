@@ -573,13 +573,14 @@ def test_a_memo_point_ahead_of_what_the_cell_folded_is_not_used():
 
     key = (str(crew_log.data_home()), SLOT, "ledger")
     memo = crew_log._slot_memos[key]
-    assert memo.resume is not None
-    assert memo.resume.seq == memo.reached
-    assert crew_log._resume_from(memo) is memo.resume
+    point = memo.resumes.get(UNIT)
+    assert point is not None
+    assert point.seq == memo.reached
+    assert crew_log._resume_for(memo, UNIT, memo.reached) is point
 
-    ahead = replace(memo.resume, seq=memo.resume.seq + 1)
-    assert crew_log._resume_from(replace(memo, resume=ahead)) is None
-    assert crew_log._resume_from(replace(memo, resume=None)) is None
+    ahead = replace(point, seq=point.seq + 1)
+    assert crew_log._resume_for(replace(memo, resumes={UNIT: ahead}), UNIT, memo.reached) is None
+    assert crew_log._resume_for(replace(memo, resumes={}), UNIT, memo.reached) is None
 
 
 def test_a_duplicate_seq_below_the_offset_does_not_refuse_a_resumed_walk():
@@ -629,8 +630,8 @@ def test_a_pass_that_writes_a_savepoint_keeps_its_resume_point():
     after = crew_log._slot_memos[key]
 
     assert after.saved > before.saved, "the pass did not earn a savepoint write"
-    assert after.resume is not None
-    assert after.resume.seq == after.reached
+    assert after.resumes.get(UNIT) is not None
+    assert after.resumes[UNIT].seq == after.reached
 
     _entries(UNIT, 1)
     with _Parses() as seen:

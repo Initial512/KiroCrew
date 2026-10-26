@@ -716,7 +716,7 @@ def test_two_concurrent_folds_never_pair_one_passs_seq_with_anothers_state():
     entered = threading.Event()
     b_done = threading.Event()
     held = threading.Event()
-    inner_vouched = crew_log._vouched
+    inner_weight = crew_log._cell_weight
 
     #: How long pass A waits for pass B while holding its window open. Reached only when
     #: the fix is PRESENT: B is then queued behind A's lock and cannot signal, so A waits
@@ -724,7 +724,7 @@ def test_two_concurrent_folds_never_pair_one_passs_seq_with_anothers_state():
     #: the wait costs nothing in the direction that must fail.
     _B_WAIT = 3.0
 
-    def gated_vouched(unit_id, before):
+    def gated_weight(name, registry, store):
         # The window the finding is about: pass A's stream has ENDED, so its own ``reached``
         # is fixed, but it has not yet read the shared cell to pair with it. Hold A here and
         # let another pass drive that cell past A's position.
@@ -732,7 +732,7 @@ def test_two_concurrent_folds_never_pair_one_passs_seq_with_anothers_state():
             held.set()
             entered.set()
             b_done.wait(timeout=_B_WAIT)
-        return inner_vouched(unit_id, before)
+        return inner_weight(name, registry, store)
 
     a_result: list[tuple[int, int]] = []
     b_result: list[tuple[int, int]] = []
@@ -748,7 +748,7 @@ def test_two_concurrent_folds_never_pair_one_passs_seq_with_anothers_state():
             if done is not None:
                 done.set()
 
-    with unittest.mock.patch.object(crew_log, "_vouched", gated_vouched):
+    with unittest.mock.patch.object(crew_log, "_cell_weight", gated_weight):
         pass_a = threading.Thread(target=fold, args=(a_result,))
         pass_a.start()
         assert entered.wait(timeout=10.0), "pass A never reached its window"
@@ -785,15 +785,15 @@ def test_a_finished_fold_keeps_no_lock_for_the_slot_it_folded():
     folded, which nothing bounds -- ``SLOT_FOLD_CACHE_SLOTS`` caps the memos beside it and
     says nothing about this.
     """
-    inner_vouched = crew_log._vouched
+    inner_weight = crew_log._cell_weight
     inside: list[int] = []
 
-    def watching(unit_id, before):
+    def watching(name, registry, store):
         # Mid-pass: this key's lock is held, so it must still be in the table.
         inside.append(len(crew_log._slot_fold_locks))
-        return inner_vouched(unit_id, before)
+        return inner_weight(name, registry, store)
 
-    with unittest.mock.patch.object(crew_log, "_vouched", watching):
+    with unittest.mock.patch.object(crew_log, "_cell_weight", watching):
         for index in range(3):
             unit = f"s-lock-{index}"
             slot = f"dashboard:lock-{index}"

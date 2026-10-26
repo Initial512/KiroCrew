@@ -173,6 +173,12 @@ WORK_EVENT_LIMIT: Final[int] = 200
 #: Entries parked per item while its ``create`` is still in a unit not yet folded.
 WORK_PARKED_LIMIT: Final[int] = 64
 
+#: Board generations a worker entry may be held for at once (:func:`_work_hold`).
+WORK_HELD_GENERATIONS: Final[int] = 4
+
+#: Ended board generations remembered, so an entry naming one is dropped, not held.
+WORK_RETIRED_LIMIT: Final[int] = 64
+
 #: Longest event text a line carries, the store's own excerpt bound.
 WORK_EVENT_TEXT_LIMIT: Final[int] = 500
 
@@ -228,6 +234,11 @@ def _work_start() -> dict[str, Any]:
         "order": [],
         "parked": {},
         "omitted": 0,
+        # Worker entries waiting for the conductor entry that starts their board
+        # generation, by generation (``_work_hold``), and the generations whose board
+        # ended, oldest first, as a dict for O(1) membership (``_work_retire``).
+        "held": {},
+        "retired": {},
         "entries": 0,
         "first_entry_at": "",
         "last_entry_at": "",
@@ -294,11 +305,12 @@ def _work_reset_board(state: dict[str, Any]) -> None:
     an item created before the board's first recorded entry from one created after.
     Carrying them across a reset gives the new board the old one's entry count and
     the old one's epoch, which classifies its own items as predating it.
-    ``generation`` is excluded because the caller assigns the new one immediately.
+    ``generation`` is excluded because the caller assigns the new one immediately, and
+    ``held`` and ``retired`` because they describe generations, not one board.
     """
     fresh = _work_start()
     for key, value in fresh.items():
-        if key not in ("slot", "generation"):
+        if key not in ("slot", "generation", "held", "retired"):
             state[key] = value
 
 
@@ -310,7 +322,12 @@ def _work_bind_slot(state: dict[str, Any], slot: str) -> None:
 def _work_step(state: dict[str, Any], entry: Entry) -> None:
     if entry.type != WORK_ENTRY_TYPE:
         return
-    data = entry.data
+    _work_take(state, entry.data, entry.time)
+    _work_release_held(state)
+
+
+def _work_take(state: dict[str, Any], data: dict[str, Any], stamp: int) -> None:
+    """One ``work/recorded`` entry's *data*, appended at *stamp*, applied to *state*."""
     if not state["slot"]:
         # Unbound (a caller that folded units without naming the board): only a
         # conductor's OWN action names its board. A report this session filed
@@ -346,6 +363,14 @@ def _work_step(state: dict[str, Any], entry: Entry) -> None:
         # a purged board and is omitted.
         if data.get("actor") != "conductor":
             if state["generation"] or state["entries"]:
+                if generation not in state["retired"]:
+                    # Not a board this fold has seen end. The units merge by time, so
+                    # after a clock step a worker's report on the NEXT board can sort
+                    # before the conductor entry that starts it: hold it until that
+                    # entry arrives (``_work_release_held``). One that never does is
+                    # a straggler, rendered as omitted like any other.
+                    _work_hold(state, generation, data, stamp)
+                    return
                 state["omitted"] += 1
                 return
             # Nothing folded yet and the first entry is a worker's: a board from
@@ -354,11 +379,12 @@ def _work_step(state: dict[str, Any], entry: Entry) -> None:
         elif state["entries"]:
             # Whatever came before -- a generation-stamped board or one from
             # before the stamp existed -- was the earlier board; it is dropped.
+            _work_retire(state, state["generation"])
             _work_reset_board(state)
         state["generation"] = generation
     state["entries"] += 1
     if not state["first_entry_at"]:
-        state["first_entry_at"] = _work_iso(entry.time)
+        state["first_entry_at"] = _work_iso(stamp)
     # HERE, where an entry is accepted, rather than beside any one action: this is the
     # answer to "how old is this board's information", and a reader asking that must
     # not get a different answer depending on which kind of entry came last. Taken from
@@ -374,11 +400,11 @@ def _work_step(state: dict[str, Any], entry: Entry) -> None:
     # stale -- reproducibly, since the log order never changes. Scoped to the current
     # board generation for free: the reset above runs first and clears both keys, so a
     # purged board's newest stamp cannot pin a board born after it.
-    if entry.time >= state["last_entry_ms"]:
-        state["last_entry_ms"] = entry.time
-        state["last_entry_at"] = _work_iso(entry.time)
+    if stamp >= state["last_entry_ms"]:
+        state["last_entry_ms"] = stamp
+        state["last_entry_at"] = _work_iso(stamp)
     if not state["created_at"] and data.get("actor") == "conductor":
-        state["created_at"] = _work_iso(entry.time)
+        state["created_at"] = _work_iso(stamp)
     action = _as_str(data.get("action"))
     if action == "goal":
         _work_apply_header(state, data)
@@ -399,16 +425,19 @@ def _work_step(state: dict[str, Any], entry: Entry) -> None:
         if len(state["items"]) >= WORK_ITEM_LIMIT:
             state["omitted"] += 1
             return
-        item = _work_new_item(item_id, entry.time)
+        item = _work_new_item(item_id, stamp)
         item["round"] = state["round"]
-        item["created_at"] = _work_stamp(data.get("created_at"), entry.time)
+        item["created_at"] = _work_stamp(data.get("created_at"), stamp)
         state["items"][item_id] = item
         state["order"].append(item_id)
         _work_apply_header(state, data)
-        _work_apply(item, data, entry.time)
-        # Entries seen before the create belong to a unit folded earlier than the
-        # conductor's; they were kept aside and are applied now, in time order.
-        for parked in sorted(state["parked"].pop(item_id, ()), key=lambda p: p[0]):
+        _work_apply(item, data, stamp)
+        # Entries seen before the create were kept aside and are applied now, in the
+        # order the fold met them. That order is already by time across slots and by
+        # append within one (``unit_order="time"``), so re-sorting by the raw stamp would
+        # only undo the one thing it keeps: a worker's later report, stamped earlier by a
+        # clock that stepped back, still lands last.
+        for parked in state["parked"].pop(item_id, ()):
             _work_apply(item, parked[1], parked[0])
         state["forgotten"]["created"] += 1
         _work_settle(state, item)
@@ -427,8 +456,8 @@ def _work_step(state: dict[str, Any], entry: Entry) -> None:
         if len(state["items"]) >= WORK_ITEM_LIMIT:
             state["omitted"] += 1
             return
-        item = _work_new_item(item_id, entry.time)
-        item["created_at"] = _work_stamp(data.get("created_at"), entry.time)
+        item = _work_new_item(item_id, stamp)
+        item["created_at"] = _work_stamp(data.get("created_at"), stamp)
         for name in _WORK_BASELINE_FIELDS:
             if name in data:
                 item[name] = _work_field(name, data[name])
@@ -436,7 +465,7 @@ def _work_step(state: dict[str, Any], entry: Entry) -> None:
         # before the projection keeps them across a rebuild.
         for name in ("last_report_at", "closed_at", "decided_at", "pending_since"):
             if isinstance(data.get(name), str) and data[name]:
-                item[name] = _work_stamp(data[name], entry.time)
+                item[name] = _work_stamp(data[name], stamp)
         # The baseline carries the board's lineage and goal too, whoever wrote it.
         _work_apply_header(state, data)
         # Rendered, so a reader knows this item's history before the baseline is
@@ -444,7 +473,7 @@ def _work_step(state: dict[str, Any], entry: Entry) -> None:
         item["baseline"] = True
         state["items"][item_id] = item
         state["order"].append(item_id)
-        for parked_entry in sorted(state["parked"].pop(item_id, ()), key=lambda p: p[0]):
+        for parked_entry in state["parked"].pop(item_id, ()):
             _work_apply(item, parked_entry[1], parked_entry[0])
         state["forgotten"]["created"] += 1
     if item is None:
@@ -459,7 +488,7 @@ def _work_step(state: dict[str, Any], entry: Entry) -> None:
         if len(parked) >= WORK_PARKED_LIMIT:
             state["omitted"] += 1
             return
-        parked.append([entry.time, dict(data)])
+        parked.append([stamp, dict(data)])
         return
     if data.get("baseline") is True:
         # A baseline on an item the fold already holds: the store had not stamped
@@ -467,8 +496,48 @@ def _work_step(state: dict[str, Any], entry: Entry) -> None:
         # worker's, folded after the conductor's units -- may carry a baseline too.
         # Internal, never rendered: it only protects the item's tombstone.
         item["_unrecorded"] = True
-    _work_apply(item, data, entry.time)
+    _work_apply(item, data, stamp)
     _work_settle(state, item)
+
+
+def _work_hold(state: dict[str, Any], generation: str, data: dict[str, Any], stamp: int) -> None:
+    """Keep a worker entry for a generation no conductor entry has started yet.
+
+    Bounded like the parked map: at most :data:`WORK_HELD_GENERATIONS` generations and
+    :data:`WORK_PARKED_LIMIT` entries each; past either the entry is counted omitted.
+    """
+    held = state["held"]
+    waiting = held.get(generation)
+    if waiting is None:
+        if len(held) >= WORK_HELD_GENERATIONS:
+            state["omitted"] += 1
+            return
+        waiting = held[generation] = []
+    if len(waiting) >= WORK_PARKED_LIMIT:
+        state["omitted"] += 1
+        return
+    waiting.append([stamp, dict(data)])
+
+
+def _work_release_held(state: dict[str, Any]) -> None:
+    """Apply the worker entries held for the board generation that is now current."""
+    generation = state["generation"]
+    if not generation or generation not in state["held"]:
+        return
+    for stamp, data in state["held"].pop(generation):
+        _work_take(state, data, stamp)
+
+
+def _work_retire(state: dict[str, Any], generation: str) -> None:
+    """Record that *generation*'s board ended, so a later entry naming it is a straggler."""
+    if not generation:
+        return
+    retired = state["retired"]
+    retired.pop(generation, None)
+    retired[generation] = True
+    while len(retired) > WORK_RETIRED_LIMIT:
+        retired.pop(next(iter(retired)))
+    state["held"].pop(generation, None)
 
 
 def _work_settle(state: dict[str, Any], item: dict[str, Any]) -> None:
@@ -750,7 +819,9 @@ def _work_render(state: dict[str, Any]) -> WorkBoardView:
             "generation": state["generation"],
         },
         "items": items,
-        "omitted": state["omitted"] + sum(len(p) for p in state["parked"].values()),
+        "omitted": state["omitted"]
+        + sum(len(p) for p in state["parked"].values())
+        + sum(len(h) for h in state["held"].values()),
         "forgotten": cast(
             "WorkBoardForgotten",
             dict(

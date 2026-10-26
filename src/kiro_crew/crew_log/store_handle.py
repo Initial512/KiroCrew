@@ -62,6 +62,7 @@ from kiro_crew.crew_log.store_paths import (
 from kiro_crew.crew_log.store_results import (
     DEFAULT_PAGE_LIMIT,
     MAX_PAGE_LIMIT,
+    RESUME_WINDOW_BYTES,
     STATUS_CORRUPT,
     STATUS_GONE,
     STATUS_OK,
@@ -75,6 +76,7 @@ from kiro_crew.crew_log.store_results import (
 )
 from kiro_crew.crew_log.store_segment_reads import (
     _anchor_exists,
+    _Bounded,
     _has_content,
     _iter_entries_located,
     _parses_to_object,
@@ -85,7 +87,41 @@ from kiro_crew.crew_log.store_segment_reads import (
 )
 from kiro_crew.crew_log.store_segment_writes import _append_line, _append_lines, _truncate
 from kiro_crew.crew_log.store_tail_repair import _close_interrupted_tail
-from kiro_crew.jsonl_util import bounded_raw_records
+from kiro_crew.jsonl_util import bounded_raw_records, bounded_raw_records_with_offsets
+
+
+def _window_digest(path: Path, offset: int, end: int | None) -> str | None:
+    """SHA-256 of *path*'s bytes from :data:`RESUME_WINDOW_BYTES` below *offset* through
+    the end of the record that BEGINS at *offset*, or ``None`` when there is no such record.
+
+    What :meth:`CrewLog.seal_point` stamps and :meth:`CrewLog._resume_at` re-checks on a
+    log with no cut counter. Bounded by the window plus one record, so its cost does not
+    depend on how long the log is. *end* stops the read where the append lock measured
+    the durable end, like every other read of the newest segment.
+    """
+    start = max(0, offset - RESUME_WINDOW_BYTES)
+    try:
+        with open(path, "rb") as source:
+            source.seek(start)
+            before = source.read(offset - start)
+            if len(before) != offset - start:
+                return None
+            reader: Any = source if end is None else _Bounded(source, end)
+            frames = bounded_raw_records_with_offsets(
+                reader, path, cap=MAX_ENTRY_BYTES, label="crew log"
+            )
+            first = next(frames, None)
+    except OSError:
+        return None
+    if first is None:
+        return None
+    at, stop, raw = first
+    if at != offset or raw is None:
+        return None
+    digest = hashlib.sha256(before)
+    digest.update(raw)
+    digest.update(str(stop - at).encode("ascii"))
+    return digest.hexdigest()
 
 
 class CrewLog:
@@ -957,6 +993,55 @@ class CrewLog:
                 cursor.at = ResumePoint(segment=segment, offset=at, seq=entry.seq, cuts=cuts)
             yield entry
 
+    def seal_point(self, point: ResumePoint, *, expect: "Entry | None" = None) -> ResumePoint:
+        """*point* with the evidence a log with no cut counter resumes on, or as it is.
+
+        A point that carries a count needs nothing more, and is returned untouched. One
+        without gets its ``window`` (see :class:`ResumePoint`): a bounded digest of the
+        bytes ending at the record it names. Sealed by the caller once a walk is over,
+        not per yielded record, so a walk pays for one window rather than one per
+        entry. A window that cannot be read leaves the point unsealed, which only costs
+        the next read its resume.
+
+        *expect* is the entry the walk yielded at the point. The record there is read
+        again AFTER hashing and must still be that entry, so a cut that rewrote the tail
+        between the walk and the seal cannot be sealed as though the walk had read it.
+        """
+        if point.cuts is not None:
+            return point
+        path = self._path.parent / point.segment
+        paths = segment_paths(self._kind, self._id)
+        end = self._durable_end(paths[-1]) if paths and paths[-1].name == point.segment else None
+        window = _window_digest(path, point.offset, end)
+        if window is None:
+            return point
+        if expect is not None:
+            found = next(_iter_entries_located(path, end, start=point.offset), None)
+            if found is None or found[1] != point.offset or found[0] != expect:
+                return point
+        return ResumePoint(
+            segment=point.segment,
+            offset=point.offset,
+            seq=point.seq,
+            cuts=None,
+            window=window,
+        )
+
+    def point_holds(self, point: ResumePoint) -> bool:
+        """Whether a walk could resume at *point* now: the proof that every record at
+        or below it is still the record a walk consumed when the point was issued.
+
+        The same refusals :meth:`_resume_at` makes, asked without starting a walk, so a
+        reader deciding whether state folded from those records is still good gets the
+        store's own answer rather than a second spelling of it. Costs the counter read,
+        or the sealed window, and one record -- never the prefix.
+        """
+        paths = segment_paths(self._kind, self._id)
+        if not paths:
+            return False
+        newest_end = self._durable_end(paths[-1])
+        return self._resume_at(paths, point, newest_end, self.cuts()) != (0, 0)
+
     def _durable_end(self, path: Path) -> int:
         """*path*'s size measured under the append lock: the end no append is still writing."""
         with _open_lock(_lock_path(self._kind, self._id)):
@@ -993,15 +1078,19 @@ class CrewLog:
         * **No point, or a nonsense offset.** Offset zero is the header's own
           position, so it names no entry; a negative or non-integer one names nothing
           at all.
-        * **The cut count moved, or either reading is unknown.** This is the only
+        * **The cut count moved, or only one reading is known.** This is the only
           evidence there is about the prefix the resumed walk does NOT read: a cut is
           the one thing in the store that changes a committed record, so an unchanged
           count is what says those bytes still are what they were. ``None`` is not
-          proven rather than zero (see :func:`read_cuts`), so a log with no counter
-          takes the full walk -- it has nothing to vouch for its prefix with. The
-          counter is a seqlock, so ``None`` also covers a reading taken while a cut is
-          in flight: that one is odd, and admitting it would let a reader match the
-          same odd value again over bytes the cut had meanwhile replaced.
+          proven rather than zero (see :func:`read_cuts`). The counter is a seqlock, so
+          ``None`` also covers a reading taken while a cut is in flight: that one is
+          odd, and admitting it would let a reader match the same odd value again over
+          bytes the cut had meanwhile replaced. A point and a log that BOTH read
+          ``None`` fall back to the point's sealed ``window`` instead (see
+          :class:`ResumePoint`): a point with none takes the full walk, and one whose
+          window hashes differently does too. That is what keeps a log written
+          before the counter existed from paying a walk of every record on each tail
+          read.
         * **The named segment is gone.** Retention removes whole segments off the
           front, and a point into one of them is stale rather than wrong.
         * **The offset is at or past the durable end.** Bytes past it are an append
@@ -1022,13 +1111,21 @@ class CrewLog:
             return 0, 0
         if resume.offset <= 0:
             return 0, 0
-        if resume.cuts is None or cuts is None or resume.cuts != cuts:
+        counted = resume.cuts is not None or cuts is not None
+        if counted and (resume.cuts is None or cuts is None or resume.cuts != cuts):
+            return 0, 0
+        if not counted and not resume.window:
             return 0, 0
         index = next((at for at, path in enumerate(paths) if path.name == resume.segment), None)
         if index is None:
             return 0, 0
         end = newest_end if index == len(paths) - 1 else None
         if end is not None and resume.offset >= end:
+            return 0, 0
+        if not counted and _window_digest(paths[index], resume.offset, end) != resume.window:
+            # No counter on either side, so the sealed window is the only evidence about
+            # the prefix this walk skips (see :class:`ResumePoint`). Bytes that moved
+            # inside it are a cut this point cannot vouch past.
             return 0, 0
         found = next(_iter_entries_located(paths[index], end, start=resume.offset), None)
         if found is None:
