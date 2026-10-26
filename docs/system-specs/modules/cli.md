@@ -538,6 +538,21 @@ The staged `notification_settings.json` in the same directory is rewritten by
 The merge that consumes the sanitized store reads it again by name; closing that second
 resolution is the merge's job, not the sanitizer's.
 
+`kirocrew restore` applies the same rule to its staged bundle before either mode reads
+it (`snapshot._hold_back_executables`), so a bundle restored from the CLI cannot start
+running commands on the next gateway start: a `command` or `script` cron is restored
+paused (`user_paused`, `enabled` false) and a `command` failing `_vet_shell_command` is
+dropped, through `_sanitize_imported_crons(..., drop_malformed=False)` — the restore
+keeps its own shape handling (merge skips an unusable store, replace validates it), so
+only the vet and the pause are applied. A hook in the staged `hooks.json` that has a
+`command` is restored with `enabled` false by
+`portability_vetting._disable_imported_script_hooks`, which keeps every other top-level
+key (webhook resume contexts) and leaves skill-only hooks alone; the dashboard import
+calls it too and lists the names in `disabled_hooks`. The restore prints the paused,
+disabled and dropped names, and where to switch each back on (Schedules, Hooks). A merge
+into a home that already has a `hooks.json` keeps that file, so no bundle hook is named.
+Message-only crons are restored as they are.
+
 The dashboard import's Merge follows the same never-overwrite rule as
 `kirocrew restore --mode merge` for the settings documents (`config.json`,
 `config.local.json`, `ui-prefs.json`, `notification_settings.json`): it installs one
