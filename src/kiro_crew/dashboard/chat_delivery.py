@@ -322,6 +322,22 @@ def _log_stop_race(slot: Any, stop_gen: int, *, preserved: bool) -> None:
     )
 
 
+def _engine_has_no_prompt(client: Any) -> bool:
+    """True only when *client* says plainly that no prompt is in flight.
+
+    Reads ``has_active_turn()``, which every ACP client and session provider
+    implements. A client that cannot answer keeps the steer path it had.
+    """
+    probe = getattr(client, "has_active_turn", None)
+    if not callable(probe):
+        return False
+    try:
+        return probe() is False
+    except Exception:  # noqa: BLE001 - an unreadable probe keeps the prior behavior
+        logger.debug("has_active_turn probe failed", exc_info=True)
+        return False
+
+
 async def steer_into_running_turn(
     state: "DashboardState",
     slot: "_ChatSlot",
@@ -438,6 +454,14 @@ async def steer_into_running_turn(
         # is denied. That limit is accepted only for the composer, where the
         # session's own human watches the turn and can resend; a peer's text
         # takes the caller's queue path instead.
+        return STEER_UNAVAILABLE
+    if _engine_has_no_prompt(client):
+        # The slot reads running from the moment its turn task exists, which is
+        # before the prompt reaches the engine (context build) and after it
+        # returns (queue-cycle bookkeeping). A steer written then reaches no
+        # prompt and nothing consumes it; the queue path delivers it as
+        # the next turn instead.
+        logger.info("no prompt in flight for slot %s; queueing instead of steering", slot.key)
         return STEER_UNAVAILABLE
 
     # Register as pending BEFORE the await: ``steer()`` suspends on
