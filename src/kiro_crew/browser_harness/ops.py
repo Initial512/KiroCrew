@@ -683,6 +683,14 @@ def _screenshot_path(ctx: OpContext) -> Path:
 
 
 async def _screenshot(ctx: OpContext, _args: dict[str, Any]) -> dict[str, Any]:
+    # A field the person filled through `ask` would be in the pixels (a code, an
+    # email; a password once a "show" toggle is clicked). The snapshot withholds it.
+    if await _page(ctx, "askedValues"):
+        return refusal(
+            "asked_value_on_page",
+            "a field the user filled through `ask` still holds its value; use snapshot "
+            "instead, or take the screenshot after the page moves on",
+        )
     await _step(ctx, "Take a screenshot")
     path = _screenshot_path(ctx)
     await ctx.helper("screenshot", path=str(path))

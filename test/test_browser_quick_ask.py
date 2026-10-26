@@ -13,6 +13,7 @@ the card's state -- ever contains it.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -123,7 +124,8 @@ class FakePage:
                 value: Any = dict(self.nodes[node])
             elif fn == qa._FOCUSED_JS:
                 value = self.focused == node
-            elif fn == qa._SELECT_ALL_JS:
+            elif fn == qa._PREPARE_JS:
+                self.nodes[node]["asked"] = True
                 value = True
             elif fn == qa._PASSED_JS:
                 value = self.passed
@@ -278,7 +280,12 @@ def test_the_origin_comes_from_the_committed_url(url: str, origin: str) -> None:
         ("action", {"tag": "div", "role": "button"}, ""),
         ("action", {"tag": "div"}, "wrong_type"),
         ("widget", {"tag": "iframe"}, ""),
+        ("widget", {"tag": "input", "type": "checkbox"}, ""),
+        ("widget", {"tag": "span", "role": "checkbox"}, ""),
         ("widget", {"tag": "iframe", "covered": True}, "covered"),
+        ("widget", {"tag": "button"}, "wrong_type"),
+        ("widget", {"tag": "div"}, "wrong_type"),
+        ("widget", {"tag": "iframe", "rect": [0, 0, 1280, 800]}, "too_large"),
     ],
 )
 def test_target_problems(role: str, over: dict[str, Any], problem: str) -> None:
@@ -441,10 +448,33 @@ async def test_fill_writes_only_into_the_bound_nodes_and_leaks_nowhere(
         assert "octocat" not in surface
     outcomes = [e["ask"]["outcome"] for _k, e in rec.events if e.get("actor") == "person"]
     assert outcomes == ["pending", "filled"]
+    # Both fields are marked as the person's before the write, so the walker, the
+    # frame mask and the screenshot guard withhold them afterwards.
+    assert page.nodes[page.refs["e3"]].get("asked") and page.nodes[page.refs["e4"]].get("asked")
+
+
+async def test_an_answer_that_waited_on_the_fence_past_the_turn_lands_nothing() -> None:
+    page = FakePage()
+    page.add("e2", tag="button", text="Buy")
+    hub, _rec, ask = await _asked(
+        page, {"kind": "confirm", "targets": ["action=e2"], "reason": "Buy", "summary": "Pay"}
+    )
+    fence = hub.op_fence(KEY)
+    await fence.acquire()  # an agent op is running
+    task = asyncio.ensure_future(_answer({"ask_id": ask.id, "action": "confirm"}))
+    for _ in range(50):
+        await asyncio.sleep(0.01)
+        if ask.lock.locked():
+            break
+    hub.turn_ended(KEY)  # the turn folds the ask while the answer waits
+    fence.release()
+    status, out, _ = await task
+    assert (status, out["error"]) == (409, "stale")
+    assert page.clicks() == []
 
 
 @pytest.mark.parametrize(
-    "change", ["navigate", "same_origin_nav", "rerender", "overlay", "iframe_swap"]
+    "change", ["navigate", "same_origin_nav", "rerender", "overlay", "iframe_swap", "tab_switch"]
 )
 async def test_a_page_that_moved_gets_origin_changed_and_nothing_written(change: str) -> None:
     page = FakePage()
@@ -458,6 +488,12 @@ async def test_a_page_that_moved_gets_origin_changed_and_nothing_written(change:
         page.rerender("e4")
     elif change == "overlay":
         page.nodes[page.refs["e4"]]["covered"] = True
+    elif change == "tab_switch":
+        # The agent moved to another tab: the card streams it now (same fake page,
+        # so only the target check can tell).
+        await hub.start_stream(
+            KEY, page, "tgt2", browser="edge", headless=False, stream_factory=FakeStream  # type: ignore[arg-type]
+        )
     else:
         page.nodes[page.refs["e4"]]["sameDoc"] = False
     status, out, _wire = await _answer(
@@ -591,18 +627,25 @@ async def test_human_check_takeover_is_scoped_to_the_widget_and_hands_back_on_su
     page = FakePage()
     page.add("e9", tag="iframe", rect=[100, 100, 300, 80])
     hub, _rec, ask = await _asked(page, dict(HUMAN))
+    # The page scrolled between the ask and Take over: the box is measured again.
+    page.nodes[page.refs["e9"]]["rect"] = [100, 300, 300, 80]
     status, out, _ = await _answer({"ask_id": ask.id, "action": "take_over"})
     assert (status, out) == (200, {"ok": True})
     assert hub.in_control(KEY) and ask.phase == "taken_over"
     assert lh.live_event(hub.get(KEY))["ask"]["phase"] == "taken_over"  # type: ignore[index]
     before = len(page.clicks())
-    outside = {"type": "mouse", "action": "click", "x": 50, "y": 50, "button": "left"}
-    inside = {"type": "mouse", "action": "click", "x": 150, "y": 120, "button": "left"}
-    assert await hub.input_event(KEY, outside) == 0
-    assert await hub.input_event(KEY, {"type": "wheel", "x": 150, "y": 120, "dy": 300}) == 0
-    assert await hub.input_event(KEY, {"type": "key", "key": "Tab"}) == 0
+    old_spot = {"type": "mouse", "action": "click", "x": 150, "y": 120, "button": "left"}
+    inside = {"type": "mouse", "action": "click", "x": 150, "y": 320, "button": "left"}
+    assert await hub.input_event(KEY, old_spot) == 0
+    assert await hub.input_event(KEY, {"type": "wheel", "x": 150, "y": 320, "dy": 300}) == 0
+    for key in ("Tab", " ", "Enter", "PageDown", "a"):
+        assert await hub.input_event(KEY, {"type": "key", "key": key}) == 0
     assert await hub.input_event(KEY, inside) == 2
     assert len(page.clicks()) == before + 2
+    # A rung drop halves the frame: the same CSS box is now at half the frame pixels.
+    hub.get(KEY).stream.scale = 0.5  # type: ignore[union-attr]
+    assert await hub.input_event(KEY, inside) == 0
+    assert await hub.input_event(KEY, {**inside, "x": 75, "y": 160}) == 2
     assert (await _poll(ask.id))["done"] is False
     page.passed = True
     assert await _poll(ask.id) == {"done": True, "outcome": "passed"}
@@ -611,7 +654,7 @@ async def test_human_check_takeover_is_scoped_to_the_widget_and_hands_back_on_su
 
 async def test_human_check_done_esc_and_timeout() -> None:
     page = FakePage()
-    page.add("e9", tag="div", rect=[0, 0, 50, 50])
+    page.add("e9", tag="iframe", rect=[0, 0, 50, 50])
     hub, _rec, ask = await _asked(page, dict(HUMAN))
     assert (await _answer({"ask_id": ask.id, "action": "done"}))[0] == 400  # not taken over yet
     await _answer({"ask_id": ask.id, "action": "take_over"})
@@ -644,7 +687,7 @@ async def _asked_again(hub: lh.LiveHub, page: FakePage) -> tuple[None, None, Any
 
 async def test_human_check_page_moved_during_takeover_is_origin_changed() -> None:
     page = FakePage()
-    page.add("e9", tag="div")
+    page.add("e9", tag="iframe")
     hub, _rec, ask = await _asked(page, dict(HUMAN))
     await _answer({"ask_id": ask.id, "action": "take_over"})
     page.frame.update(url="https://other.example/", loaderId="L9")
@@ -659,6 +702,39 @@ async def test_the_turn_ending_cancels_the_ask() -> None:
     hub.turn_ended(KEY)
     assert ask.outcome == "cancelled"
     assert await _poll(ask.id) == {"done": True, "outcome": "cancelled"}
+
+
+# ── what the agent can still read after a fill ──────────────────────────────
+
+
+@pytest.mark.parametrize("asked, refused", [(1, True), (0, False)])
+async def test_a_screenshot_is_refused_while_an_asked_field_holds_its_value(
+    asked: int, refused: bool, tmp_path: Path
+) -> None:
+    from kiro_crew.browser_harness import ops
+
+    calls: list[str] = []
+
+    async def helper(name: str, **kw: Any) -> Any:
+        calls.append(name)
+        if name == "js":
+            return asked if ".askedValues(" in kw["expression"] else None
+        if name == "screenshot":
+            Path(kw["path"]).write_bytes(b"png")
+        return None
+
+    out = await ops.run_op("screenshot", {}, ops.OpContext(helper=helper, screenshot_dir=tmp_path))
+    assert (out.get("code") == "asked_value_on_page") is refused
+    assert ("screenshot" in calls) is not refused
+
+
+def test_the_walker_withholds_an_asked_field_and_the_mask_covers_it() -> None:
+    from kiro_crew.browser_harness import ops, screencast
+
+    assert 'hasAttribute("data-kc-asked")' in ops.WALKER_SOURCE
+    assert "askedValues" in ops.WALKER_SOURCE
+    assert "input[data-kc-asked]" in screencast._MASK_JS
+    assert "setAttribute('data-kc-asked'" in qa._PREPARE_JS
 
 
 # ── the shim ────────────────────────────────────────────────────────────────

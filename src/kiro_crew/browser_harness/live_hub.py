@@ -164,9 +164,9 @@ class LiveSession:
     handback_options: list[str] = field(default_factory=list)
     #: The pending quick ask (``browser_harness.quick_ask.QuickAsk``), or ``None``.
     ask: Any = None
-    #: A scoped takeover's frame-pixel rect (x, y, w, h): while set, card input
-    #: outside it is dropped (:meth:`LiveHub.input_event`). Cleared on release.
-    input_rect: tuple[int, int, int, int] | None = None
+    #: A scoped takeover's rect (x, y, w, h) in viewport CSS pixels: while set, card
+    #: input outside it is dropped (:meth:`LiveHub.input_event`). Cleared on release.
+    input_rect: tuple[float, float, float, float] | None = None
 
     @property
     def relay(self) -> Relay | None:
@@ -294,16 +294,16 @@ def handback_options(raw: Any) -> list[str]:
     return out
 
 
-def _inside_scope(event: Any, rect: tuple[int, int, int, int]) -> bool:
-    """Whether a scoped takeover lets *event* through: a pointer inside *rect*, or a
-    key that is not Tab (Tab would walk focus out of the widget). Wheel never: a
-    scroll moves the page under a rect measured before it."""
-    if event.type == "key":
-        return event.key != "Tab"
-    if event.type == "wheel":
+def _inside_scope(event: Any, rect: tuple[float, float, float, float], scale: float) -> bool:
+    """Whether a scoped takeover lets *event* through: only a pointer inside *rect*
+    (viewport CSS pixels; the event is in frame pixels at the stream's current
+    *scale*). Never a key -- Space or Enter would act on whatever holds focus, and
+    arrows or PageDown scroll the page under the box -- and never a wheel."""
+    if event.type != "mouse":
         return False
+    s = scale if scale > 0 else 1.0
     x, y, w, h = rect
-    return x <= event.x <= x + w and y <= event.y <= y + h
+    return x <= event.x / s <= x + w and y <= event.y / s <= y + h
 
 
 def _step_wire(step: Step) -> dict[str, Any]:
@@ -987,12 +987,12 @@ class LiveHub:
         stream = sess.stream
         if stream is None or not stream.session_id:
             raise LookupError("no_stream")
+        scale = float(getattr(stream, "scale", 1.0) or 1.0)
         if sess.input_rect is not None and not _inside_scope(
-            parse_input_event(event), sess.input_rect
+            parse_input_event(event), sess.input_rect, scale
         ):
             # A scoped takeover (a human_check): only the widget's box takes input.
             return 0
-        scale = float(getattr(stream, "scale", 1.0) or 1.0)
         sent = await dispatch_input(stream.relay, stream.session_id, event, scale=scale)
         stream.note_input()
         if self.recorder is not None:

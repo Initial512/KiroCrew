@@ -602,8 +602,9 @@ _ASK_OUTCOME_TEXT = {
     "passed": "the user finished the check. Take a snapshot and continue.",
     "confirmed": "the user confirmed and the button was clicked once. Take a snapshot.",
     "cancelled": "the user dismissed the ask, or the turn moved on. Nothing was entered.",
-    "origin_changed": "the page changed before the answer could land, so nothing was "
-    "entered. Take a snapshot and ask again only if it is still needed.",
+    "origin_changed": "the page changed under the ask, so the answer may not have landed "
+    "(or may have only partly landed). Take a snapshot to see where the page is before "
+    "asking again; never repeat a payment or purchase without checking.",
     "timed_out": "the user did not answer in time. Tell them what you need and end your turn.",
 }
 

@@ -104,6 +104,9 @@
   // name/id/autocomplete does. The snapshot drops its value and `type` refuses it.
   function secretish(el) {
     if (inputType(el) === "password") return true;
+    // A field the person filled through a quick ask (quick_ask.py marks it before the
+    // write): whatever it holds now is theirs, whatever its type or name says.
+    if (el.hasAttribute && el.hasAttribute("data-kc-asked")) return true;
     return SECRET_NAME_RE.test(
       (el.getAttribute("name") || "") + " " + (el.getAttribute("id") || "") + " " +
       (el.getAttribute("autocomplete") || "")
@@ -533,6 +536,15 @@
       installConsoleHook();
       var buf = window.__kcConsole || [];
       return buf.slice(Math.max(0, buf.length - limit));
+    },
+
+    // How many fields the person filled through a quick ask still hold a value in
+    // the top document: the agent's `screenshot` is refused while this is not 0.
+    askedValues: function () {
+      var n = 0;
+      var found = document.querySelectorAll("[data-kc-asked]");
+      for (var i = 0; i < found.length; i++) if (found[i].value) n++;
+      return n;
     },
 
     // How many password inputs have a box on the page, by the live view's mask

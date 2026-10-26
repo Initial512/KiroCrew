@@ -572,7 +572,8 @@ class Relay(Protocol):
 #:
 #: A secret field is ``input[type=password]``, an input whose ``autocomplete``
 #: names a password or a one-time code (a "show password" toggle turns the type
-#: to ``text`` and usually keeps that), or one styled with ``-webkit-text-security``.
+#: to ``text`` and usually keeps that), one styled with ``-webkit-text-security``,
+#: or one the person filled through a quick ask (``data-kc-asked``, quick_ask.py).
 #: The reply is ``{"boxes": [...], "frames": [...], "partial": bool}``.
 #: Same-origin iframes are walked too, their boxes offset by the iframe's content
 #: box; ``frames`` holds the boxes of visible embedded documents that cannot be
@@ -586,7 +587,7 @@ class Relay(Protocol):
 _MASK_JS = (
     "(()=>{const r=[],f=[];let partial=false;"
     "const SEL='input[type=password],input[autocomplete~=current-password],"
-    "input[autocomplete~=new-password],input[autocomplete~=one-time-code]';"
+    "input[autocomplete~=new-password],input[autocomplete~=one-time-code],input[data-kc-asked]';"
     "const OPAQUE={OBJECT:1,EMBED:1,FENCEDFRAME:1,PORTAL:1};"
     "const vis=b=>b.width>0&&b.height>0;"
     "const plain=e=>{for(let n=e;n;n=n.parentElement||(n.getRootNode&&n.getRootNode().host)||null){"

@@ -70,6 +70,10 @@ REFUSED = "refused"
 REASON_MAX = 80
 SUMMARY_MAX = 120
 BUTTON_TEXT_MAX = 60
+#: The largest human_check widget, in CSS pixels: a challenge pane (reCAPTCHA's is
+#: about 400 x 580), never a whole page.
+WIDGET_MAX_W = 520
+WIDGET_MAX_H = 720
 OTP_DIGITS_MIN = 4
 OTP_DIGITS_MAX = 10
 #: The answer route's caps.
@@ -228,6 +232,8 @@ class QuickAsk:
     #: The scoped takeover this ask claimed (human_check): input outside this
     #: frame-pixel rect is dropped while it is held.
     claimed: bool = False
+    #: The tab (CDP target) the card streamed when the ask was bound.
+    target_id: str = ""
     #: One answer at a time: a double-clicked Fill runs once.
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -242,10 +248,6 @@ class QuickAsk:
         self.outcome = outcome
         self.settled.set()
         return True
-
-    def widget_rect(self) -> tuple[int, int, int, int]:
-        """The human_check widget's rect in frame pixels (x, y, w, h)."""
-        return _frame_rect(self.bindings[0].rect, self.scale)
 
     def wire(self) -> dict[str, Any]:
         """The card's ``ask`` field. Built from bound state only, never page text but the button."""
@@ -328,8 +330,11 @@ _FOCUSED_JS = """function () {
   return root.activeElement === this;
 }"""
 
-#: Put the caret over the field's whole value so the insert replaces it.
-_SELECT_ALL_JS = """function () {
+#: Mark the field as the person's (the snapshot walker, the frame mask and the
+#: screenshot guard then withhold its value) and put the caret over its whole
+#: value so the insert replaces it.
+_PREPARE_JS = """function () {
+  this.setAttribute('data-kc-asked', '');
   try { if (typeof this.select === 'function') this.select(); } catch (e) {}
   return true;
 }"""
@@ -456,6 +461,19 @@ def target_problem(role: str, info: dict[str, Any]) -> str:
     elif role in ("username", "text", "otp"):
         if tag != "input" or typ not in _TEXT_TYPES:
             return "wrong_type"
+    elif role == "widget":
+        # A CAPTCHA frame or a checkbox, no bigger than a challenge pane: never a
+        # button or a page-sized box the person's "tick" would land on.
+        boxy = (
+            tag == "iframe"
+            or (tag == "input" and typ == "checkbox")
+            or info.get("role") == "checkbox"
+        )
+        if not boxy:
+            return "wrong_type"
+        rect = info.get("rect") or [0, 0, 0, 0]
+        if float(rect[2]) > WIDGET_MAX_W or float(rect[3]) > WIDGET_MAX_H:
+            return "too_large"
     elif role == "action":
         clickable = (
             tag == "button"
@@ -543,9 +561,11 @@ async def fill(probe: PageProbe, ask: QuickAsk, values: dict[str, str]) -> None:
         if value is None:
             continue
         await probe._send("DOM.focus", {"backendNodeId": b.node})
+        await probe.call(b.node, ctx, _PREPARE_JS)
+        # The focus proof is the LAST read before the insert, so the window in which
+        # a page script could move focus is one round trip.
         if await probe.call(b.node, ctx, _FOCUSED_JS) is not True:
             raise AskError(ORIGIN_CHANGED)
-        await probe.call(b.node, ctx, _SELECT_ALL_JS)
         try:
             await probe.relay.send("Input.insertText", {"text": value}, probe.session_id)
         except asyncio.CancelledError:
@@ -563,10 +583,21 @@ async def click_once(probe: PageProbe, ask: QuickAsk) -> None:
     ctx = await verify(probe, ask)
     b = ask.bindings[0]
     info = await probe.inspect(b.node, ctx)
+    if target_problem(b.role, info):
+        raise AskError(ORIGIN_CHANGED)
     x, y, w, h = (float(v) for v in info["rect"])
     point = {"x": round(x + w / 2, 2), "y": round(y + h / 2, 2), "button": "left", "clickCount": 1}
     await probe._send("Input.dispatchMouseEvent", {"type": "mousePressed", **point})
     await probe._send("Input.dispatchMouseEvent", {"type": "mouseReleased", **point})
+
+
+async def widget_rect_now(probe: PageProbe, ask: QuickAsk) -> tuple[float, float, float, float]:
+    """The human_check widget's rect in viewport CSS pixels, measured NOW (re-verified):
+    a scroll or layout shift since the ask must not move the person's box off it."""
+    ctx = await verify(probe, ask)
+    info = await probe.inspect(ask.bindings[0].node, ctx)
+    x, y, w, h = (float(v) for v in info["rect"])
+    return x, y, w, h
 
 
 async def human_check_passed(probe: PageProbe, ask: QuickAsk) -> bool:

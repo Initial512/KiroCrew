@@ -112,6 +112,7 @@ async def run_ask(hub: LiveHub, key: str, args: dict[str, Any]) -> dict[str, Any
         _audit("browser_ask", "refused", exc.code)
         return _refused(exc.code)
     ask.start_clock(asyncio.get_running_loop().time())
+    ask.target_id = str(stream.target_id)
     assert sess is not None
     sess.ask = ask
     _record(hub, key, ask, "ask", "pending")
@@ -133,8 +134,12 @@ async def _finish(hub: LiveHub, key: str, ask: qa.QuickAsk, action: str, outcome
 
 
 async def _tick(hub: LiveHub, key: str, ask: qa.QuickAsk) -> None:
-    """Lazy upkeep on every poll: the deadline, and a human_check's takeover."""
-    if ask.outcome:
+    """Lazy upkeep on every poll: the deadline, and a human_check's takeover.
+
+    Skipped while an answer is running: it settles the ask itself, and a timeout
+    stamped under a click that then lands would tell the agent the wrong thing.
+    """
+    if ask.outcome or ask.lock.locked():
         return
     if asyncio.get_running_loop().time() >= ask.deadline:
         await _finish(hub, key, ask, "timeout", qa.TIMED_OUT)
@@ -148,6 +153,9 @@ async def _tick(hub: LiveHub, key: str, ask: qa.QuickAsk) -> None:
         return
     stream = sess.stream
     if stream is None or not stream.session_id:
+        return
+    if stream.target_id != ask.target_id:
+        await _finish(hub, key, ask, "page_moved", qa.ORIGIN_CHANGED)
         return
     try:
         passed = await qa.human_check_passed(qa.PageProbe(stream.relay, stream.session_id), ask)
@@ -251,6 +259,10 @@ async def _act(
     if sess is None or stream is None or not stream.session_id:
         await _finish(hub, key, ask, action, qa.ORIGIN_CHANGED)
         return _answer(False, 409, error=qa.ORIGIN_CHANGED)
+    if stream.target_id != ask.target_id:
+        # The card now shows another tab: the bound page is not the one on screen.
+        await _finish(hub, key, ask, action, qa.ORIGIN_CHANGED)
+        return _answer(False, 409, error=qa.ORIGIN_CHANGED)
     probe = qa.PageProbe(stream.relay, stream.session_id)
     if action == "done":
         if ask.phase != qa.PHASE_TAKEN_OVER:
@@ -262,6 +274,10 @@ async def _act(
         return await _take_over(hub, key, ask, probe)
     try:
         async with hub.op_fence(key):
+            # The fence may have waited on an agent op: the ask can have ended
+            # meanwhile (the turn folded it), and a late write or click must not land.
+            if ask.outcome or asyncio.get_running_loop().time() >= ask.deadline:
+                return _answer(False, 409, error="stale")
             if action == "fill":
                 assert values is not None
                 await qa.fill(probe, ask, values)
@@ -283,7 +299,7 @@ async def _take_over(hub: LiveHub, key: str, ask: qa.QuickAsk, probe: qa.PagePro
         return _answer(True)
     try:
         async with hub.op_fence(key):
-            await qa.verify(probe, ask)
+            rect = await qa.widget_rect_now(probe, ask)
     except qa.AskError:
         await _finish(hub, key, ask, "take_over", qa.ORIGIN_CHANGED)
         return _answer(False, 409, error=qa.ORIGIN_CHANGED)
@@ -295,7 +311,7 @@ async def _take_over(hub: LiveHub, key: str, ask: qa.QuickAsk, probe: qa.PagePro
         # Scoped BEFORE the claim publishes in_control, so no card event can land
         # outside the box. Only a takeover this ask makes is scoped; one the person
         # already had stays theirs.
-        sess.input_rect = ask.widget_rect()
+        sess.input_rect = rect
     try:
         claimed = await hub.claim(key)
     except LookupError:
