@@ -16,6 +16,7 @@ template reads, and the agentic ``for_you`` value's trip through the existing
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -785,12 +786,21 @@ def test_the_step_does_not_edit_the_state_it_was_given() -> None:
 
 
 class _Handle:
-    """Just enough of a log handle for the walk: entries, read from one."""
+    """Just enough of a log handle for the walk: entries, read from one.
+
+    ``kind``, ``id`` and ``path`` name no file, so the walk's per-unit memo
+    (``_unit_work_marks``) can never prove this log unchanged and reads it whole on
+    every call, which is what these tests count on.
+    """
+
+    kind = "session"
+    id = "u-fake-handle"
+    path = Path("/nonexistent-crew-log/u-fake-handle/00000001.jsonl")
 
     def __init__(self, entries: list[Entry]) -> None:
         self._entries = entries
 
-    def iter_from(self, _seq: int, known: Any = None) -> "list[Entry]":
+    def iter_from(self, _seq: int, known: Any = None, **_walk: Any) -> "list[Entry]":
         return self._entries
 
 

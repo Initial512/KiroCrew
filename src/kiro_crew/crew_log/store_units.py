@@ -12,6 +12,8 @@ be proved is refused.
 
 from __future__ import annotations
 
+import os
+import time
 from collections.abc import Collection
 from pathlib import Path
 from typing import Any
@@ -128,6 +130,48 @@ def unprovable_session_units() -> int:
 #: costs a scan and cannot produce a wrong answer. ``None`` means nothing is cached.
 _slot_index: "tuple[tuple[Any, ...], dict[str, tuple[str, ...]], tuple[str, ...]] | None" = None
 
+#: ``[0]`` is the root stat a listing was taken under and the ``_slot_index`` triple that
+#: listing produced, or None. Present only when that stat is TRUSTED
+#: (:func:`_trusted_root_stat`): a later call whose own stat of the root is equal answers
+#: from the triple without listing the root. Tied to the triple by identity, so a triple
+#: written any other way -- a rebuild, a test planting one -- is never served on a stat it
+#: was not built under. A one-slot list mutated in place, never rebound, so the store
+#: facade can bind the same object (``_slot_index`` is the one rebound global).
+_SLOT_INDEX_TRUST: "list[tuple[tuple[Any, ...] | None, object] | None]" = [None]
+
+#: How far behind the moment of the listing the root's last change must lie before an
+#: unchanged stat may stand in for a listing. A filesystem stamps a change with a clock
+#: that ticks coarser than ``time.time_ns`` (a kernel tick on ext4 and xfs, 2 s on FAT),
+#: so a second create landing in the same tick as the listed state leaves mtime, ctime
+#: and -- for a purge plus a create -- the link count all equal. A listing whose root
+#: changed inside this window is therefore not trusted, and the next call lists again;
+#: once the root has been still for longer than the window, any later change stamps a
+#: strictly newer time and the stat sees it, whichever process made it. This is git's
+#: "racily clean" rule applied to a directory.
+_RACY_WINDOW_NS = 2_000_000_000
+
+
+def _root_stat_key(root: Path) -> "tuple[Any, ...] | None":
+    """The root's identity and change stamps, from one ``stat``; None when it will not stat."""
+    try:
+        stat = root.stat()
+    except OSError:
+        return None
+    return (str(root), stat.st_dev, stat.st_ino, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_nlink)
+
+
+def _trusted_root_stat(key: "tuple[Any, ...] | None", listed_at_ns: int) -> bool:
+    """Whether a listing taken at *listed_at_ns* under stat *key* may be reused on that stat.
+
+    *key* must be taken BEFORE the listing: a change between the stat and the listing
+    then moves the stamps away from *key*, and the next call lists again instead of
+    reusing a listing that may or may not include it.
+    """
+    if key is None:
+        return False
+    changed_ns = max(key[3], key[4])
+    return changed_ns < listed_at_ns - _RACY_WINDOW_NS
+
 
 def _slot_root_fingerprint(root: Path, names: "list[str]") -> "tuple[Any, ...]":
     """What must be unchanged for a cached slot map to still be current.
@@ -203,8 +247,33 @@ def session_units_by_slot(*, strict: bool = False) -> "dict[str, tuple[str, ...]
     global _slot_index
     try:
         root = _checked_crew_log_root(KIND_SESSION)
-        names = sorted(child.name for child in root.iterdir())
     except (CrewLogError, OSError):
+        if strict:
+            raise
+        return {}
+    # The O(1) answer. One ``stat`` of the root, compared with the stat the cached map
+    # was listed under; equal and trusted means no unit has appeared or disappeared
+    # since, in this process or any other (see ``_RACY_WINDOW_NS``), so the listing and
+    # its sort are skipped. Children the map could not prove are still re-checked: a
+    # header published inside an existing directory does not touch the root's stat.
+    listed_at_ns = time.time_ns()
+    stat_key = _root_stat_key(root)
+    cached = _slot_index
+    trust = _SLOT_INDEX_TRUST[0]
+    if (
+        cached is not None
+        and trust is not None
+        and trust[1] is cached
+        and stat_key is not None
+        and trust[0] == stat_key
+        and not _any_now_provable(root, cached[2])
+    ):
+        if strict:
+            _refuse_unprovable_unit(root, cached[2])
+        return cached[1]
+    try:
+        names = sorted(os.listdir(root))
+    except OSError:
         # No store, or one that could not be scanned. A read takes the empty listing;
         # a caller that would VALIDATE against the listing passes ``strict`` and gets
         # the failure instead, because an empty listing taken for a scan that failed
@@ -215,6 +284,9 @@ def session_units_by_slot(*, strict: bool = False) -> "dict[str, tuple[str, ...]
     fingerprint = _slot_root_fingerprint(root, names)
     cached = _slot_index
     if cached is not None and cached[0] == fingerprint and not _any_now_provable(root, cached[2]):
+        _SLOT_INDEX_TRUST[0] = (
+            (stat_key, cached) if _trusted_root_stat(stat_key, listed_at_ns) else None
+        )
         if strict:
             _refuse_unprovable_unit(root, cached[2])
         return cached[1]
@@ -248,7 +320,9 @@ def session_units_by_slot(*, strict: bool = False) -> "dict[str, tuple[str, ...]
         order = created if isinstance(created, int) and not isinstance(created, bool) else 0
         rows.setdefault(unit_slot, []).append((order, unit_id))
     by_slot = {key: tuple(unit for _order, unit in sorted(found)) for key, found in rows.items()}
-    _slot_index = (fingerprint, by_slot, tuple(unproven))
+    built = (fingerprint, by_slot, tuple(unproven))
+    _slot_index = built
+    _SLOT_INDEX_TRUST[0] = (stat_key, built) if _trusted_root_stat(stat_key, listed_at_ns) else None
     if strict:
         _refuse_unprovable_unit(root, tuple(unproven))
     return by_slot
