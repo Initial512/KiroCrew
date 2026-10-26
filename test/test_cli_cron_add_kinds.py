@@ -12,6 +12,7 @@ argparse-level exclusivity of the schedule and job-kind flag groups.
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import sys
 import time
@@ -620,6 +621,20 @@ class TestRefusals:
             sel.return_value.log_api_access.assert_not_called()
         assert "could not write the cron store" in err
         assert "No space left on device" in err
+        assert "read-only" not in err
+
+    @pytest.mark.parametrize("code", (errno.EROFS, errno.EBUSY, errno.EPERM))
+    def test_a_sealed_store_says_it_is_read_only(self, home, capsys, code):
+        # Inside an agent sandbox crons.json is read-only; say so, not just errno.
+        with (
+            patch("kiro_crew.cli_commands.CronService") as svc_cls,
+            patch("kiro_crew.cli_commands.sel"),
+            patch("kiro_crew.cli_commands._vet_shell_command", return_value=None),
+        ):
+            svc_cls.return_value.add_job.side_effect = OSError(code, "sealed")
+            err = _refused(_ns(message="", every=300, shell_command="ls"), capsys)
+        assert "could not write the cron store" in err
+        assert "read-only inside an agent sandbox" in err
 
 
 # ---------------------------------------------------------------------------

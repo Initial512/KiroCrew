@@ -210,6 +210,9 @@ class TestKeystonesAreSealedInEveryMode:
         # here could swap the bytes in between. The file-edit gate refuses the edit;
         # only the kernel denial asserted here refuses the shell's.
         "models",
+        # The cron job store: a record picks the agent a fire runs and whether its
+        # tool calls auto-approve, and the gateway reloads the file on any change.
+        "crons.json",
     )
 
     @_POSIX_ONLY

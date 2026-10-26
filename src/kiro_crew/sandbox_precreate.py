@@ -181,7 +181,7 @@ assert set(_CREW_NOFOLLOW_READONLY_DIR_LEAVES) <= set(_CREW_PRECREATE_READONLY_D
 #: the seal is intact around a name that now means something else. For ``cloud.json``
 #: that name decides which container image a Fargate launch runs, and the task's
 #: execution role delivers the model credential into it.
-_CREW_NOFOLLOW_READONLY_FILE_LEAVES: tuple[str, ...] = ("cloud.json",)
+_CREW_NOFOLLOW_READONLY_FILE_LEAVES: tuple[str, ...] = ("cloud.json", "crons.json")
 
 #: Every strict no-alias crew-home leaf a DELEGATED spawn's workspace must not overlap, with
 #: the wording that names which seal an operator is looking at. The refusal's target list is
@@ -261,6 +261,11 @@ _DELEGATED_OVERLAP_LEAF_REASONS: "dict[str, tuple[str, str]]" = {
     "app-agent-launch": (
         "sealed app-agent launch directory",
         "the agent could plant the agent spec kiro-cli runs for an app's own agent",
+    ),
+    "crons.json": (
+        "sealed cron job store",
+        "the agent could write a scheduled job, or turn on auto-approve for one, "
+        "that no owner approved",
     ),
 }
 assert set(_DELEGATED_OVERLAP_LEAF_REASONS) == set(_CREW_NOFOLLOW_READONLY_FILE_LEAVES) | set(
@@ -383,6 +388,12 @@ _CREW_PRECREATE_READONLY_FILE_LEAVES: tuple[str, ...] = (
     # stop. An empty lock file is absent-equivalent by definition: its content
     # is never read, only its identity is locked.
     "agent_model_state.json.lock",
+    # The cron job store. Criterion 1: the store loader reads ``{}`` as no jobs
+    # (``data.get("jobs", [])``), exactly as it reads an absent file, and the
+    # gateway's first save replaces it with a full document. Criterion 2: a
+    # sandboxed reader frozen at an older store sees fewer or older jobs, which
+    # grants nothing, since every scheduling decision is the gateway's.
+    "crons.json",
 )
 
 #: The one masked leaf that carries its own argument (see the sibling-gap note

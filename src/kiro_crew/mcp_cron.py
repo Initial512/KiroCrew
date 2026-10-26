@@ -17,6 +17,7 @@ Tools:
 
 from __future__ import annotations
 
+import errno
 import importlib as _importlib
 import logging
 import os
@@ -213,7 +214,7 @@ def _call_tool(name: str, raw_args: dict[str, Any]) -> str:
             # subagent) with no injected caller is the non-pooled gateway
             # topology, where a refused dial is an outage of the gateway that
             # validates the call: report it, never write around it.
-            return _call_tool_locally(name, raw_args)
+            return _call_tool_on_local_store(name, raw_args)
         if response.get("error"):
             advice = (
                 " Outcome unknown; check cron_list before retrying a mutation."
@@ -228,7 +229,32 @@ def _call_tool(name: str, raw_args: dict[str, Any]) -> str:
                 "Check cron_list before retrying a mutation."
             )
         return result
-    return _call_tool_locally(name, raw_args)
+    return _call_tool_on_local_store(name, raw_args)
+
+
+#: The errnos a sealed store answers a write with: ``EROFS`` writing through the
+#: Linux read-only bind, ``EBUSY`` renaming over it, ``EPERM``/``EACCES`` from the
+#: macOS Seatbelt profile.
+_STORE_WRITE_DENIED_ERRNOS = frozenset({errno.EROFS, errno.EBUSY, errno.EPERM, errno.EACCES})
+
+
+def _call_tool_on_local_store(name: str, raw_args: dict[str, Any]) -> str:
+    """The runtime's direct-store fallback, with a sealed store reported, not raised.
+
+    Inside the agent sandbox ``crons.json`` is read-only, so a mutation that
+    reaches this fallback (no gateway to forward it to) cannot be written. Say
+    that plainly instead of letting the ``OSError`` escape the tool call.
+    """
+    try:
+        return _call_tool_locally(name, raw_args)
+    except OSError as exc:
+        if exc.errno not in _STORE_WRITE_DENIED_ERRNOS:
+            raise
+        return (
+            "Error: the cron store is read-only here (agent sandbox), so nothing "
+            "was changed. Start Kiro Crew so the call goes through the gateway, "
+            "or manage the job on the Schedule page."
+        )
 
 
 def _call_tool_locally(name: str, raw_args: dict[str, Any]) -> str:
@@ -736,6 +762,28 @@ def _owned_by(jobs: list[CronJob], session_key: str) -> list[CronJob]:
     return [j for j in jobs if j.session_key == session_key]
 
 
+_AUTO_APPROVAL_OWNER_ONLY = (
+    "Error: approval_mode 'auto' can only be turned on by the owner. "
+    "Create or update the job without it, then ask the user to turn on "
+    "auto-approve for this job on the Schedule page."
+)
+
+
+def _refuse_tool_auto_approval(tool_name: str, args: dict[str, Any]) -> str:
+    """Refuse a tool call that would turn on ``approval_mode="auto"``.
+
+    An auto job approves every tool call of every later fire with nobody
+    watching, so it is the owner's switch: the Schedule page's owner-gated
+    routes set it. A tool caller cannot be told apart from other code running
+    in the same session (both reach this handler the same way), so no tool
+    call may set it. ``""`` (the default, hook-based approval) is unaffected.
+    """
+    if args.get("approval_mode") != "auto":
+        return ""
+    _log_cron_denial(tool_name, _AUTO_APPROVAL_OWNER_ONLY)
+    return _AUTO_APPROVAL_OWNER_ONLY
+
+
 def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
     """Execute a cron tool (post-validation)."""
     svc = CronService(base_dir=config_dir())
@@ -791,6 +839,9 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         if cap_err:
             _log_cron_denial("cron_add", cap_err)
             return cap_err
+        auto_err = _refuse_tool_auto_approval("cron_add", args)
+        if auto_err:
+            return auto_err
         n = args["name"]
         msg = args.get("message", "")
         script = args.get("script", "")
@@ -1020,6 +1071,9 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         own_err = _check_cron_job_ownership(svc, jid)
         if own_err:
             return own_err
+        auto_err = _refuse_tool_auto_approval("cron_update", args)
+        if auto_err:
+            return auto_err
         kwargs: dict[str, Any] = {}
         for key in ("name", "message"):
             if key in args and args[key]:

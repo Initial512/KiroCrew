@@ -437,7 +437,18 @@ def _cron_add(svc: CronService, args: argparse.Namespace) -> None:
         # dir). _save is tmp-then-rename, so the store is untouched and the
         # refusal contract still holds: reason on stderr, exit 1, nothing
         # written -- not a traceback an installer cannot classify.
-        _cron_add_fail(f"could not write the cron store: {e}")
+        # Read here, not at module level: the facade mirrors every module-level
+        # import of its owners. EROFS/EBUSY (Linux read-only bind) and
+        # EPERM/EACCES (macOS Seatbelt) are how the sandbox's sealed store answers.
+        import errno
+
+        hint = (
+            ". The store is read-only inside an agent sandbox: use the cron tools "
+            "or the Schedule page instead"
+            if e.errno in (errno.EROFS, errno.EBUSY, errno.EPERM, errno.EACCES)
+            else ""
+        )
+        _cron_add_fail(f"could not write the cron store: {e}{hint}")
     sched_desc = _format_schedule(job.schedule, tz_name=job.timezone or "")
     # Once add_job persists, the caller-facing contract is the printed id and exit 0.
     # An audit failure must not turn a committed job into a spurious non-zero exit

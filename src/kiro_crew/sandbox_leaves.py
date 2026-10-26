@@ -740,6 +740,17 @@ _CREW_READONLY_LEAVES: tuple[str, ...] = (
     # absent until the first spawn prepares a view, and a link at the name would seal
     # the referent and leave the name replaceable.
     "skill-projection",
+    # The cron job store. Each record says which agent a fire runs, with what
+    # message or command, and whether its tool calls auto-approve, and the gateway
+    # reloads the file whenever its bytes change. A sandboxed writer could therefore
+    # mint or rewrite a job no owner approved. Read-only, not hidden: in-sandbox
+    # readers (``kirocrew cron list``, a script cron's reads) keep working. Every
+    # legitimate writer is outside the sandbox: the in-sandbox cron MCP server
+    # forwards every call to the gateway, and the local fallback and
+    # ``kirocrew cron add`` in an agent shell now report a read-only store instead
+    # of writing. On the precreate list (an absent store reads as no jobs, the same
+    # as ``{}``) and the no-follow list (a link at the name would seal the referent).
+    "crons.json",
 )
 
 #: Crew-home leaves that MUST stay read-write for a sandboxed process. Every entry is
@@ -761,9 +772,6 @@ _CREW_SANDBOX_VISIBLE_LEAVES: tuple[str, ...] = (
     # How an in-sandbox MCP server authenticates back to the dashboard. Masking it
     # breaks cron triggering, screencast, and the Sage review driver.
     ".local_secret",
-    # ``mcp_cron`` builds a ``CronService(base_dir=config_dir())`` in-sandbox and both
-    # reads and rewrites the job store through it.
-    "crons.json",
 )
 
 

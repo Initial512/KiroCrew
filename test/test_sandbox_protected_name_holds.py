@@ -393,7 +393,17 @@ class TestLeafOnlyPopulationIsRecorded:
     #:   (``notifications/push_store.py``), masked as a whole directory so the
     #:   ``atomic_write`` temps they publish through are hidden too. At the data-home
     #:   root beside writable siblings, so leaf-only is the only hold.
-    EXPECTED: dict[str, int] = {"standard": 296, "cc": 303, "strict": 304}
+    #:
+    #: One more root-level leaf, three entries per tier:
+    #:
+    #: * ``crons.json`` -- the cron job store. A record picks the agent a fire
+    #:   runs and whether its tool calls auto-approve, and the gateway reloads the
+    #:   file on any change, so a writable copy mints a job no owner approved. It
+    #:   sits at the data-home root beside writable siblings (``.crons.lock``,
+    #:   ``cron-history``), so leaf-only is the only hold available. The gateway
+    #:   republishes it on every save, so this hold is the shortest-lived of the
+    #:   root leaves; the enclosing-directory move above is what makes it durable.
+    EXPECTED: dict[str, int] = {"standard": 299, "cc": 306, "strict": 307}
 
     @pytest.mark.parametrize("tier", TIERS)
     def test_leaf_only_count_has_not_grown(self, tier: str) -> None:
