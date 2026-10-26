@@ -179,7 +179,9 @@ async def api_browser_ask_poll(request: web.Request) -> web.Response:
     except Exception:
         body = None
     if not isinstance(body, dict) or not isinstance(body.get("session_key"), str):
-        return web.json_response({"error": "session_key required"}, status=400)
+        return web.json_response(
+            {"error": "session_key required", "code": "session_key_required"}, status=400
+        )
     hub = get_live_hub()
     key = live_session_key(body["session_key"])
     sess = hub.get(key)
@@ -201,8 +203,14 @@ async def api_browser_ask_poll(request: web.Request) -> web.Response:
     return web.json_response({"done": True, "outcome": ask.outcome})
 
 
-def _answer(ok: bool, status: int = 200, **fields: Any) -> web.Response:
-    return web.json_response({"ok": ok, **fields}, status=status)
+def _ok(**fields: Any) -> web.Response:
+    return web.json_response({"ok": True, **fields})
+
+
+def _fail(status: int, error: str, code: str = "") -> web.Response:
+    """A refusal: ``error`` is the word the card reads; ``code`` repeats it unless
+    the owner gate names a finer one."""
+    return web.json_response({"ok": False, "error": error, "code": code or error}, status=status)
 
 
 async def api_browser_ask_answer(request: web.Request) -> web.Response:
@@ -211,39 +219,39 @@ async def api_browser_ask_answer(request: web.Request) -> web.Response:
 
     if request.get("internal_auth") is True:
         _audit("browser_ask_answer", "denied", "internal secret refused")
-        return _answer(False, 403, error="not_owner", code="internal_secret_required")
+        return _fail(403, "not_owner", "internal_secret_required")
     refusal = await require_owner_dashboard_request(request, "browser_ask_answer")
     if refusal is not None:
-        return _answer(False, 403, error="not_owner", code="owner_only")
+        return _fail(403, "not_owner", "owner_only")
     body, err = await read_bounded_json(request, max_bytes=qa.ANSWER_BODY_MAX)
     if err is not None or body is None:
         if err is not None and err.status == 413:
-            return _answer(False, 413, error="too_large")
-        return _answer(False, 400, error="bad_action")
+            return _fail(413, "too_large")
+        return _fail(400, "bad_action")
     key = _owned_session_key(request, body)
     hub = get_live_hub()
     sess = hub.get(key) if key else None
     ask = sess.ask if sess is not None else None
     if key is None or ask is None or ask.outcome or ask.id != body.get("ask_id"):
-        return _answer(False, 409, error="stale")
+        return _fail(409, "stale")
     action = body.get("action")
     if action not in qa.ACTIONS[ask.spec.kind]:
-        return _answer(False, 400, error="bad_action")
+        return _fail(400, "bad_action")
     values: dict[str, str] | None = None
     if action == "fill":
         raw = body.get("values")
         if isinstance(raw, dict) and any(
             isinstance(v, str) and len(v) > qa.VALUE_MAX for v in raw.values()
         ):
-            return _answer(False, 413, error="too_large")
+            return _fail(413, "too_large")
         values = qa.check_values(ask, raw)
         if values is None:
-            return _answer(False, 400, error="bad_action")
+            return _fail(400, "bad_action")
     async with ask.lock:
         if not ask.outcome and asyncio.get_running_loop().time() >= ask.deadline:
             await _finish(hub, key, ask, "timeout", qa.TIMED_OUT)
         if ask.outcome:
-            return _answer(False, 409, error="stale")
+            return _fail(409, "stale")
         return await _act(hub, key, ask, str(action), values)
 
 
@@ -252,26 +260,26 @@ async def _act(
 ) -> web.Response:
     if action == "decline":
         await _finish(hub, key, ask, action, qa.DECLINED)
-        return _answer(True, outcome=qa.DECLINED)
+        return _ok(outcome=qa.DECLINED)
     if action == "cancel":
         await _finish(hub, key, ask, action, qa.CANCELLED)
-        return _answer(True, outcome=qa.CANCELLED)
+        return _ok(outcome=qa.CANCELLED)
     sess = hub.get(key)
     stream = sess.stream if sess is not None else None
     if sess is None or stream is None or not stream.session_id:
         await _finish(hub, key, ask, action, qa.ORIGIN_CHANGED)
-        return _answer(False, 409, error=qa.ORIGIN_CHANGED)
+        return _fail(409, qa.ORIGIN_CHANGED)
     if stream.target_id != ask.target_id:
         # The card now shows another tab: the bound page is not the one on screen.
         await _finish(hub, key, ask, action, qa.ORIGIN_CHANGED)
-        return _answer(False, 409, error=qa.ORIGIN_CHANGED)
+        return _fail(409, qa.ORIGIN_CHANGED)
     probe = qa.PageProbe(stream.relay, stream.session_id)
     if action == "done":
         if ask.phase != qa.PHASE_TAKEN_OVER:
-            return _answer(False, 400, error="bad_action")
+            return _fail(400, "bad_action")
         # The person's word: the widget may live in a frame we cannot read.
         await _finish(hub, key, ask, action, qa.PASSED)
-        return _answer(True, outcome=qa.PASSED)
+        return _ok(outcome=qa.PASSED)
     if action == "take_over":
         return await _take_over(hub, key, ask, probe)
     try:
@@ -279,7 +287,7 @@ async def _act(
             # The fence may have waited on an agent op: the ask can have ended
             # meanwhile (the turn folded it), and a late write or click must not land.
             if ask.outcome or asyncio.get_running_loop().time() >= ask.deadline:
-                return _answer(False, 409, error="stale")
+                return _fail(409, "stale")
             if action == "fill":
                 assert values is not None
                 await qa.fill(probe, ask, values)
@@ -290,24 +298,24 @@ async def _act(
     except qa.AskError:
         # Nothing about why rides on the answer: the page moved, or would not take it.
         await _finish(hub, key, ask, action, qa.ORIGIN_CHANGED)
-        return _answer(False, 409, error=qa.ORIGIN_CHANGED)
+        return _fail(409, qa.ORIGIN_CHANGED)
     await _finish(hub, key, ask, action, outcome)
-    return _answer(True, outcome=outcome)
+    return _ok(outcome=outcome)
 
 
 async def _take_over(hub: LiveHub, key: str, ask: qa.QuickAsk, probe: qa.PageProbe) -> web.Response:
     """human_check: the person gets the widget's box, and nothing else, for its timeout."""
     if ask.phase == qa.PHASE_TAKEN_OVER:
-        return _answer(True)
+        return _ok()
     try:
         async with hub.op_fence(key):
             rect = await qa.widget_rect_now(probe, ask)
     except qa.AskError:
         await _finish(hub, key, ask, "take_over", qa.ORIGIN_CHANGED)
-        return _answer(False, 409, error=qa.ORIGIN_CHANGED)
+        return _fail(409, qa.ORIGIN_CHANGED)
     sess = hub.get(key)
     if sess is None:
-        return _answer(False, 409, error="stale")
+        return _fail(409, "stale")
     held_already = sess.lock.held()
     if not held_already:
         # Scoped BEFORE the claim publishes in_control, so no card event can land
@@ -321,14 +329,14 @@ async def _take_over(hub: LiveHub, key: str, ask: qa.QuickAsk, probe: qa.PagePro
     if not claimed:
         if not held_already:
             sess.input_rect = None
-        return _answer(False, 409, error="stale")
+        return _fail(409, "stale")
     ask.claimed = not held_already
     # The card zooms onto the box it is told about: the one measured just now.
     ask.bindings[0].rect = rect
     ask.phase = qa.PHASE_TAKEN_OVER
     _record(hub, key, ask, "take_over", "taken_over")
     await hub.ask_changed(key)
-    return _answer(True)
+    return _ok()
 
 
 __all__ = ["api_browser_ask_answer", "api_browser_ask_poll", "run_ask"]

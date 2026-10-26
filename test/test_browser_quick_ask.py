@@ -517,7 +517,10 @@ async def test_a_page_that_moved_gets_origin_changed_and_nothing_written(change:
     status, out, _wire = await _answer(
         {"ask_id": ask.id, "action": "fill", "values": {"username": "u", "password": CANARY}}
     )
-    assert (status, out) == (409, {"ok": False, "error": "origin_changed"})
+    assert (status, out) == (
+        409,
+        {"ok": False, "error": "origin_changed", "code": "origin_changed"},
+    )
     assert page.written() == []
     assert (await _poll(ask.id))["outcome"] == "origin_changed"
 
@@ -556,7 +559,7 @@ async def test_values_that_do_not_fit_the_ask_are_bad_action(values: Any) -> Non
     _login(page)
     _hub, _rec, ask = await _asked(page, dict(CREDS))
     status, out, _ = await _answer({"ask_id": ask.id, "action": "fill", "values": values})
-    assert (status, out) == (400, {"ok": False, "error": "bad_action"})
+    assert (status, out) == (400, {"ok": False, "error": "bad_action", "code": "bad_action"})
     assert page.written() == [] and not ask.outcome
 
 

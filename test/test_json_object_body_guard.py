@@ -197,6 +197,12 @@ _CAP_REGISTER: dict[str, tuple[str, str]] = {
     # event, reopen, close): small fixed-shape bodies, so the route keeps a 4 KiB
     # cap of its own, well under the shared default.
     "handlers/browser_live.py::_run": ("_MAX_BODY_BYTES", _BOUNDED_EXPLICIT),
+    # A quick-ask answer: an id, an action and at most a few values of 1 KiB each,
+    # so the route caps the body at 8 KiB, well under the shared default.
+    "handlers/browser_ask.py::api_browser_ask_answer": (
+        "qa.ANSWER_BODY_MAX",
+        _BOUNDED_EXPLICIT,
+    ),
     # The UI-preference backup stores values up to MAX_VALUE_BYTES (64 KB) and a
     # document up to MAX_TOTAL_BYTES, so the shared 64 KB default -- exactly one
     # legal value, with no room for the JSON envelope -- would 413 a patch the
