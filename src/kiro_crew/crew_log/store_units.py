@@ -130,47 +130,74 @@ def unprovable_session_units() -> int:
 #: costs a scan and cannot produce a wrong answer. ``None`` means nothing is cached.
 _slot_index: "tuple[tuple[Any, ...], dict[str, tuple[str, ...]], tuple[str, ...]] | None" = None
 
-#: ``[0]`` is the root stat a listing was taken under and the ``_slot_index`` triple that
-#: listing produced, or None. Present only when that stat is TRUSTED
-#: (:func:`_trusted_root_stat`): a later call whose own stat of the root is equal answers
-#: from the triple without listing the root. Tied to the triple by identity, so a triple
-#: written any other way -- a rebuild, a test planting one -- is never served on a stat it
-#: was not built under. A one-slot list mutated in place, never rebound, so the store
-#: facade can bind the same object (``_slot_index`` is the one rebound global).
-_SLOT_INDEX_TRUST: "list[tuple[tuple[Any, ...] | None, object] | None]" = [None]
+#: ``[0]`` is ``(stat, triple, first_listed_ns, verified)`` for the ``_slot_index``
+#: triple, or None. *stat* is the root stat taken just before the listing that produced
+#: *triple*; *first_listed_ns* is the monotonic time the first listing under that stat
+#: COMPLETED; *verified* says a second listing, whose stat was taken at least
+#: :data:`_RACY_WINDOW_NS` after that completion, saw the same stat and the same names. Only a verified record is served without a
+#: listing. Tied to the triple by identity, so a triple written any other way -- a
+#: rebuild, a test planting one -- is never served on a stat it was not built under. A
+#: one-slot list mutated in place, never rebound, so the store facade can bind the same
+#: object (``_slot_index`` is the one rebound global).
+_SLOT_INDEX_TRUST: "list[tuple[tuple[Any, ...] | None, object, int, bool] | None]" = [None]
 
-#: How far behind the moment of the listing the root's last change must lie before an
-#: unchanged stat may stand in for a listing. A filesystem stamps a change with a clock
-#: that ticks coarser than ``time.time_ns`` (a kernel tick on ext4 and xfs, 2 s on FAT),
-#: so a second create landing in the same tick as the listed state leaves mtime, ctime
-#: and -- for a purge plus a create -- the link count all equal. A listing whose root
-#: changed inside this window is therefore not trusted, and the next call lists again;
-#: once the root has been still for longer than the window, any later change stamps a
-#: strictly newer time and the stat sees it, whichever process made it. This is git's
-#: "racily clean" rule applied to a directory.
+#: How long after the first listing under a stat the confirming listing must wait. A
+#: filesystem stamps a change with a clock that ticks coarser than a listing takes (a
+#: kernel tick on ext4 and xfs, 2 s on FAT), so a create landing in the same tick as the
+#: listed state can leave mtime, ctime and link count all equal. Every such create
+#: happens within one tick of the first listing, so a second listing taken a full window
+#: later sees it by name. After that, a change can only stamp a later tick than the one
+#: the stat holds, so an equal stat means an equal directory. Only the root's own stamps
+#: are compared with each other; the local clock measures elapsed time and is never
+#: compared with a filesystem stamp, so a data home whose server clock is off this
+#: host's is handled the same way. This is git's "racily clean" rule without its clock
+#: comparison.
 _RACY_WINDOW_NS = 2_000_000_000
 
 
+def _monotonic_ns() -> int:
+    """The local elapsed-time clock the confirming listing waits on."""
+    return time.monotonic_ns()
+
+
 def _root_stat_key(root: Path) -> "tuple[Any, ...] | None":
-    """The root's identity and change stamps, from one ``stat``; None when it will not stat."""
+    """The root's identity, change stamps and link count, from one ``stat``.
+
+    None when the root will not stat.
+    """
     try:
         stat = root.stat()
     except OSError:
         return None
-    return (str(root), stat.st_dev, stat.st_ino, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_nlink)
+    return (
+        str(root),
+        stat.st_dev,
+        stat.st_ino,
+        stat.st_mtime_ns,
+        stat.st_ctime_ns,
+        stat.st_nlink,
+        stat.st_size,
+    )
 
 
-def _trusted_root_stat(key: "tuple[Any, ...] | None", listed_at_ns: int) -> bool:
-    """Whether a listing taken at *listed_at_ns* under stat *key* may be reused on that stat.
+def _next_trust(
+    stat_key: "tuple[Any, ...] | None", triple: object, started_ns: int, done_ns: int
+) -> "tuple[tuple[Any, ...] | None, object, int, bool] | None":
+    """The trust record after a listing under *stat_key* produced *triple*.
 
-    *key* must be taken BEFORE the listing: a change between the stat and the listing
-    then moves the stamps away from *key*, and the next call lists again instead of
-    reusing a listing that may or may not include it.
+    *started_ns* is read before this call's stat and *done_ns* after its listing. A
+    listing under the same stat as a record for the same triple confirms it when its stat
+    was taken a full window after that record's first listing COMPLETED, so a stall
+    anywhere inside either call cannot shrink the gap between the two looks. Any other
+    listing starts a new, unconfirmed record stamped with its own completion.
     """
-    if key is None:
-        return False
-    changed_ns = max(key[3], key[4])
-    return changed_ns < listed_at_ns - _RACY_WINDOW_NS
+    if stat_key is None:
+        return None
+    held = _SLOT_INDEX_TRUST[0]
+    if held is not None and held[0] == stat_key and held[1] is triple:
+        confirmed = held[3] or started_ns - held[2] >= _RACY_WINDOW_NS
+        return (stat_key, triple, held[2], confirmed)
+    return (stat_key, triple, done_ns, False)
 
 
 def _slot_root_fingerprint(root: Path, names: "list[str]") -> "tuple[Any, ...]":
@@ -252,11 +279,11 @@ def session_units_by_slot(*, strict: bool = False) -> "dict[str, tuple[str, ...]
             raise
         return {}
     # The O(1) answer. One ``stat`` of the root, compared with the stat the cached map
-    # was listed under; equal and trusted means no unit has appeared or disappeared
+    # was listed and confirmed under; equal means no unit has appeared or disappeared
     # since, in this process or any other (see ``_RACY_WINDOW_NS``), so the listing and
     # its sort are skipped. Children the map could not prove are still re-checked: a
     # header published inside an existing directory does not touch the root's stat.
-    listed_at_ns = time.time_ns()
+    now_ns = _monotonic_ns()
     stat_key = _root_stat_key(root)
     cached = _slot_index
     trust = _SLOT_INDEX_TRUST[0]
@@ -264,6 +291,7 @@ def session_units_by_slot(*, strict: bool = False) -> "dict[str, tuple[str, ...]
         cached is not None
         and trust is not None
         and trust[1] is cached
+        and trust[3]
         and stat_key is not None
         and trust[0] == stat_key
         and not _any_now_provable(root, cached[2])
@@ -273,6 +301,7 @@ def session_units_by_slot(*, strict: bool = False) -> "dict[str, tuple[str, ...]
         return cached[1]
     try:
         names = sorted(os.listdir(root))
+        listed_ns = _monotonic_ns()
     except OSError:
         # No store, or one that could not be scanned. A read takes the empty listing;
         # a caller that would VALIDATE against the listing passes ``strict`` and gets
@@ -284,9 +313,7 @@ def session_units_by_slot(*, strict: bool = False) -> "dict[str, tuple[str, ...]
     fingerprint = _slot_root_fingerprint(root, names)
     cached = _slot_index
     if cached is not None and cached[0] == fingerprint and not _any_now_provable(root, cached[2]):
-        _SLOT_INDEX_TRUST[0] = (
-            (stat_key, cached) if _trusted_root_stat(stat_key, listed_at_ns) else None
-        )
+        _SLOT_INDEX_TRUST[0] = _next_trust(stat_key, cached, now_ns, listed_ns)
         if strict:
             _refuse_unprovable_unit(root, cached[2])
         return cached[1]
@@ -322,7 +349,7 @@ def session_units_by_slot(*, strict: bool = False) -> "dict[str, tuple[str, ...]
     by_slot = {key: tuple(unit for _order, unit in sorted(found)) for key, found in rows.items()}
     built = (fingerprint, by_slot, tuple(unproven))
     _slot_index = built
-    _SLOT_INDEX_TRUST[0] = (stat_key, built) if _trusted_root_stat(stat_key, listed_at_ns) else None
+    _SLOT_INDEX_TRUST[0] = _next_trust(stat_key, built, now_ns, listed_ns)
     if strict:
         _refuse_unprovable_unit(root, tuple(unproven))
     return by_slot

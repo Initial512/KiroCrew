@@ -12,13 +12,14 @@ from typing import Any, Final
 # Reads the work-unit listing (``work_crew_log_units``) from ``session_ledger``.
 from kiro_crew import session_ledger
 from kiro_crew.crew_log.entry_types import WORK_ENTRY_TYPE
+from kiro_crew.crew_log.projection_catalogue import KNOWN_TYPES
+from kiro_crew.crew_log.projection_session_log import open_session_log
 from kiro_crew.crew_log.projection_usage import _CREDIT_SOURCE_OF, _credit_charge
 from kiro_crew.crew_log.projection_values import TEXT_LIMIT, _as_id, _as_int, _as_str, _rows_in
 from kiro_crew.crew_log.projection_work import (
     _WORK_BASELINE_FIELDS,
     _WORK_CONDUCTOR_FIELDS,
     _WORK_WORKER_FIELDS,
-    _unit_work_marks,
     _work_field,
     _work_iso,
     _work_stamp,
@@ -968,12 +969,14 @@ def _workstreams_binds_in(unit_ids: Iterable[str]) -> "tuple[str, ...]":
     workers: list[str] = []
     seen: set[str] = set()
     for unit_id in unit_ids:
-        # Remembered per unit and read only past what was already seen
-        # (:func:`_unit_work_marks`), so a pass after one append reads that append.
-        for _board, action, _baseline, worker in _unit_work_marks(unit_id):
-            if action != "bind":
+        handle = open_session_log(unit_id)
+        if handle is None:
+            continue
+        for entry in handle.iter_from(1, known=KNOWN_TYPES):
+            if entry.type != WORK_ENTRY_TYPE or entry.data.get("action") != "bind":
                 continue
-            if worker and worker not in seen:
+            worker = entry.data.get("worker_session_key")
+            if isinstance(worker, str) and worker and worker not in seen:
                 seen.add(worker)
                 workers.append(worker)
     return tuple(workers)

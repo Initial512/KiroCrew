@@ -4,20 +4,18 @@ the conductor's slot, and which units that board spans.
 
 from __future__ import annotations
 
-import threading
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Final, cast
 
 # Reads the work-unit listing (``work_crew_log_units``) from ``session_ledger``.
 from kiro_crew import session_ledger
-from kiro_crew.config.paths import data_home
 from kiro_crew.crew_log.entry_types import WORK_ENTRY_TYPE
 from kiro_crew.crew_log.projection_catalogue import KNOWN_TYPES
 from kiro_crew.crew_log.projection_ledger import _ledger_iso
-from kiro_crew.crew_log.projection_session_log import _log_identity, open_session_log
+from kiro_crew.crew_log.projection_session_log import open_session_log
 from kiro_crew.crew_log.projection_values import TEXT_LIMIT, _as_id, _as_int, _as_str
 from kiro_crew.crew_log.schema import Entry
-from kiro_crew.crew_log.store import ReadCursor, ResumePoint, read_cuts, session_units_by_slot
+from kiro_crew.crew_log.store import session_units_by_slot
 from kiro_crew.work_vocab import (
     WORK_BLOCKED_REASONS,
     WORK_CLOSED_WINDOW,
@@ -35,133 +33,6 @@ from kiro_crew.work_vocab import (
 # --------------------------------------------------------------------------- #
 # work -- the conductor work board, keyed by the conductor's slot
 # --------------------------------------------------------------------------- #
-
-
-#: One binding a ``work/recorded`` entry records, reduced to what the unit walks read:
-#: the board's slot, ``"bind"`` for a bind action (else ``""``), whether it is a
-#: baseline, and the worker it names.
-_WorkMark = tuple[str, str, bool, str]
-
-#: How many distinct marks one unit may hold in the memo. A mark is a distinct
-#: (board, kind, worker) binding, not an entry, so an ordinary board holds a few dozen
-#: however long it runs; a unit past this is answered by a whole-log walk every time and
-#: is not remembered, which keeps every remembered field bounded.
-_WORK_MARKS_PER_UNIT: Final[int] = 1024
-
-#: How many units' work marks are remembered at once. A mark set is a few strings per
-#: ``work/recorded`` entry, and the walks only visit units on a board tree, so this bounds
-#: memory against a data home with many boards rather than shaping the ordinary case.
-_WORK_MARKS_UNITS: Final[int] = 4096
-
-#: ``(data home, unit id)`` -> ``(origin, size, mtime, cuts, last seq, resume point,
-#: marks)``: what :func:`_unit_work_marks` read from one unit and the stat fingerprint of
-#: the segment set it read. Insertion-ordered so the oldest is dropped first.
-_work_marks_memo: "dict[tuple[str, str], tuple[Any, ...]]" = {}
-_work_marks_guard = threading.Lock()
-
-
-def forget_work_marks() -> None:
-    """Drop every remembered unit's work marks, so the next walk reads each unit whole."""
-    with _work_marks_guard:
-        _work_marks_memo.clear()
-
-
-def _unit_work_marks(unit_id: str) -> "tuple[_WorkMark, ...]":
-    """Every distinct binding *unit_id*'s ``work/recorded`` entries record, in the order
-    each first appears.
-
-    Only the entries the walks act on become marks -- a ``bind``, or a baseline -- and
-    only those naming a worker; a repeat of a mark already held adds nothing. Both walks
-    keep the first-seen order of each worker among the marks they select, and the first
-    occurrence of every mark is kept, so that order is unchanged by the dedupe.
-
-    The bind walks (:func:`_work_units`, the workstreams closure) need only who was bound
-    to which board, and they run on every read of the ``work`` and ``workstreams`` folds,
-    including the eager folder's pass after every append. Reading each conductor unit
-    from seq 1 on every pass made each pass cost every entry the board's units ever
-    held. So the marks are remembered per unit, and a later call reads only what was
-    appended since:
-
-    * the segment set's stat fingerprint (:func:`_log_identity`: creation identity, total
-      size and segment count, newest mtime) unchanged and the cut counter unchanged -- the
-      remembered marks are the answer, with no entry read;
-    * the same file grown (total size not smaller), the cut counter unchanged -- the walk
-      resumes at the remembered point (:meth:`CrewLog.iter_from` ``resume=``) and reads
-      only the new tail;
-    * anything else -- a recreated log, a cut, an identity that cannot be read -- the unit
-      is read whole, exactly as before.
-
-    The fingerprint is taken BEFORE the walk, so an append landing during it leaves the
-    remembered fingerprint behind the file and the next call reads the tail again; the
-    walk resumes past the last entry it yielded, so nothing is counted twice. A walk that
-    raises remembers nothing, and the error reaches the caller as it did before. A unit
-    holding more than :data:`_WORK_MARKS_PER_UNIT` distinct marks is answered in full and
-    not remembered.
-    """
-    handle = open_session_log(unit_id)
-    key = (str(data_home()), unit_id)
-    if handle is None:
-        with _work_marks_guard:
-            _work_marks_memo.pop(key, None)
-        return ()
-    origin, size, mtime = _log_identity(handle)
-    cuts = read_cuts(handle.path.parent)
-    with _work_marks_guard:
-        held = _work_marks_memo.get(key)
-    marks: list[_WorkMark] = []
-    held_marks: set[_WorkMark] = set()
-    start = 1
-    resume: "ResumePoint | None" = None
-    if (
-        held is not None
-        and origin is not None
-        and cuts is not None
-        and held[0] == origin
-        and held[3] == cuts
-        and size is not None
-        and held[1] is not None
-        and size >= held[1]
-    ):
-        if held[1] == size and held[2] == mtime:
-            with _work_marks_guard:
-                # Refreshed on a hit, so the bound evicts the unit read longest ago
-                # rather than the one remembered first.
-                if _work_marks_memo.get(key) is held:
-                    _work_marks_memo.pop(key)
-                    _work_marks_memo[key] = held
-            return cast("tuple[_WorkMark, ...]", held[6])
-        # Grown, never shrunk: an append only adds bytes, so a smaller segment set is
-        # a rewrite and is read whole below.
-        marks = list(held[6])
-        held_marks = set(marks)
-        start = held[4] + 1
-        resume = held[5]
-    cursor = ReadCursor()
-    last_seq = start - 1
-    for entry in handle.iter_from(start, known=KNOWN_TYPES, resume=resume, cursor=cursor):
-        last_seq = entry.seq
-        if entry.type != WORK_ENTRY_TYPE:
-            continue
-        data = entry.data
-        worker = data.get("worker_session_key")
-        bind = "bind" if data.get("action") == "bind" else ""
-        baseline = data.get("baseline") is True
-        if not isinstance(worker, str) or not worker or not (bind or baseline):
-            continue
-        mark = (_as_str(data.get("slot")), bind, baseline, worker)
-        if mark not in held_marks:
-            held_marks.add(mark)
-            marks.append(mark)
-    found = tuple(marks)
-    point = cursor.at if cursor.at is not None else resume
-    with _work_marks_guard:
-        _work_marks_memo.pop(key, None)
-        if len(found) > _WORK_MARKS_PER_UNIT:
-            return found
-        _work_marks_memo[key] = (origin, size, mtime, cuts, last_seq, point, found)
-        while len(_work_marks_memo) > _WORK_MARKS_UNITS:
-            _work_marks_memo.pop(next(iter(_work_marks_memo)))
-    return found
 
 
 def _work_units(
@@ -207,17 +78,24 @@ def _work_units(
     workers: list[str] = []
     seen: set[str] = set()
     for unit_id in conductor_units:
-        for board, action, baseline, worker in _unit_work_marks(unit_id):
-            if board != slot:
+        handle = open_session_log(unit_id)
+        if handle is None:
+            continue
+        for entry in handle.iter_from(1, known=KNOWN_TYPES):
+            if entry.type != WORK_ENTRY_TYPE:
+                continue
+            data = entry.data
+            if _as_str(data.get("slot")) != slot:
                 continue
             # A BASELINE names its worker too, and it is the only record of that
             # binding once the ``bind`` entry's unit is pruned: a board rebuilt from
             # baselines has the worker in every item and no `bind` action anywhere, so
             # a scan for the action alone collects none of their units and every task
             # on that board reports a cost nobody can be charged for.
-            if action != "bind" and not baseline:
+            if data.get("action") != "bind" and data.get("baseline") is not True:
                 continue
-            if worker and worker not in seen:
+            worker = data.get("worker_session_key")
+            if isinstance(worker, str) and worker and worker not in seen:
                 seen.add(worker)
                 workers.append(worker)
     units = list(conductor_units)

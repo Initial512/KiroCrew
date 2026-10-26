@@ -180,14 +180,6 @@ def test_a_new_entry_is_folded_from_the_remembered_position(monkeypatch) -> None
     after = _view()
     whole = list(reads)
     reads.clear()
-    # Discovery remembers each unit's work marks and reads only what was appended since
-    # (``_unit_work_marks``), so on an unchanged log it streams nothing. Dropping that
-    # memo makes this call stream as much as discovery did inside the read above (one
-    # stream per unit, here the tail of the one unit), so the subtraction still isolates
-    # the fold's own stream.
-    from kiro_crew.crew_log import projection_work
-
-    projection_work.forget_work_marks()
     crew_log._slot_units_for_fold(SLOT, WORK_FOLD)
     discovery = list(reads)
 
