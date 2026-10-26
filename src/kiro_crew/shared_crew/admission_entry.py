@@ -475,8 +475,12 @@ async def admit_background_run(
     session_key: str,
     probe: Callable[[str], OperationState | None] | None,
     cancel: Callable[[str], Any] | None = None,
+    body: object = None,
 ) -> _gate.Admission:
     """Admit a background run that starts now or is refused; it never queues here.
+
+    *body* joins the replay digest, so a retry under the same key with a
+    different body is an idempotency conflict, as a chat send is.
 
     The caller starts the run only when admitted, then calls
     ``attach_child(run_id)``; the gate's tick settles the record through
@@ -497,7 +501,7 @@ async def admit_background_run(
         session_key=session_key or operation.value,
         operation=operation,
         idempotency_key=_gate.idempotency_key_of(request),
-        digest=_gate.request_digest(operation.value, session_key),
+        digest=_gate.request_digest(operation.value, session_key, body),
         allow_queue=False,
     )
     if admission.admitted and not admission.replayed and admission.work is not None:

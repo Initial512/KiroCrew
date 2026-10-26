@@ -409,6 +409,7 @@ async def api_workflow_definition_run(request: web.Request) -> web.Response:
         out = await _start_admitted(
             request,
             svc,
+            body,
             lambda: svc.start_definition(
                 request.match_info.get("workflow_ref", ""),
                 input_text=input_text,
@@ -483,7 +484,7 @@ def _opt_int(value: Any) -> Optional[int]:
     return value
 
 
-async def _admit_workflow_run(request: web.Request, svc: Any) -> Any:
+async def _admit_workflow_run(request: web.Request, svc: Any, body: dict[str, Any]) -> Any:
     """Fair admission (Shared Crew) for a workflow run: it starts now or is refused."""
     from kiro_crew.shared_crew.admission import OperationKind
     from kiro_crew.shared_crew.admission_entry import admit_background_run, workflow_probe
@@ -494,11 +495,15 @@ async def _admit_workflow_run(request: web.Request, svc: Any) -> Any:
         session_key=request.headers.get("X-Session-Key", "") or "workflow",
         probe=workflow_probe(svc),
         cancel=getattr(svc, "cancel", None),
+        body=body,
     )
 
 
 async def _start_admitted(
-    request: web.Request, svc: Any, start: Callable[[], Awaitable[dict[str, Any]]]
+    request: web.Request,
+    svc: Any,
+    body: dict[str, Any],
+    start: Callable[[], Awaitable[dict[str, Any]]],
 ) -> dict[str, Any] | web.Response:
     """Start a workflow run under fair admission (Shared Crew): now, or refused.
 
@@ -507,7 +512,7 @@ async def _start_admitted(
     """
     from kiro_crew.shared_crew.containment import principal_scope
 
-    run_admission = await _admit_workflow_run(request, svc)
+    run_admission = await _admit_workflow_run(request, svc, body)
     if run_admission.rejected:
         return run_admission.refusal_response()
     if run_admission.replayed:
@@ -563,7 +568,7 @@ async def api_workflow_run(request: web.Request) -> web.Response:
         return refusal
     from kiro_crew.shared_crew.containment import principal_scope
 
-    run_admission = await _admit_workflow_run(request, svc)
+    run_admission = await _admit_workflow_run(request, svc, body)
     if run_admission.rejected:
         return run_admission.refusal_response()
     if run_admission.replayed:
@@ -637,6 +642,7 @@ async def api_workflow_run_intent(request: web.Request) -> web.Response:
         out = await _start_admitted(
             request,
             svc,
+            body,
             lambda: svc.start_from_intent(
                 intent,
                 name=body.get("name", "") or "",
@@ -829,6 +835,7 @@ async def api_workflow_run_rerun(request: web.Request) -> web.Response:
         out = await _start_admitted(
             request,
             svc,
+            body,
             lambda: svc.rerun_subtree(
                 run_id,
                 from_index,

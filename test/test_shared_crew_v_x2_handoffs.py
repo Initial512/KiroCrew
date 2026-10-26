@@ -116,7 +116,7 @@ async def test_workflow_replay_never_starts_or_abandons(
     tmp_path, monkeypatch, service, path, attached
 ):
     request = _request(_state(None), json_body={"source": "async def workflow(ctx): pass"})
-    first = await workflows._admit_workflow_run(request, SimpleNamespace())
+    first = await workflows._admit_workflow_run(request, SimpleNamespace(), {})
     if attached:
         await first.attach_child("original-run")
     replay = ag.Admission(
@@ -128,7 +128,7 @@ async def test_workflow_replay_never_starts_or_abandons(
     monkeypatch.setattr(workflows, "_svc", lambda request: svc)
     monkeypatch.setattr(workflows, "_private_memory_refusal", AsyncMock(return_value=None))
     if path == "helper":
-        response = await workflows._start_admitted(request, svc, start)
+        response = await workflows._start_admitted(request, svc, {}, start)
     else:
         response = await workflows.api_workflow_run(request)
     start.assert_not_awaited()
@@ -229,7 +229,19 @@ async def test_workflow_same_key_returns_original_execution(monkeypatch, service
     request = _request(_state(None))
     monkeypatch.setattr(ag, "idempotency_key_of", lambda request: "workflow-retry-key")
     start = AsyncMock(return_value={"run_id": "original-run"})
-    first = await workflows._start_admitted(request, SimpleNamespace(), start)
-    second = await workflows._start_admitted(request, SimpleNamespace(), start)
+    first = await workflows._start_admitted(request, SimpleNamespace(), {"source": "a"}, start)
+    second = await workflows._start_admitted(request, SimpleNamespace(), {"source": "a"}, start)
     assert first["run_id"] == json.loads(second.body)["run_id"] == "original-run"
+    start.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_workflow_same_key_with_a_changed_body_is_a_conflict(monkeypatch, service):
+    request = _request(_state(None))
+    monkeypatch.setattr(ag, "idempotency_key_of", lambda request: "workflow-retry-key")
+    start = AsyncMock(return_value={"run_id": "original-run"})
+    await workflows._start_admitted(request, SimpleNamespace(), {"source": "a"}, start)
+    changed = await workflows._start_admitted(request, SimpleNamespace(), {"source": "b"}, start)
+    assert changed.status == 409
+    assert json.loads(changed.body)["code"] == "idempotency_conflict"
     start.assert_awaited_once()

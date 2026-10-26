@@ -230,6 +230,28 @@ async def test_queue_expiry_ends_unstarted_work(tmp_path, clock):
 
 
 @pytest.mark.asyncio
+async def test_promotion_expires_a_ticket_whose_expiry_passed_before_the_tick(tmp_path, clock):
+    store = _open(tmp_path / "t.db", clock)
+    svc = _service(store, clock, principal_concurrency=1)
+    hold = await _admit(svc, session="a")
+    queued = await _admit(svc, session="b")
+    assert queued.queued
+    gate = _Gate()
+    waiter = asyncio.ensure_future(queued.run(gate.body()))
+    clock.advance(300)
+    first = _Gate()
+    first.release.set()
+    await _bounded(hold.run(first.body()))
+    await _bounded(svc.drain_promotions())
+    with pytest.raises(ag.AdmissionEnded) as ended:
+        await _bounded(waiter)
+    assert ended.value.work.state is S.EXPIRED
+    assert ended.value.work.reason is ReasonCode.QUEUE_EXPIRED
+    assert gate.runs == 0
+    assert not svc._scheduler.is_active(queued.work.work_id)
+
+
+@pytest.mark.asyncio
 async def test_bounded_queue_rejection_carries_reason_and_retry_after(tmp_path, clock):
     store = _open(tmp_path / "t.db", clock)
     svc = _service(store, clock, principal_concurrency=1, principal_queue_depth=1)

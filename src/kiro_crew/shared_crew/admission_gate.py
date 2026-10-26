@@ -860,6 +860,9 @@ class AdmissionService:
         if live.work.state is not S.QUEUED:
             live.admitted.set()
             return
+        if self._clock() >= live.ticket.expires_at:
+            await self._end(live, S.EXPIRED, reason=ReasonCode.QUEUE_EXPIRED)
+            return
         try:
             live.work = await self._store.advance(
                 live.work,
