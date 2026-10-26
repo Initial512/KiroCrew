@@ -371,8 +371,34 @@ def bind_address_for(local_only: bool) -> str:
                 _ENV_BIND,
                 override,
             )
-            return override
-    return _BIND_LOCAL if local_only else _BIND_ALL
+            return _governed_bind(override)
+    return _governed_bind(_BIND_LOCAL if local_only else _BIND_ALL)
+
+
+def _governed_bind(address: str) -> str:
+    """*address*, or loopback when the ``bind_address`` policy refuses it.
+
+    ``127.0.0.1`` is the floor and is never asked. Any other address is asked as its
+    canonical IP text (``edition_locks.policy_permits``): in an enterprise build only
+    a policy that names it can widen the bind (RFC D3), and an ``oss`` build with no
+    policy naming the key binds as before. Fail-closed: an error binds loopback.
+    """
+    if address == _BIND_LOCAL:
+        return address
+    from kiro_crew.edition_locks import policy_permits
+
+    try:
+        item = str(ipaddress.ip_address(address))
+    except ValueError:
+        item = address
+    if policy_permits("bind_address", item, audit_tool="gateway_bind"):
+        return address
+    logger.warning(
+        "bind address %s is not permitted by governance (bind_address); binding %s",
+        address,
+        _BIND_LOCAL,
+    )
+    return _BIND_LOCAL
 
 
 # ---------------------------------------------------------------------------
@@ -582,7 +608,42 @@ def build_allowed_origins(
             origins.add(f"http://localhost:{_p}")
             origins.add(f"http://[::1]:{_p}")
             origins.add(f"http://kirocrew.localhost:{_p}")
-    return origins
+    return _governed_origins(origins, port, tailnet_host)
+
+
+def _governed_origins(origins: set[str], port: int, tailnet_host: str) -> set[str]:
+    """*origins* without the extras the ``dashboard_origins`` policy refuses.
+
+    This machine's loopback origins on the bound *port* are the floor and are never
+    asked. The tailnet origin answers to ``capabilities.tailnet_origin`` and its
+    ``tailnets`` list (``dashboard/tailnet.py``), so it is not asked twice. Every
+    other origin is asked by its own text (``edition_locks.policy_permits``): in an
+    enterprise build none passes unless a policy names it (RFC D3); an ``oss`` build
+    with no policy naming the key keeps every origin, as before.
+    """
+    floor = {
+        f"http://127.0.0.1:{port}",
+        f"http://localhost:{port}",
+        f"http://kirocrew.localhost:{port}",
+    }
+    if tailnet_host:
+        floor.add(f"https://{tailnet_host}")
+    extras = sorted(origins - floor)
+    if not extras:
+        return origins
+    from kiro_crew.edition_locks import policy_permits
+
+    refused = {
+        o
+        for o in extras
+        if not policy_permits("dashboard_origins", o, audit_tool="dashboard_origin")
+    }
+    if refused:
+        logger.warning(
+            "dashboard origins not permitted by governance (dashboard_origins): %s",
+            ", ".join(sorted(refused)),
+        )
+    return origins - refused
 
 
 def build_allowed_hosts(allowed_origins: set[str]) -> set[str]:

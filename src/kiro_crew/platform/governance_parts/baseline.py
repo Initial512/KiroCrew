@@ -76,11 +76,24 @@ BASELINE_CONTROLS: Dict[str, Mapping[str, object]] = {
     "capabilities.theme_install": _CAPABILITY_OFF,
     "capabilities.telemetry": _CAPABILITY_OFF,
     "capabilities.tailnet_origin": _CAPABILITY_OFF,
+    # ``dashboard.urls._BIND_LOCAL``; never queried, since loopback is the floor.
+    "bind_address": {"mode": "allow", "allow": ["127.0.0.1"]},
+    # This machine's loopback origins are the floor and are never queried.
+    "dashboard_origins": _OFF,
+    "capabilities.computer_use": _CAPABILITY_OFF,
     "capabilities.mobile_connect": _CAPABILITY_OFF,
     "capabilities.social_share": _CAPABILITY_OFF,
     "capabilities.feature_videos_download": _CAPABILITY_OFF,
     "capabilities.decisions": _CAPABILITY_OFF,
     "capabilities.decisions_local": _CAPABILITY_OFF,
+}
+
+#: Capability -> inner lists the central policy must name itself. When a central
+#: policy turns the capability on and leaves one of these lists out, the list holds
+#: its minimal set (none) instead of reading as unconstrained, so a lower tier
+#: cannot supply it (``tiers._with_enterprise_baseline``).
+BASELINE_NAMED_LISTS: Dict[str, tuple[str, ...]] = {
+    "capabilities.tailnet_origin": ("tailnets",),
 }
 
 BASELINE_UNGATED: Dict[str, str] = {

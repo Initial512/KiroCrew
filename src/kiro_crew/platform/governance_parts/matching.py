@@ -2,7 +2,7 @@
 
 The enforcer-owned registries the governance model never reads from a policy or profile
 document: ``_ORDINAL_SCALES`` (each ordinal's strictness order) and ``_MATCHERS`` (the
-five match strategies, extended only through ``register_matcher``). Beside them, the
+six match strategies, extended only through ``register_matcher``). Beside them, the
 item normalization the ``path`` matcher applies (``_norm_item``) and the host the
 ``host`` matcher tests (``_url_host``). A new match strategy goes here.
 
@@ -136,6 +136,17 @@ def _match_mcp(item: str, pattern: str) -> bool:
     return False
 
 
+def _match_origin(item: str, pattern: str) -> bool:
+    """Case-insensitive fnmatch for ``scheme://host[:port]`` origins, brackets literal.
+
+    An IPv6 origin carries ``[...]`` (``https://[2001:db8::1]:8443``), which fnmatch
+    would read as a character class, so an entry could never match itself. ``*``
+    and ``?`` stay wildcards; ``[`` and ``]`` match only themselves.
+    """
+    literal = "".join({"[": "[[]", "]": "[]]"}.get(ch, ch) for ch in pattern.strip().casefold())
+    return fnmatch.fnmatchcase(item.strip().casefold(), literal)
+
+
 # Match-strategy registry.  A ScopedRuleset names its matcher; permits() looks
 # it up here.  Adding a domain = (optionally) one new entry, not evaluator code.
 _MATCHERS: Dict[str, Callable[[str, str], bool]] = {
@@ -144,6 +155,7 @@ _MATCHERS: Dict[str, Callable[[str, str], bool]] = {
     "path": _match_path,
     "host": _match_host,
     "mcp": _match_mcp,
+    "origin": _match_origin,
 }
 
 _DEFAULT_MATCHER = "identifier"

@@ -222,7 +222,7 @@ class TestResolveEntryPoint:
 
         loop_thread = None
 
-        def _record() -> str:
+        def _record(**_kw) -> str:
             nonlocal loop_thread
             import threading
 

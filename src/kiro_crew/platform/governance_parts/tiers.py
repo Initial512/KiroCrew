@@ -22,7 +22,12 @@ from typing import Callable, Dict, Mapping, Optional, Tuple
 from kiro_crew import edition
 from kiro_crew.config.paths import config_dir
 from kiro_crew.platform.context import PlatformCompositionError
-from kiro_crew.platform.governance_parts.archetypes import _compose_controls
+from kiro_crew.platform.governance_parts.archetypes import (
+    CapabilityGate,
+    ScopedRuleset,
+    _compose_controls,
+)
+from kiro_crew.platform.governance_parts.baseline import BASELINE_NAMED_LISTS
 from kiro_crew.platform.governance_parts.carriers import (
     _POLICY_DISTRIBUTION_URL_ENV,
     BootControls,
@@ -32,6 +37,7 @@ from kiro_crew.platform.governance_parts.carriers import (
     _is_enterprise,
     _version_tuple,
 )
+from kiro_crew.platform.governance_parts.catalog import SCOPE_CATALOG
 from kiro_crew.platform.governance_parts.parsing import (
     _SANDBOX_FLAGS_SCOPE,
     _read_json_file,
@@ -466,9 +472,33 @@ def _with_enterprise_baseline(authority: GovernanceCeiling) -> GovernanceCeiling
     missing = {
         scope: control for scope, control in baseline.items() if scope not in authority.controls
     }
+    missing.update(_unnamed_lists_emptied(authority.controls))
     if not missing:
         return authority
     return replace(authority, controls={**authority.controls, **missing})
+
+
+def _unnamed_lists_emptied(controls: Mapping[str, object]) -> Dict[str, object]:
+    """Each central gate in ``BASELINE_NAMED_LISTS`` with its unnamed lists emptied.
+
+    ``CapabilityGate.compose`` copies in a list the authority left out, so without
+    this a local tier could name ``tailnets`` beneath a central policy that turned
+    tailnet access on and named none (RFC D3: the unnamed list is empty).
+    """
+    filled: Dict[str, object] = {}
+    for scope, inners in BASELINE_NAMED_LISTS.items():
+        gate = controls.get(scope)
+        if not isinstance(gate, CapabilityGate):
+            continue
+        absent = [inner for inner in inners if inner not in gate.scopes]
+        if absent:
+            matchers = SCOPE_CATALOG[scope].scope_matchers
+            empty = {
+                inner: ScopedRuleset(mode="allow", matcher=matchers.get(inner, "identifier"))
+                for inner in absent
+            }
+            filled[scope] = replace(gate, scopes={**gate.scopes, **empty})
+    return filled
 
 
 def _subordinate_ceiling(

@@ -1109,6 +1109,7 @@ if TYPE_CHECKING:  # every owner-defined name in _EXPORTS, for type checkers and
         _DEFAULT_WORKSPACE_ROOTS,
         _OFF,
         BASELINE_CONTROLS,
+        BASELINE_NAMED_LISTS,
         BASELINE_UNGATED,
     )
     from kiro_crew.platform.governance_parts.carriers import (  # noqa: F401
@@ -1179,6 +1180,7 @@ if TYPE_CHECKING:  # every owner-defined name in _EXPORTS, for type checkers and
         _match_host,
         _match_identifier,
         _match_mcp,
+        _match_origin,
         _match_path,
         _norm_item,
         _url_host,
@@ -1231,6 +1233,7 @@ if TYPE_CHECKING:  # every owner-defined name in _EXPORTS, for type checkers and
         _read_home_policy,
         _subordinate_ceiling,
         _TierProcessState,
+        _unnamed_lists_emptied,
         _warn_env_beneath_central_once,
         _warn_home_unreadable_beneath_authority_once,
         _with_enterprise_baseline,

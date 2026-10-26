@@ -544,7 +544,6 @@ Runtime code reads only the module constant, never the build variable or a confi
 |---|---|---|---|
 | `app_dev_mode` | `installed.json` `dev`, the dev sentinel, `POST /api/apps/{name}/dev`, `kirocrew app dev` | `apps/dev_mode.py` (`set_dev_mode`, `is_dev_mode`, `is_dev_mode_cached`, `_load_dev_apps`) | the toggle and the CLI answer `locked_by_policy` (409 over HTTP), audited as a denied `app_dev_mode` SEL row |
 | `updates.channel` | `$KIROCREW_HOME/channel` | `platform/update_layout.py::release_channel` (answers `stable`) | `POST /api/update/channel` to a non-stable channel answers 409 `locked_by_policy` after the layout refusals, audited as `update.channel` |
-| `computer_use` | `computer_use.json` `enabled` | `computer_use/enable_state.py::is_enabled` | `GET /api/computer-use/config` carries `locked_by_policy`; an enable save answers 409 |
 | `tunnel` | `tunnel.enabled` | `dashboard/server_runtime/tunnel.py::_start_aea_tunnel` (the edition's own `TunnelProvider` is not a local source) | `GET /api/config/schema` marks the path `lockedByPolicy` |
 | `telemetry.otlp_hosts` | `telemetry.otlp_endpoint` | `metrics/provider.py::_edition_locked_view`, read by `_otlp_destinations` and `otlp_egress_active` before any provider sees the config (an edition provider's own destinations stay) | `GET /api/config/schema` marks the path `lockedByPolicy` |
 

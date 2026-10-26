@@ -1678,8 +1678,9 @@ permission requests and **Plane A never runs at all** for that tool. This affect
 every governed capability, not just computer use. So a capability whose only
 enforcement is Plane A can still be skipped by a shell-capable agent, though no
 longer by its file tools. Computer use no longer
-relies on either plane — it is not governed at all, and rests on the keystone enable
-being agent-unwritable. See [computer-use.md](computer-use.md) → "Known limitations".
+relies on either plane — its one governance key, `capabilities.computer_use`, is read at the
+keystone enable (`enable_state.is_enabled`), not at either plane, and the enable
+rests on being agent-unwritable. See [computer-use.md](computer-use.md) → "Known limitations".
 
 ## Profile resolution + binding
 
@@ -1700,8 +1701,8 @@ resolves to `None` (policy-ceiling-only), **not** `deny_all_profile`; only `_bg`
 and `_hb` fall to deny-all. That is correct for every scope that remains.
 
 There is no feature-local unattended refusal in `computer_use.gate` and no shipped
-`cu-off` profile bound to the unattended surfaces. Computer use is
-deliberately ungoverned — no `computer_use*` row in `SCOPE_CATALOG`, no
+`cu-off` profile bound to the unattended surfaces. Computer use has
+only the one on/off `capabilities.computer_use` row (see below) — no per-surface row, no
 unattended-surface rule, and no shipped profile of that name — so cron, subagent,
 taskrunner, webhook, workflow and channel sessions all drive the desktop once the
 operator has flipped the keystone. That is the product decision recorded in
@@ -2215,8 +2216,8 @@ read-your-writes should add it deliberately, with its own tests.
 
 Plane A carries **no live ordinal clamp**. The computer-use governance model —
 including a `computer_use.approval` row and its clamp — is not present; computer
-use is not governed (see [Computer use is NOT
-governed](#computer-use-is-not-governed-deliberately)). The global `approval_mode`
+use has no approval row (see [Computer use has one
+on/off row](#computer-use-has-one-onoff-row-deliberately)). The global `approval_mode`
 row's live clamp remains reserved (see "Still-reserved in v1").
 
 ### Owner capability previews
@@ -2611,15 +2612,14 @@ denials leave the same forensic trail.
   rather than a tool call, so an `mcp` deny cannot reach it at all. A fleet that
   means "no raster capture" must deny `@kirocrew-computer` via the `mcp` scope
   **and** the browser CLI via the `commands` scope.
-- **The `mcp`-scope deny is now the ONLY governance lever over computer use, and it
-  is keyed on a renameable alias.** `mcp.deny: ["@kirocrew-computer"]` works on
+- **The `mcp`-scope deny is the only per-tool governance lever over computer use, and
+  it is keyed on a renameable alias.** `mcp.deny: ["@kirocrew-computer"]` works on
   unmodified shipped code, but the server key is derived by `mcp_server_alias()` from
   an agent-mutable config: verified `mcp__kirocrew-computer2__click` and
-  `mcp__cu__click` both PERMIT under that deny. With the `capabilities.computer_use`
-  row removed there is no authoritative ban behind it — a fleet that must guarantee
-  the feature is off should not ship the keystone enable, and should treat the alias
-  deny as best-effort. See [Computer use is NOT
-  governed](#computer-use-is-not-governed-deliberately).
+  `mcp__cu__click` both PERMIT under that deny. The authoritative ban
+  is the `capabilities.computer_use` row with `enabled: false` (or, in an enterprise build, a
+  policy that does not name it); treat the alias deny as best-effort. See [Computer use has one
+  on/off row](#computer-use-has-one-onoff-row-deliberately).
 - **Cursor Motion has no governance row, and deliberately gets none.** The
   fake-cursor desktop overlay (`computer_use/overlay*.py`) grants the agent
   *nothing*: it draws an image, it does not move the pointer, it cannot deliver
@@ -3111,6 +3111,17 @@ distinct `pinned` state — the card must separate "off because the operator lef
 switch off" (flippable) from "off because an administrator pinned it" (a config
 write returns 403), since offering a working-looking toggle for the second is the
 half-control this row exists to avoid.
+
+**Which tailnets — the `tailnets` list.** An inner `tailnets` ruleset (`host` matcher) names the tailnets, by MagicDNS suffix (`tail1234.ts.net`), the derived origin may come from (RFC [crew-enterprise-edition](../../request-for-change/rfc-crew-enterprise-edition.md), appendix row "Allowed tailnets"). `tailnet.self_dns_name` asks `tailnets:<suffix>` after the name validates, so the startup probe, background recovery, the status card and the CLI all see one answer; a refused tailnet derives no name. In an enterprise build a central policy that turns the row on without naming the list derives nothing either: `tiers._with_enterprise_baseline` fills the unnamed list as empty (`baseline.BASELINE_NAMED_LISTS`, D3), so a local tier cannot supply one. An `oss` build without the list permits every tailnet.
+
+### Remote access — `bind_address`, `dashboard_origins`
+
+Two flat rulesets for the RFC appendix rows "Bind address and tunnel" (`identifier` matcher) and "Dashboard origins" (`origin` matcher: case-insensitive glob, `[` and `]` literal so an IPv6 origin matches its own entry). Both are asked through `edition_locks.policy_permits`: policy layer only (the questions are process-wide and carry no session, as for the tailnet probe), fail-closed, and in an enterprise build only a permit the policy layer gave counts. The baseline keeps both at this machine.
+
+- `bind_address`: `dashboard.urls.bind_address_for` asks the canonical IP text of any address other than `127.0.0.1` (`KIROCREW_BIND`, or `0.0.0.0` when `local_only` is false). A refused address binds `127.0.0.1` with a warning.
+- `dashboard_origins`: `dashboard.urls.build_allowed_origins` asks each origin outside the loopback origins on the bound port, by its `scheme://host[:port]` text, and drops a refused one. The `Host` barrier derives from the same set, so it narrows too. A connected tunnel's URL is asked the same way before it is trusted (`tunnel.setup._on_tunnel_connect`). The tailnet origin is not asked: it answers to `capabilities.tailnet_origin` and its `tailnets` list.
+
+The tunnel half of "Bind address and tunnel" stays an edition lock (`edition_locks.UNKEYED_LOCKS["tunnel"]`). The bind address and the origin set are decided when the gateway starts; a policy refresh that narrows either takes effect at the next restart (#24363). The `tailnets` list is asked at each derivation (startup and background recovery), the tunnel URL at each connect, and `capabilities.computer_use` at each dispatch, so a refresh applies to those from the next ask. Each acting ask writes the answer it enforced to SEL (`governance_decision`, critical on an evaluation error); a pure read such as the status card does not. No profile is read: the questions are answered from the installed ceiling alone.
 
 ### Hosted feature-video media — `capabilities.feature_videos_download`
 
@@ -3658,10 +3669,14 @@ config `agent.approval_mode`. Those carry their own vocabulary and are tracked
 separately from this scope — see the reserved `approval_mode` ordinal's
 still-reserved note.
 
-### Computer use is NOT governed (deliberately)
+### Computer use has one on/off row (deliberately)
 
-Computer use (see [computer-use.md](computer-use.md)) has **no scope rows in
-`SCOPE_CATALOG`** and no governance decision anywhere in its dispatch path. That is
+Computer use (see [computer-use.md](computer-use.md)) has **one on/off row,
+`capabilities.computer_use`**, and its dispatch path asks nothing else of governance. The row
+(RFC [crew-enterprise-edition](../../request-for-change/rfc-crew-enterprise-edition.md),
+appendix row "Desktop control") is ANDed with the keystone opt-in in
+`enable_state.is_enabled`, policy layer only and fail-closed; the enterprise
+baseline keeps it off. Nothing finer is governed. That is
 a product decision, not an oversight, and it is a reversal: an earlier revision
 shipped eight rows here (`capabilities.computer_use`, `computer_use.actions`,
 `.apps`, `.app_names`, `.observations`, `.targets`, `.approval`, and
