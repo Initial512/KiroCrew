@@ -172,7 +172,8 @@ short fixed mate opener ("Welcome back, let me catch you up on where we
 are."), picked by the script of the user's request. It starts
 one tool-free background model call. The fingerprint covers the original
 genuine user request, conversation task rows, session ledger, and work ledger.
-The prompt casts the model as a manager reporting to the owner who hired it,
+The prompt names the facts the owner must come away with and lets the model
+pick tone and layout,
 worded to the user's `dashboard.verbosity` level. It returns one JSON object:
 `status` (`on_track`, `needs_you`, `blocked` or `done`; anything else reads as
 `needs_you` when `needs_you` has items, else `on_track`, and `on_track` or
@@ -180,6 +181,9 @@ worded to the user's `dashboard.verbosity` level. It returns one JSON object:
 240 characters), `asked` (160), `remaining` (160), `done` (at most four items
 of 120), `needs_you` and `next` (at most three items of 120 each), and `extra`
 (at most two `{title, items}` sections of three items, empty ones dropped).
+The prompt asks only for `status`, `headline`, `needs_you`, a free-form
+plain-text `body` (lines kept, 900 characters) and an optional `widget` (HTML,
+redacted, dropped whole over 6,000 characters); the other fields still parse.
 `headline` is required; an older `now` or `{"message"}` reply is read as it,
 and a missing `asked` falls back to the quoted original request. `progress`
 is never the model's: the gateway stores `{accepted, total}` counted over the
@@ -195,8 +199,9 @@ labelled plain text. The transcript draws `meta.brief` as a fixed card
 (`WarmBriefCard`) that renders every field as a plain text node, in the order
 status and headline, Needs you, Progress (an `accepted of total` bar only when
 `progress` exists, plus `remaining`), What you asked, Done, Next, then the
-`extra` sections. An older `meta.brief` (`asked`, `now`, `needs_you`, `next`)
-draws with `now` as the headline and no status chip; a row without a
+`extra` sections, with `body` after Progress and the `widget` last, in the
+sandboxed `WidgetFrame` chat widgets use. `content` never holds the widget.
+An older `meta.brief` (`asked`, `now`, `needs_you`, `next`) draws with `now` as the headline and no status chip; a row without a
 valid `meta.brief` keeps the ordinary bubble. The card is the body of the
 ordinary assistant bubble, so the row keeps its timestamp and row actions, and
 Copy takes the plain-text `content`; chat search reads the card's own visible

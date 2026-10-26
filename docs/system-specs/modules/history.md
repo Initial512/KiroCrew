@@ -521,8 +521,8 @@ and is suppressed by transcript renderers. Its `ts` also counts as owner
 presence when the next return measures time away. The deterministic opener row and
 the model-written result carry normal mate message roles and classes. The
 result row's `meta.brief` holds the validated, redacted fields (`status`,
-`headline`, `asked`, `remaining`, `done`, `needs_you`, `next`, `extra`, and the
-gateway-counted `progress`; an older row holds `asked`, `now`, `needs_you` and
+`headline`, `asked`, `remaining`, `done`, `needs_you`, `next`, `extra`, `body`,
+an optional HTML `widget`, and the gateway-counted `progress`; an older row holds `asked`, `now`, `needs_you` and
 `next`) that the transcript draws as a fixed plain-text card; its
 `content` is the same brief as plain text, for export and any reader without
 the card.
