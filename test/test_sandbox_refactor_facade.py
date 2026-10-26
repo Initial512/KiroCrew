@@ -296,11 +296,14 @@ _MOVED: dict[str, tuple[str, ...]] = {
         _CPU_DELEGATED _cpu_controller_delegated _cgroup_limits_from_config
         """.split()),
     "kiro_crew.sandbox_slice": tuple("""
-        _SLICE_MEMORY_HIGH_FRACTION _SLICE_FALLBACK_MEMORY_HIGH_MB _SLICE_MEMHIGH_APPLIED
+        _SLICE_FALLBACK_MEMORY_HIGH_MB _SLICE_MEMHIGH_APPLIED
         _SLICE_MEMHIGH_DISABLED _default_slice_memory_high_mb
         _ensure_agent_slice_memory_high _SLICE_MEMHIGH_EVENTS_SEEN
         _SLICE_MEMHIGH_CLIMB_WARNED _slice_memory_events_high _check_slice_memory_pressure
         _SLICE_MEMHIGH_MUTEX _reconcile_slice_memory_high_off_thread
+        _SLICE_MEMORY_HIGH_DEFAULT_PCT _SLICE_MEMORY_HIGH_HEADROOM_PCT _SLICE_MEMHIGH_DESIRED _SLICE_MEMHIGH_CONFIGURED _SLICE_MEMHIGH_DEFERRED
+        _slice_memory_high_pct _slice_memory_high_mb _slice_memory_high_unit_state _ram_pct_mb _slice_memory_high_cap_mb
+        _SLICE_UNIT_PROPS _slice_unit_props
         _WINDOWS_INERT_RESOURCE_LIMIT_KEYS _WINDOWS_INERT_LIMITS_WARNED
         _warn_windows_inert_resource_limits_once apply_windows_resource_ceiling
         _SCOPE_UNIT_PREFIX _SCOPE_UNIT_TOKEN_SAFE scope_unit_name cgroup_scope_argv
