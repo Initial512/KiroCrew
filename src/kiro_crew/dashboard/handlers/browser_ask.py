@@ -99,7 +99,9 @@ async def run_ask(hub: LiveHub, key: str, args: dict[str, Any]) -> dict[str, Any
     except qa.AskError as exc:
         return _refused(exc.code)
     sess = hub.get(key)
-    if sess is not None and sess.ask is not None and not sess.ask.outcome:
+    if sess is not None and sess.ask is not None:
+        # Pending, or answered but not yet read by its parked poll: replacing it
+        # would make that poll report "cancelled" for an answer that landed.
         return _refused("busy")
     stream = sess.stream if sess is not None else None
     if stream is None or not stream.session_id or stream.target_id != hub.target_of(key):
@@ -321,6 +323,8 @@ async def _take_over(hub: LiveHub, key: str, ask: qa.QuickAsk, probe: qa.PagePro
             sess.input_rect = None
         return _answer(False, 409, error="stale")
     ask.claimed = not held_already
+    # The card zooms onto the box it is told about: the one measured just now.
+    ask.bindings[0].rect = rect
     ask.phase = qa.PHASE_TAKEN_OVER
     _record(hub, key, ask, "take_over", "taken_over")
     await hub.ask_changed(key)

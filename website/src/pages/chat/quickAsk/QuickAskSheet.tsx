@@ -130,8 +130,8 @@ export default function QuickAskSheet({ ask, sessionKey, mode, onCollapse }: {
       <div className="mt-3">
         <AskBody ask={ask} busy={busy} send={send} />
       </div>
-      {/* askAgent stays off: the agent is parked on this very ask and cannot act on a
-          message until it ends; the person's next step is on the page or this sheet. */}
+      {/* No hand-off: the sheet's inputs may hold an unsent password, code or field
+          value, and handing off to the agent would leave the sheet and drop them. */}
       <ErrorNotice variant="inline" message={error} className="mt-3" testId="quick-ask-error" />
       <p className="mt-3 text-center text-[11px] text-muted">{i18nT('pages.chat.quickAsk.kiro_paused')}</p>
     </div>

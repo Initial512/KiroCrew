@@ -533,6 +533,8 @@ async def _type(ctx: OpContext, args: dict[str, Any]) -> dict[str, Any]:
             code = focused.get("code") if isinstance(focused, dict) else None
             if code == "password_field":
                 return _password_refusal(ref)
+            if code == "asked_field":
+                return _asked_refusal(ref)
             return refusal("ref_stale", f"ref {ref} is not on the current page; re-snapshot")
         if not focused.get("focused"):
             why = " (disabled)" if focused.get("disabled") else ""
@@ -549,6 +551,8 @@ async def _type(ctx: OpContext, args: dict[str, Any]) -> dict[str, Any]:
         return refusal("no_focus", "no field has focus; pass a `ref` from a snapshot")
     if active.get("password"):
         return _password_refusal(ref)
+    if active.get("asked"):
+        return _asked_refusal(ref)
     await _step(ctx, f"Type into {ref or active.get('tag') or 'the field'}")
     await ctx.helper("type_text", text=text)
     submitted = bool(args.get("submit"))
@@ -566,6 +570,14 @@ def _password_refusal(ref: Any) -> dict[str, Any]:
     )
 
 
+def _asked_refusal(ref: Any) -> dict[str, Any]:
+    return refusal(
+        "asked_field",
+        f"{ref or 'the focused field'} holds what the user entered through a quick ask; "
+        "the agent does not type into, select or copy it. Move on (Tab) or snapshot.",
+    )
+
+
 #: Modifier bits under which a single-character key inserts no text (Ctrl, Meta).
 _NON_TEXT_MODIFIERS = _MODIFIER_BITS["control"] | _MODIFIER_BITS["meta"]
 
@@ -579,13 +591,19 @@ async def _press_key(ctx: OpContext, args: dict[str, Any]) -> dict[str, Any]:
     if key not in _NAMED_KEYS and len(key) != 1:
         return refusal("bad_key", f"unknown key: {key!r} (named keys or a single character)")
     modifiers = _modifier_mask(args.get("modifiers"))
-    if len(key) == 1 and not modifiers & _NON_TEXT_MODIFIERS:
+    if len(key) == 1 or modifiers & _NON_TEXT_MODIFIERS:
         # A printable key is a character typed into whatever holds focus: the same
         # refusal ``type`` applies, so a password cannot be spelled one key at a time.
-        # Named keys (Tab, Escape, arrows) and Ctrl/Meta chords insert nothing and
-        # stay allowed, so the agent can still leave the field.
+        # Ctrl/Meta chords insert nothing into a password box and stay allowed there;
+        # plain named keys (Tab, Escape, arrows) are never checked, so the agent can
+        # always leave a field.
         active = await _page(ctx, "activeField")
-        if isinstance(active, dict) and active.get("focused") and active.get("password"):
+        focused = isinstance(active, dict) and active.get("focused")
+        if focused and active.get("asked"):
+            # Neither a character nor a chord (select all, copy, cut) on the
+            # person's field: a copy would carry its value into one the agent reads.
+            return _asked_refusal(None)
+        if focused and active.get("password") and not modifiers & _NON_TEXT_MODIFIERS:
             return _password_refusal(None)
     await _step(ctx, f"Press {key.strip() or 'Space'}")
     await ctx.helper("press_key", key=key, modifiers=modifiers)

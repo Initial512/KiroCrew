@@ -67,9 +67,7 @@ function QuickAskTakeoverBar({ ask, sessionKey }: { ask: QuickAsk; sessionKey: s
       <span className="min-w-0 flex-1 text-[13px] text-text-strong">{i18nT('pages.chat.quickAsk.takeover_hint')}</span>
       <Btn type="button" onClick={() => { void send('decline') }} disabled={busy} data-testid="quick-ask-decline">{i18nT('pages.chat.quickAsk.decline')}</Btn>
       <Btn primary type="button" onClick={() => { void send('done') }} disabled={busy} data-testid="quick-ask-done">{i18nT('pages.chat.quickAsk.done')}</Btn>
-      {/* askAgent stays off: the agent is parked on this very ask and cannot act on a
-          message until it ends; the person's next step is on the page or this bar. */}
-      <ErrorNotice variant="inline" message={error} className="basis-full" testId="quick-ask-error" />
+      <ErrorNotice variant="inline" message={error} className="basis-full" askAgent testId="quick-ask-error" />
     </div>
   )
 }

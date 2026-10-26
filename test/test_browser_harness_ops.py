@@ -616,6 +616,32 @@ def test_press_key_asks_the_page_only_for_printable_keys(fake: FakeBrowser) -> N
     assert not any("activeField" in str(c) for c in fake.calls)
 
 
+def test_a_field_the_person_filled_takes_no_key_and_no_copy_chord(fake: FakeBrowser) -> None:
+    """A quick-ask field: no character, and no select-all / copy / cut chord either, so
+    its value cannot be carried into a field the agent reads. Tab still leaves it."""
+    fake.page["activeField"] = {"focused": True, "password": False, "asked": True, "tag": "input"}
+    for args in (
+        {"key": "x"},
+        {"key": "a", "modifiers": ["control"]},
+        {"key": "c", "modifiers": ["control"]},
+        {"key": "c", "modifiers": ["meta"]},
+        {"key": "x", "modifiers": ["meta"]},
+    ):
+        out = run(ops.run_op("press_key", args, fake.ctx()))
+        assert out["code"] == "asked_field", args
+    assert "press_key" not in fake.helper_names()
+    assert run(ops.run_op("press_key", {"key": "Tab"}, fake.ctx()))["ok"] is True
+    out = run(ops.run_op("type", {"text": "x"}, fake.ctx()))
+    assert out["code"] == "asked_field"
+
+
+def test_type_by_ref_into_a_field_the_person_filled_is_refused(fake: FakeBrowser) -> None:
+    fake.page["focus"] = {"ok": False, "code": "asked_field"}
+    out = run(ops.run_op("type", {"ref": "e3", "text": "x"}, fake.ctx()))
+    assert out["code"] == "asked_field"
+    assert "type_text" not in fake.helper_names()
+
+
 def _gated_ctx(fake: FakeBrowser, gate: Any) -> ops.OpContext:
     ctx = fake.ctx()
     ctx.url_allowed = gate

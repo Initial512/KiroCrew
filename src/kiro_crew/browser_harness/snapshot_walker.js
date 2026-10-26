@@ -100,13 +100,19 @@
     return false;
   }
 
+  // A field the person filled through a quick ask (quick_ask.py marks it before the
+  // write): the agent never reads, counts, focuses, retypes or copies it.
+  function asked(el) {
+    return !!(el && el.hasAttribute && el.hasAttribute("data-kc-asked"));
+  }
+
   // A field whose VALUE must never reach the model: the type says so, or the
   // name/id/autocomplete does. The snapshot drops its value and `type` refuses it.
   function secretish(el) {
     if (inputType(el) === "password") return true;
     // A field the person filled through a quick ask (quick_ask.py marks it before the
     // write): whatever it holds now is theirs, whatever its type or name says.
-    if (el.hasAttribute && el.hasAttribute("data-kc-asked")) return true;
+    if (asked(el)) return true;
     return SECRET_NAME_RE.test(
       (el.getAttribute("name") || "") + " " + (el.getAttribute("id") || "") + " " +
       (el.getAttribute("autocomplete") || "")
@@ -384,7 +390,13 @@
     var sel = probe && probe.sel, prop = String(probe && probe.prop || "text");
     var found;
     try { found = document.querySelectorAll(String(sel)); } catch (e) { return null; }
-    if (prop === "count") return found.length;
+    if (prop === "count") {
+      // A field the person filled through a quick ask never counts: an attribute
+      // selector on its value would otherwise spell the value out one probe at a time.
+      var c = 0;
+      for (var k = 0; k < found.length; k++) if (!asked(found[k])) c++;
+      return c;
+    }
     var el = found[0];
     if (!el) return null;
     // A secret field reads as null whatever is asked of it.
@@ -466,6 +478,7 @@
       var el = lookup(ref);
       if (!el) return { ok: false, code: "ref_stale" };
       if (inputType(el) === "password") return { ok: false, code: "password_field" };
+      if (asked(el)) return { ok: false, code: "asked_field" };
       try { el.focus(); } catch (e) {}
       var active = deepActive();
       return {
@@ -480,10 +493,11 @@
     // What holds focus now: the `type` op without a ref types into it.
     activeField: function () {
       var active = deepActive();
-      if (!active || active === document.body) return { focused: false, password: false, tag: "" };
+      if (!active || active === document.body) return { focused: false, password: false, asked: false, tag: "" };
       return {
         focused: true,
         password: inputType(active) === "password",
+        asked: asked(active),
         tag: (active.tagName || "").toLowerCase()
       };
     },

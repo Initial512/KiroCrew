@@ -39,7 +39,6 @@ from urllib.parse import urlsplit
 
 from kiro_crew.browser_harness.budgets import ASK_TIMEOUT_S, HUMAN_CHECK_TIMEOUT_S
 
-KINDS = ("credentials", "text", "otp", "human_check", "confirm")
 #: The target roles each kind takes, and which of them are required.
 ROLES: dict[str, tuple[tuple[str, bool], ...]] = {
     "credentials": (("username", False), ("password", True)),
@@ -57,7 +56,6 @@ ACTIONS: dict[str, frozenset[str]] = {
     "human_check": frozenset({"take_over", "done", "decline", "cancel"}),
     "confirm": frozenset({"confirm", "decline", "cancel"}),
 }
-ALL_ACTIONS = frozenset().union(*ACTIONS.values())
 
 FILLED = "filled"
 DECLINED = "declined"
@@ -641,19 +639,12 @@ def check_values(ask: QuickAsk, values: Any) -> dict[str, str] | None:
     return out
 
 
-def in_rect(x: int, y: int, rect: tuple[int, int, int, int]) -> bool:
-    rx, ry, rw, rh = rect
-    return rx <= x <= rx + rw and ry <= y <= ry + rh
-
-
 __all__ = [
     "ACTIONS",
-    "ALL_ACTIONS",
     "ANSWER_BODY_MAX",
     "AskError",
     "AskSpec",
     "Binding",
-    "KINDS",
     "PageProbe",
     "QuickAsk",
     "VALUE_MAX",
@@ -663,7 +654,6 @@ __all__ = [
     "click_once",
     "fill",
     "human_check_passed",
-    "in_rect",
     "origin_of",
     "parse_ask",
     "target_problem",

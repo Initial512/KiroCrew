@@ -374,6 +374,27 @@ async def test_one_ask_at_a_time() -> None:
     assert (await browser_ask.run_ask(hub, KEY, dict(CREDS)))["code"] == "busy"
 
 
+async def test_an_answered_ask_is_not_replaced_before_its_poll_reads_it() -> None:
+    page = FakePage()
+    page.add("e2", tag="button", text="Buy")
+    hub, _rec, ask = await _asked(
+        page, {"kind": "confirm", "targets": ["action=e2"], "reason": "Buy", "summary": "Pay"}
+    )
+    assert (await _answer({"ask_id": ask.id, "action": "confirm"}))[0] == 200
+    again = await browser_ask.run_ask(
+        hub, KEY, {"kind": "confirm", "targets": ["action=e2"], "reason": "Buy", "summary": "Pay"}
+    )
+    assert again["code"] == "busy"
+    assert await _poll(ask.id) == {"done": True, "outcome": "confirmed"}
+    assert (
+        await browser_ask.run_ask(
+            hub,
+            KEY,
+            {"kind": "confirm", "targets": ["action=e2"], "reason": "Buy", "summary": "Pay"},
+        )
+    )["ok"] is True
+
+
 # ── answers over the owner route ────────────────────────────────────────────
 
 
@@ -653,7 +674,10 @@ async def test_human_check_takeover_is_scoped_to_the_widget_and_hands_back_on_su
     status, out, _ = await _answer({"ask_id": ask.id, "action": "take_over"})
     assert (status, out) == (200, {"ok": True})
     assert hub.in_control(KEY) and ask.phase == "taken_over"
-    assert lh.live_event(hub.get(KEY))["ask"]["phase"] == "taken_over"  # type: ignore[index]
+    wire = lh.live_event(hub.get(KEY))["ask"]  # type: ignore[arg-type]
+    assert wire["phase"] == "taken_over"
+    # The card zooms onto where the widget is NOW, the box input is admitted to.
+    assert wire["fields"][0]["rect"] == {"x": 100, "y": 300, "w": 300, "h": 80}
     before = len(page.clicks())
     old_spot = {"type": "mouse", "action": "click", "x": 150, "y": 120, "button": "left"}
     inside = {"type": "mouse", "action": "click", "x": 150, "y": 320, "button": "left"}

@@ -34,7 +34,7 @@ function maskSource(): string {
 }
 
 interface Walker {
-  activeField: () => { focused: boolean; password: boolean; tag: string }
+  activeField: () => { focused: boolean; password: boolean; asked: boolean; tag: string }
   focus: (ref: string) => { ok: boolean; focused?: boolean; code?: string }
   snapshot: () => { nodes: Array<{ ref?: string; role: string; state?: { password?: boolean } }> }
 }
@@ -90,7 +90,7 @@ describe('a focused password input inside an open shadow root', () => {
     pass.focus()
     expect(document.activeElement).toBe(host) // the host, which is the bug's shape
     const active = evalWalker().activeField()
-    expect(active).toEqual({ focused: true, password: true, tag: 'input' })
+    expect(active).toEqual({ focused: true, password: true, asked: false, tag: 'input' })
   })
 
   it('is masked in the live frame: the mask expression walks open shadow roots', () => {
@@ -132,6 +132,39 @@ describe('a quick-ask field the person filled inside an open shadow root', () =>
     user.value = 'me@example.com'
     expect(w.askedValues()).toBe(1)
   })
+
+  it('is never focused, typed into or counted for the agent', () => {
+    withBoxes()
+    const { user } = shadowLogin()
+    user.setAttribute('data-kc-asked', '')
+    user.value = '123456'
+    user.setAttribute('value', '123456') // a framework that mirrors the value attribute
+    const w = evalWalker() as unknown as Walker & { read: (probes: unknown) => unknown }
+    const ref = w.snapshot().nodes.find((n) => n.role === 'textbox' && !n.state?.password)?.ref
+    expect(w.focus(ref as string)).toEqual({ ok: false, code: 'asked_field' })
+    user.focus()
+    expect(w.activeField()).toEqual({ focused: true, password: false, asked: true, tag: 'input' })
+  })
+
+  it('never counts toward an attribute-selector probe, so the value cannot be spelled out', () => {
+    const code = document.createElement('input')
+    code.setAttribute('data-kc-asked', '')
+    code.setAttribute('value', '123456')
+    document.body.appendChild(code)
+    const plain = document.createElement('input')
+    plain.setAttribute('value', '1')
+    document.body.appendChild(plain)
+    // Counters already installed for this document, so observe starts no endless
+    // requestAnimationFrame loop the test DOM would wait on at teardown.
+    const g = window as unknown as Record<string, unknown>
+    g.__kcTickDoc = document
+    g.__kcTick = { m: 0, f: 0 }
+    const w = evalWalker() as unknown as { observe: (o: unknown) => { read: Record<string, unknown> } }
+    const out = w.observe({ read: [{ name: 'a', sel: 'input[value^="1"]', prop: 'count' }] })
+    expect(out.read.a).toBe(1) // only the plain field
+    delete g.__kcTickDoc
+    delete g.__kcTick
+  })
 })
 
 describe('the top-document case still works the same', () => {
@@ -141,7 +174,7 @@ describe('the top-document case still works the same', () => {
     pass.type = 'password'
     document.body.appendChild(pass)
     pass.focus()
-    expect(evalWalker().activeField()).toEqual({ focused: true, password: true, tag: 'input' })
+    expect(evalWalker().activeField()).toEqual({ focused: true, password: true, asked: false, tag: 'input' })
     expect(evalMask()).toEqual([[10, 20, 200, 24]])
     expect(evalMaskReply()).toEqual({ boxes: [[10, 20, 200, 24]], frames: [], partial: false, sx: 0, sy: 0 })
   })
