@@ -542,7 +542,6 @@ Runtime code reads only the module constant, never the build variable or a confi
 
 | Control id | Local source ignored | Read site | Setting API |
 |---|---|---|---|
-| `app_dev_mode` | `installed.json` `dev`, the dev sentinel, `POST /api/apps/{name}/dev`, `kirocrew app dev` | `apps/dev_mode.py` (`set_dev_mode`, `is_dev_mode`, `is_dev_mode_cached`, `_load_dev_apps`) | the toggle and the CLI answer `locked_by_policy` (409 over HTTP), audited as a denied `app_dev_mode` SEL row |
 | `updates.channel` | `$KIROCREW_HOME/channel` | `platform/update_layout.py::release_channel` (answers `stable`) | `POST /api/update/channel` to a non-stable channel answers 409 `locked_by_policy` after the layout refusals, audited as `update.channel` |
 | `computer_use` | `computer_use.json` `enabled` | `computer_use/enable_state.py::is_enabled` | `GET /api/computer-use/config` carries `locked_by_policy`; an enable save answers 409 |
 | `tunnel` | `tunnel.enabled` | `dashboard/server_runtime/tunnel.py::_start_aea_tunnel` (the edition's own `TunnelProvider` is not a local source) | `GET /api/config/schema` marks the path `lockedByPolicy` |
@@ -564,7 +563,7 @@ The enterprise edition RFC ([rfc-crew-enterprise-edition](../../request-for-chan
 |---|---|---|
 | Hooks by name | Follows `capabilities.script_hooks`, off by default: no script hook runs and no user kiro hook is installed (asked on the host key) until the policy enables it | `hook_runtime/governance_gate.py::_script_hooks_capability_denied`, `agent_materialization/kiro_hooks.py::_user_kiro_hooks_locked` |
 | Webhooks by source | Inbound webhooks off for every source, whatever the stored switch says | `webhooks.py::WebhookTokenStore.is_switch_on` (`/api/hooks/agent`), `apps/builtins/ops_mission_control/backend/providers/webhook.py::enqueue` (the app's `/webhook` ingress) |
-| Signed extensions only, Extension versions | Install is off, so both are off | `platform/capability_bound.py::BoundedCapabilityManager` install ops and `sync_plugins` |
+| Signed extensions only, Extension versions | Follow install: `capabilities.extension_install`, off in the baseline, so both are off until a policy turns install on (see `docs/system-specs/modules/governance.md`, "Extensions, app versions and developer mode") | `platform/capability_bound.py::BoundedCapabilityManager` install ops and `sync_plugins` |
 | Workload identity, Identity settings | `capabilities.agentcore` off: no posture, Gateway URL or workload name | `platform/governance_parts/carriers.py::agentcore_posture` |
 | Content sent to external decisions | Follows `capabilities.decisions`, off by default: nothing is sent until the policy enables it; the local row holds that deny, as for any hosted deny, and the denial is audited | `decisions/capability.py::_row_denied` |
 | Managed update commands | Off; the built-in updater path applies | `platform/update_provider.py::resolve_provider` |
